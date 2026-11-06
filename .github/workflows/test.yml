@@ -1,0 +1,35 @@
+name: test
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "examples/**"
+      - "recipes/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/test.yml"
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - name: Check and simulate every recipe
+        run: |
+          shopt -s nullglob
+          for recipe in examples/*.yaml recipes/*.yaml; do
+            cargo run --locked --quiet -- check "$recipe"
+            cargo run --locked --quiet -- simulate "$recipe"
+          done

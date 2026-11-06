@@ -3,10 +3,12 @@ provider: github
 name: GitHub
 dashboard: https://github.com/settings/tokens
 prefixes: [ghp_, gho_, ghs_, github_pat_]
+rotate_every_days: 90
+criticality_hint: 4
 hosts: [api.github.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /user }
 identify:
   request: { method: GET, path: /user }
-  fields: { account: $.login, email: $.email, name: $.name }
+  fields: { account: $.login, email: $.email, name: $.name, scopes: "header:x-oauth-scopes", expires: "header:github-authentication-token-expiration" }
 suggested_name: "GitHub · {account}"

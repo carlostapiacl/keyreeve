@@ -132,6 +132,8 @@ struct SectionTitle: View {
 /// Criticality as five marks and a number, so color is never the only signal.
 struct CriticalityMeter: View {
     let value: Int
+    /// Faded when the number is a suggestion that nobody has confirmed.
+    var suggested = false
 
     private var tone: Color {
         switch value {
@@ -149,6 +151,7 @@ struct CriticalityMeter: View {
                     .frame(width: 5, height: 11)
             }
         }
+        .opacity(suggested ? 0.45 : 1)
         .accessibilityLabel(Text("\(value) / 5"))
     }
 }

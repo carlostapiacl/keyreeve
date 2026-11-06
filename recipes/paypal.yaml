@@ -1,0 +1,14 @@
+schema: 1
+provider: paypal
+name: PayPal
+dashboard: https://developer.paypal.com/dashboard/applications/live
+rotate_every_days: 365
+criticality_hint: 5
+hosts: [api-m.paypal.com]
+# The key is two fields: client id and secret.
+auth: { type: oauth_token, grant: client_credentials, token_host: api-m.paypal.com, token_path: /v1/oauth2/token, token_is_proof: true }
+verify: { method: GET, path: "/v1/identity/oauth2/userinfo?schema=paypalv1.1" }
+identify:
+  request: { method: GET, path: "/v1/identity/oauth2/userinfo?schema=paypalv1.1" }
+  fields: { account: $.emails.0.value, name: $.name, scopes: "token:scope" }
+suggested_name: "PayPal · {account}"

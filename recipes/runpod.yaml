@@ -1,0 +1,10 @@
+schema: 1
+provider: runpod
+name: RunPod
+dashboard: https://www.runpod.io/console/user/settings
+prefixes: [rpa_]
+rotate_every_days: 365
+criticality_hint: 3
+hosts: [rest.runpod.io]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /v1/pods }

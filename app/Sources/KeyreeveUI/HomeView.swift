@@ -89,7 +89,9 @@ struct HomeView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if item.criticality > 0 { CriticalityMeter(value: item.criticality) }
+            if item.criticality > 0 {
+                CriticalityMeter(value: item.criticality, suggested: item.criticalitySuggested)
+            }
             ActionButtons(item: item, model: model).fixedSize()
         }
         .padding(.horizontal, 14)
@@ -105,9 +107,15 @@ struct HomeView: View {
             status(T("Rejected"), stats.rejected, "xmark.circle.fill", Theme.bad)
             status(T("No answer"), stats.noAnswer, "questionmark.circle", Theme.muted)
             status(T("Never checked"), stats.neverChecked, "circle.dashed", Theme.faint)
-            Button(T("Can be checked") + ": \(stats.canCheck)") { open(.checkable, nil) }
-                .buttonStyle(KRButtonStyle())
-                .padding(.top, 2)
+            HStack(spacing: 6) {
+                Button(T("Can be checked") + ": \(stats.canCheck)") { open(.checkable, nil) }
+                    .buttonStyle(KRButtonStyle())
+                if stats.stale > 0 {
+                    Button(T("Older than suggested") + ": \(stats.stale)") { open(.stale, nil) }
+                        .buttonStyle(KRButtonStyle())
+                }
+            }
+            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -1,0 +1,14 @@
+schema: 1
+provider: brevo
+name: Brevo
+dashboard: https://app.brevo.com/settings/keys/api
+prefixes: [xkeysib-]
+rotate_every_days: 365
+criticality_hint: 3
+hosts: [api.brevo.com]
+auth: { header: api-key }
+verify: { method: GET, path: /v3/account }
+identify:
+  request: { method: GET, path: /v3/account }
+  fields: { account: $.email, name: $.companyName }
+suggested_name: "Brevo · {account}"

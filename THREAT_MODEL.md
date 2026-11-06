@@ -64,6 +64,10 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
 - **The recovery key opens everything.** Whoever holds it does not need the Mac.
 - **The app's lock covers the window.** The catalog it shows is a plain file with names and results, and it never holds
   a value.
+- **A fingerprint lasts a while.** During the period you choose, 5 minutes by default, the app checks "Ask me" keys without
+  asking. It applies to buttons in the app alone. Locking ends it, and the vault asks every time.
+- **A key in the address.** Some providers accept a key only in the URL. It travels inside HTTPS, but such a provider may
+  log its own addresses, which is why this is a declared `auth: { type: url }` and never a default.
 - **The app's settings decide where a key is sent.** `edits.json` and your rules name the recipe for each key. A program
   running as you could change them, and the next check would send the key to another listed provider.
 - **Pressing "I already revoked it" is proof only with a check.** A key with no recipe is marked on your word alone.

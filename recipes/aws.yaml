@@ -3,6 +3,8 @@ provider: aws
 name: AWS
 dashboard: https://console.aws.amazon.com/iam/home
 prefixes: [AKIA]
+rotate_every_days: 90
+criticality_hint: 5
 hosts: [sts.amazonaws.com]
 auth: { type: aws_sigv4, service: sts, region: us-east-1 }
 verify: { method: GET, path: "/?Action=GetCallerIdentity&Version=2011-06-15", reject: [403] }

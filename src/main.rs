@@ -31,6 +31,8 @@ Usage:
       List the providers keyreeve knows, from what ships and from ~/.keyreeve/providers.
   keyreeve recipes approve <provider>
       Allow a provider file of yours to receive keys at the hosts it lists.
+  keyreeve recipes approve-host <provider> <server>
+      Allow your own server, for a provider each person runs themselves.
   keyreeve --version
 ";
 
@@ -230,6 +232,18 @@ fn run_recipes(args: &[String]) -> ExitCode {
         [flag] if flag == "--json" => {
             println!("{}", providers::list_json());
             ExitCode::SUCCESS
+        }
+        [approve, name, host] if approve == "approve-host" => {
+            match providers::approve_host(name, host) {
+                Ok(()) => {
+                    println!("{host} may now receive keys for {name}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("recipes: {error}");
+                    ExitCode::FAILURE
+                }
+            }
         }
         [approve, name] if approve == "approve" => match providers::approve(name) {
             Ok(hosts) => {

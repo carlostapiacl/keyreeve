@@ -1,0 +1,9 @@
+schema: 1
+provider: mailerlite
+name: MailerLite
+dashboard: https://dashboard.mailerlite.com/integrations/api
+rotate_every_days: 365
+criticality_hint: 2
+hosts: [connect.mailerlite.com]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: "/api/subscribers?limit=1" }

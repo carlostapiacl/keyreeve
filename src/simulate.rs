@@ -123,6 +123,7 @@ impl MockProvider {
 
     fn handle(&mut self, request: &Request) -> Response {
         let reply = |status: u16, body: String| Response {
+            headers: Vec::new(),
             status,
             body: Secret::new(body),
         };

@@ -21,7 +21,22 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var details: KeyDetails?
     /// 1 to 5, or 0 if nobody rated it.
     public var criticality: Int
+    /// True if the number came from the provider's file, and not from a person.
+    public var criticalitySuggested: Bool
+    /// How often the provider's file suggests changing this key, or 0.
+    public var rotateDays: Int
+    /// The server, for a provider each person runs themselves.
+    public var host: String
     public var id: String { path }
+
+    /// A secret with no provider, such as a signing key, so there is nowhere to check it.
+    public var isInternal: Bool { tags.contains("internal") }
+
+    /// True if the file has not changed for longer than its provider suggests for a key.
+    public func isOlderThanSuggested(at now: Date = Date()) -> Bool {
+        guard rotateDays > 0, !isArchived, isSecret, let date = catalogDate(modified) else { return false }
+        return now.timeIntervalSince(date) > Double(rotateDays) * 86_400
+    }
 
     /// What a person calls this key: their name for it, or else the file's.
     public var title: String { name.isEmpty ? path : name }
@@ -32,7 +47,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         modified: String = "", mode: String = "600", reviewed: Bool = true,
         lastResult: String = "", lastChecked: String = "", recipes: [String] = [], field: String = "",
         labels: [String] = [], ignoredUntil: Date? = nil, name: String = "", description: String = "",
-        details: KeyDetails? = nil, criticality: Int = 0
+        details: KeyDetails? = nil, criticality: Int = 0, criticalitySuggested: Bool = false,
+        rotateDays: Int = 0, host: String = ""
     ) {
         self.path = path
         self.level = level
@@ -51,15 +67,19 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         self.description = description
         self.details = details
         self.criticality = criticality
+        self.criticalitySuggested = criticalitySuggested
+        self.rotateDays = rotateDays
+        self.host = host
     }
 
     /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
-    public var canCheck: Bool { (level == "free" || level == "ask") && !recipes.isEmpty }
+    public var canCheck: Bool { (level == "free" || level == "ask") && !recipes.isEmpty && !isInternal }
 
     /// Why a check is not offered, for the button's help text.
     public var whyNoCheck: String? {
         if level == "never" { return T("Only you use this key") }
         if level == "none" { return T("This is not a secret") }
+        if isInternal { return T("An internal secret has no provider to ask") }
         if recipes.isEmpty { return T("Choose where to check it") }
         return nil
     }
@@ -118,6 +138,9 @@ public enum CatalogParser {
         let name = header.firstIndex(of: "name")
         let description = header.firstIndex(of: "description")
         let criticality = header.firstIndex(of: "criticality")
+        let suggested = header.firstIndex(of: "criticality_suggested")
+        let rotateDays = header.firstIndex(of: "rotate_days")
+        let host = header.firstIndex(of: "host")
         return rows.dropFirst().compactMap { row in
             guard row.count == header.count else { return nil }
             return CatalogItem(
@@ -135,7 +158,10 @@ public enum CatalogParser {
                 labels: labels.map { row[$0].split(separator: "|").map(String.init) } ?? [],
                 name: name.map { row[$0] } ?? "",
                 description: description.map { row[$0] } ?? "",
-                criticality: criticality.flatMap { Int(row[$0]) } ?? 0)
+                criticality: criticality.flatMap { Int(row[$0]) } ?? 0,
+                criticalitySuggested: suggested.map { row[$0] == "true" } ?? false,
+                rotateDays: rotateDays.flatMap { Int(row[$0]) } ?? 0,
+                host: host.map { row[$0] } ?? "")
         }
     }
 
@@ -194,6 +220,8 @@ public enum Sidebar: Hashable, Sendable {
     case archive
     case checkable
     case critical
+    case stale
+    case internalOnly
     case level(String)
     case tag(String)
 }
@@ -206,6 +234,8 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .archive: return item.isArchived
         case .checkable: return item.canCheck && !item.isArchived
         case .critical: return item.criticality >= 4 && !item.isArchived
+        case .stale: return item.isOlderThanSuggested()
+        case .internalOnly: return item.isInternal && !item.isArchived
         case .level(let level): return item.level == level && !item.isArchived
         case .tag(let tag): return item.tags.contains(tag) && !item.isArchived
         }
@@ -228,12 +258,20 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
 public func projectTags(in items: [CatalogItem]) -> [(tag: String, count: Int)] {
     var counts: [String: Int] = [:]
     for item in items {
-        for tag in item.tags where !tag.contains(":") && !["confirm", "revoke"].contains(tag) { counts[tag, default: 0] += 1 }
+        for tag in item.tags where !tag.contains(":") && !["confirm", "revoke", "internal"].contains(tag) { counts[tag, default: 0] += 1 }
     }
     return counts.map { (tag: $0.key, count: $0.value) }
         .sorted { ($0.count, $1.tag) > ($1.count, $0.tag) }
 }
 
+
+private func catalogDate(_ text: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(identifier: "UTC")
+    return formatter.date(from: text)
+}
 
 /// The figures on the home screen, worked out from the catalog alone.
 public struct CatalogStats: Sendable {
@@ -254,6 +292,8 @@ public struct CatalogStats: Sendable {
     public let canCheck: Int
     public let archived: Int
     public let critical: Int
+    public let stale: Int
+    public let internalSecrets: Int
     public let identified: Int
     public let projects: [Bucket]
     public let ages: [Bucket]
@@ -272,6 +312,8 @@ public struct CatalogStats: Sendable {
                 < ($1.attentionRanked?.rank ?? 9, -$1.criticality, $1.path)
         }
         critical = items.filter { $0.criticality >= 4 }.count
+        stale = items.filter { $0.isOlderThanSuggested(at: now) }.count
+        internalSecrets = secretItems.filter(\.isInternal).count
         works = secretItems.filter { $0.lastResult == "works" }.count
         rejected = secretItems.filter { $0.lastResult == "rejected" }.count
         noAnswer = secretItems.filter { $0.lastResult == "forbidden" || $0.lastResult == "no_result" }.count

@@ -11,18 +11,39 @@ use std::sync::OnceLock;
 const BUILTIN: &[(&str, &str)] = &[
     ("anthropic", include_str!("../recipes/anthropic.yaml")),
     ("aws", include_str!("../recipes/aws.yaml")),
+    ("brevo", include_str!("../recipes/brevo.yaml")),
+    ("calcom", include_str!("../recipes/calcom.yaml")),
     ("cloudflare", include_str!("../recipes/cloudflare.yaml")),
+    ("coolify", include_str!("../recipes/coolify.yaml")),
+    ("elevenlabs", include_str!("../recipes/elevenlabs.yaml")),
+    ("fred", include_str!("../recipes/fred.yaml")),
+    ("gemini", include_str!("../recipes/gemini.yaml")),
     ("github", include_str!("../recipes/github.yaml")),
+    (
+        "github-deploy",
+        include_str!("../recipes/github-deploy.yaml"),
+    ),
     ("gitlab", include_str!("../recipes/gitlab.yaml")),
+    ("google", include_str!("../recipes/google.yaml")),
     ("hetzner", include_str!("../recipes/hetzner.yaml")),
+    ("huggingface", include_str!("../recipes/huggingface.yaml")),
     ("instagram", include_str!("../recipes/instagram.yaml")),
     ("langsmith", include_str!("../recipes/langsmith.yaml")),
+    ("mailerlite", include_str!("../recipes/mailerlite.yaml")),
+    ("mercadopago", include_str!("../recipes/mercadopago.yaml")),
     ("meta", include_str!("../recipes/meta.yaml")),
     ("netlify", include_str!("../recipes/netlify.yaml")),
     ("openai", include_str!("../recipes/openai.yaml")),
+    ("paypal", include_str!("../recipes/paypal.yaml")),
+    ("pexels", include_str!("../recipes/pexels.yaml")),
+    ("plausible", include_str!("../recipes/plausible.yaml")),
+    ("r2", include_str!("../recipes/r2.yaml")),
+    ("resend", include_str!("../recipes/resend.yaml")),
+    ("runpod", include_str!("../recipes/runpod.yaml")),
     ("sentry", include_str!("../recipes/sentry.yaml")),
     ("stripe", include_str!("../recipes/stripe.yaml")),
     ("supabase", include_str!("../recipes/supabase.yaml")),
+    ("telegram", include_str!("../recipes/telegram.yaml")),
 ];
 
 fn builtin() -> &'static Vec<(&'static str, Recipe)> {
@@ -120,6 +141,65 @@ pub fn approve(name: &str) -> Result<Vec<String>, String> {
     Ok(recipe.hosts)
 }
 
+fn hosts_file() -> PathBuf {
+    home().join("approved-hosts.json")
+}
+
+fn approved_hosts() -> BTreeMap<String, Vec<String>> {
+    fs::read_to_string(hosts_file())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub fn host_approved(provider: &str, host: &str) -> bool {
+    approved_hosts()
+        .get(provider)
+        .is_some_and(|hosts| hosts.iter().any(|h| h == host))
+}
+
+/// Your server for a provider each person runs. A check sends the key there, so it is your call,
+/// and only over HTTPS.
+pub fn approve_host(provider: &str, host: &str) -> Result<(), String> {
+    let recipe = load(provider)?;
+    if !recipe.self_hosted {
+        return Err(format!("{provider} has fixed addresses"));
+    }
+    let name = host.split_once(':').map_or(host, |(name, _)| name);
+    let port_ok = host
+        .split_once(':')
+        .is_none_or(|(_, port)| port.parse::<u16>().is_ok());
+    let name_ok = !name.is_empty()
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
+    if !port_ok || !name_ok {
+        return Err(format!("{host} is not a server address"));
+    }
+    let mut all = approved_hosts();
+    let hosts = all.entry(provider.to_owned()).or_default();
+    if !hosts.iter().any(|h| h == host) {
+        hosts.push(host.to_owned());
+    }
+    let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+    crate::inventory::write_private(&hosts_file(), &text).map_err(|e| e.to_string())
+}
+
+/// What a provider's file suggests for a key with no rating of its own.
+pub fn hints(name: &str) -> (Option<u8>, Option<u32>) {
+    builtin()
+        .iter()
+        .find(|(id, _)| *id == name)
+        .map(|(_, recipe)| recipe.clone())
+        .or_else(|| read_local(name).ok())
+        .map_or((None, None), |recipe| {
+            (recipe.criticality_hint, recipe.rotate_every_days)
+        })
+}
+
 /// The provider whose file claims this start of a key, if only one does.
 pub fn kind_from_prefix(token: &str) -> Option<String> {
     builtin()
@@ -151,6 +231,7 @@ pub struct Entry {
     pub can_check: bool,
     pub can_identify: bool,
     pub can_rotate: bool,
+    pub self_hosted: bool,
     pub suggested_name: Option<String>,
     pub problem: Option<String>,
 }
@@ -167,6 +248,7 @@ impl Entry {
             can_check: recipe.verify.method == "GET",
             can_identify: recipe.identify.is_some(),
             can_rotate: recipe.can_rotate(),
+            self_hosted: recipe.self_hosted,
             suggested_name: recipe.suggested_name.clone(),
             problem: None,
         }
@@ -249,6 +331,7 @@ pub fn list() -> Vec<Entry> {
                 can_check: false,
                 can_identify: false,
                 can_rotate: false,
+                self_hosted: false,
                 suggested_name: None,
                 problem: Some(problem),
             }),
@@ -291,6 +374,8 @@ mod tests {
             assert_eq!(recipe.verify.method, "GET", "{name}");
             assert!(recipe.name.is_some(), "{name}");
             assert!(recipe.dashboard.is_some(), "{name}");
+            assert!(recipe.rotate_every_days.is_some(), "{name}");
+            assert!(recipe.criticality_hint.is_some(), "{name}");
             if let Some(identify) = &recipe.identify {
                 assert_eq!(identify.request.method, "GET", "{name}");
             }
@@ -343,6 +428,21 @@ mod tests {
             fs::write(dir.join("providers/bad.yaml"), "schema: 9").unwrap();
             assert!(list().iter().any(|e| e.id == "bad" && e.problem.is_some()));
             assert!(read_local("../../etc/passwd").is_err());
+        });
+    }
+
+    #[test]
+    fn a_server_address_is_approved_one_at_a_time() {
+        with_home("hosts-approve", |_| {
+            assert!(!host_approved("coolify", "panel.example.com"));
+            approve_host("coolify", "panel.example.com").unwrap();
+            assert!(host_approved("coolify", "panel.example.com"));
+            assert!(!host_approved("coolify", "other.example.com"));
+            assert!(!host_approved("plausible", "panel.example.com"));
+            assert!(approve_host("github", "x.example.com").is_err());
+            assert!(approve_host("coolify", "https://x.example.com").is_err());
+            assert!(approve_host("coolify", "x.example.com/path").is_err());
+            approve_host("coolify", "panel.example.com:8443").unwrap();
         });
     }
 

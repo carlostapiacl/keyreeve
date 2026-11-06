@@ -7,6 +7,7 @@ public enum SettingsKey {
     public static let lockMinutes = "lockMinutes"
     public static let scanOnOpen = "scanOnOpen"
     public static let appearance = "appearance"
+    public static let fingerprintMinutes = "fingerprintMinutes"
 }
 
 @MainActor
@@ -22,6 +23,7 @@ public final class AppModel: ObservableObject {
     public let files: KeyreeveFiles
     private let binary: URL?
     private var lockTask: Task<Void, Never>?
+    private var confirmation = ConfirmationWindow()
 
     public init(files: KeyreeveFiles = KeyreeveFiles(), binary: URL? = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli")) {
         self.files = files
@@ -39,6 +41,7 @@ public final class AppModel: ObservableObject {
                 self.lockMessage = T("Not unlocked. Try again.")
                 return
             }
+            self.confirmation.confirm()
             self.lockMessage = nil
             self.unlocked = true
             self.load()
@@ -49,6 +52,7 @@ public final class AppModel: ObservableObject {
 
     public func lock() {
         lockTask?.cancel()
+        confirmation.close()
         unlocked = false
         items = []
         activity = []
@@ -132,17 +136,19 @@ public final class AppModel: ObservableObject {
     // MARK: Checks and identification
 
     private func gated(_ list: [CatalogItem], reason: String, run: @escaping @MainActor () -> Void) {
-        guard list.contains(where: { $0.level == "ask" }) else {
+        let minutes = UserDefaults.standard.object(forKey: SettingsKey.fingerprintMinutes) as? Int ?? 5
+        guard list.contains(where: { $0.level == "ask" }), !confirmation.isOpen(minutes: minutes) else {
             run()
             return
         }
         confirm(reason: reason) { success in
+            if success { self.confirmation.confirm() }
             if success { run() } else { self.message = T("Not checked: it was not confirmed") }
         }
     }
 
     public func check(_ chosen: [CatalogItem], then done: (@MainActor () -> Void)? = nil) {
-        let list = chosen.filter(\.canCheck)
+        let list = chosen.filter(providers.canCheck)
         guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
         let reason =
             list.count == 1
@@ -195,6 +201,18 @@ public final class AppModel: ObservableObject {
                     }
                 }
             }
+        }
+    }
+
+    /// You typed this address, for a provider you run, so approving it is part of saving it.
+    public func setHost(_ host: String, on item: CatalogItem) {
+        let host = host.trimmingCharacters(in: .whitespaces)
+        guard let binary, let provider = item.recipes.first else { return }
+        do {
+            if !host.isEmpty { try CheckRunner.approveHost(host, for: provider, binary: binary) }
+            save(KeyEdit(host: host), for: item)
+        } catch {
+            message = (error as? CheckError)?.description
         }
     }
 

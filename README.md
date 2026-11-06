@@ -113,8 +113,7 @@ keys:
 A rejected key may
 still be alive for other uses: a restricted token can fail a check it has no permission for. Cloudflare's check
 only covers user tokens, so an account token reads as rejected. A pass says the key works, and not what it may do.
-The `hetzner` and `langsmith` recipes have passed with a real key. The others have only been shown to reject a
-fake one, except `meta`, `instagram` and `cloudflare`, which have also rejected old real keys.
+The `hetzner`, `langsmith` and `aws` recipes have passed with a real key.
 
 ## The Mac app
 
@@ -137,8 +136,9 @@ not stop it, so an archived key that still works keeps a warning. Identify asks 
 only the fields that provider's file declares, then offers a name.
 
 A check sends a key to a company, so the app never guesses where: you choose, or the key's prefix proves it. A check is
-one read-only request, keys set to "Ask me" need your fingerprint, and keys set to "Only me" are not offered. Settings has
-the language, appearance and auto-lock. The build is not notarized, so macOS warns you the first time.
+one read-only request, keys set to "Ask me" need your fingerprint, and keys set to "Only me" are not offered. Your
+fingerprint lasts 5 minutes by default, and locking the app ends it. Settings has that period, the language, appearance and
+auto-lock. The build is not notarized, so macOS warns you the first time.
 
 ## Adding a provider
 
@@ -162,6 +162,29 @@ suggested_name: "GitHub · {account}"
 Put yours in `~/.keyreeve/providers/` and it works with no new build, once you approve the hosts it lists, in Settings or
 with `keyreeve recipes approve <name>`. Changing its hosts undoes the approval, and a file cannot replace one that ships.
 To share it with everyone, open a pull request.
+
+A file can also declare:
+
+| field | what it does |
+|---|---|
+| `auth: { header }` | sends the key in a header. The usual case |
+| `auth: { type: url }` | puts `{key}` in the address, for providers with no other way, such as Telegram |
+| `auth: { type: basic }` | HTTP Basic |
+| `auth: { type: oauth_token }` | exchanges two or three fields for a short-lived token, such as Google or PayPal |
+| `auth: { type: aws_sigv4 }` | signs each request, so the secret never travels. AWS and R2 |
+| `auth: { type: ssh }` | greets a server with an SSH key through the system's `ssh`, such as a GitHub deploy key |
+| `self_hosted: true` | each person gives their own server, approved one at a time, always over HTTPS |
+| `prefixes` | finds the key inside a file of notes, and refuses if there are two |
+| `alive_if` | a refusal that still proves the key is alive, such as a restricted key |
+| `fields` in `identify` | `$.path`, `header:name`, `token:name` or `reply:`. Name them `scopes` or `expires` to say what a key can do and when it ends |
+| `rotate_every_days` | a suggested age, shown as "older than suggested" |
+| `criticality_hint` | a rating from 1 to 5, shown faded until you confirm yours |
+
+A secret with no provider, such as a signing key, is marked as internal, and no check is offered. Secrets for your own
+products go the same way: a file of yours, in that folder, never in a repository.
+
+These recipes have been shown to reject a fake key at the real address, and that is all most of them have seen: a pass
+with a real key is what proves a recipe. `self_hosted` recipes need your server first.
 
 ## The vault (Mac)
 

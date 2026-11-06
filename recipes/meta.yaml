@@ -3,6 +3,8 @@ provider: meta
 name: Meta
 dashboard: https://developers.facebook.com/apps
 prefixes: []
+rotate_every_days: 60
+criticality_hint: 3
 hosts: [graph.facebook.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /me, reject: [400] }

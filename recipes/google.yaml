@@ -1,0 +1,14 @@
+schema: 1
+provider: google
+name: Google account
+dashboard: https://console.cloud.google.com/apis/credentials
+rotate_every_days: 365
+criticality_hint: 4
+hosts: [oauth2.googleapis.com, www.googleapis.com]
+# The key is three fields: client id, client secret and refresh token. Getting a short-lived token proves they work.
+auth: { type: oauth_token, grant: refresh_token, token_host: oauth2.googleapis.com, token_path: /token, token_is_proof: true }
+verify: { method: GET, host: www.googleapis.com, path: /oauth2/v3/userinfo }
+identify:
+  request: { method: GET, host: www.googleapis.com, path: /oauth2/v3/userinfo }
+  fields: { account: $.email, name: $.name, scopes: "token:scope" }
+suggested_name: "Google · {account}"

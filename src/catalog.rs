@@ -2,6 +2,10 @@
 //!
 //! The rules live in a file you own, because which project a key belongs to is your business.
 //! The catalog reads only the inventory, so it never opens a key file.
+//!
+//! A check sends a key to a provider, so a key gets a recipe only if your rules name one, or if
+//! its own prefix proves the provider. A tag is not enough: a wrong tag would send the key to
+//! the wrong company.
 
 use crate::inventory::write_private;
 use crate::verify::HistoryEntry;
@@ -62,6 +66,11 @@ pub struct FileOverride {
     #[serde(default)]
     pub tags: Vec<String>,
     pub level: Option<Level>,
+    /// Recipes that may check this key. With several, a pass from any of them counts.
+    #[serde(default)]
+    pub recipes: Vec<String>,
+    /// The label or JSON path that holds the key, in a file with more than one value.
+    pub field: Option<String>,
 }
 
 /// The parts of an inventory that a catalog uses.
@@ -96,7 +105,12 @@ pub struct Row {
     pub reviewed: bool,
     pub last_result: String,
     pub last_checked: String,
+    pub recipes: Vec<String>,
+    pub field: String,
 }
+
+/// Prefixes that belong to one provider, and whose recipe ships with keyreeve.
+const PROVEN_KINDS: &[&str] = &["anthropic", "github", "gitlab", "sentry", "supabase"];
 
 pub fn parse_inventory(text: &str) -> Result<Vec<InventoryItem>, String> {
     let inventory: Inventory = serde_json::from_str(text).map_err(|e| e.to_string())?;
@@ -180,6 +194,15 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
     } else {
         Level::Ask
     });
+    let file = rules.files.get(&item.path);
+    let mut recipes = file.map(|f| f.recipes.clone()).unwrap_or_default();
+    if recipes.is_empty() && item.format == "single-value" {
+        if let [kind] = item.kinds.as_slice() {
+            if PROVEN_KINDS.contains(&kind.as_str()) {
+                recipes.push(kind.clone());
+            }
+        }
+    }
     Row {
         path: item.path.clone(),
         level,
@@ -191,12 +214,14 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         reviewed,
         last_result: String::new(),
         last_checked: String::new(),
+        recipes,
+        field: file.and_then(|f| f.field.clone()).unwrap_or_default(),
     }
 }
 
 pub fn to_csv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked\n",
+        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field\n",
     );
     for row in rows {
         let cells = [
@@ -210,6 +235,8 @@ pub fn to_csv(rows: &[Row]) -> String {
             row.reviewed.to_string(),
             csv_cell(&row.last_result),
             row.last_checked.clone(),
+            csv_cell(&row.recipes.join(" ")),
+            csv_cell(&row.field),
         ];
         out.push_str(&cells.join(","));
         out.push('\n');
@@ -387,6 +414,36 @@ files: { deploy.key: { tags: [shared], level: ask } }
 
         let rows = build(&[item("a.txt")], &Rules::default(), &history[..2]);
         assert_eq!(rows[0].last_result, "rejected");
+    }
+
+    #[test]
+    fn a_key_gets_a_recipe_only_if_you_name_one_or_its_prefix_proves_it() {
+        let mut proven = item("a.txt");
+        proven.kinds = vec!["github".into()];
+        let mut env = item("c.env");
+        env.format = "env".into();
+        env.kinds = vec!["github".into()];
+        let mut mixed = item("d.txt");
+        mixed.kinds = vec!["github".into(), "gitlab".into()];
+        let rows = build(
+            &[proven, item("b-stripe.txt"), env, mixed, item("e.env")],
+            &rules(
+                r#"
+rules: [{ match: [stripe], tags: [provider:stripe] }]
+files: { e.env: { recipes: [meta, instagram], field: TOKEN } }
+"#,
+            ),
+            &[],
+        );
+        assert_eq!(rows[0].recipes, ["github"]);
+        assert!(rows[1].recipes.is_empty(), "a tag is not proof");
+        assert!(
+            rows[2].recipes.is_empty(),
+            "which value in the file is unknown"
+        );
+        assert!(rows[3].recipes.is_empty(), "two providers in one file");
+        assert_eq!(rows[4].recipes, ["meta", "instagram"]);
+        assert_eq!(rows[4].field, "TOKEN");
     }
 
     #[test]

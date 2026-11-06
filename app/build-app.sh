@@ -4,11 +4,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+cargo build --release --locked --manifest-path ../Cargo.toml
 swift build -c release
 BIN=$(swift build -c release --show-bin-path)
 APP="dist/Keyreeve.app"
+rm -f "$APP/Contents/MacOS/Keyreeve" "$APP/Contents/MacOS/keyreeve-cli"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN/Keyreeve" "$APP/Contents/MacOS/Keyreeve"
+# Not "keyreeve": most Mac disks ignore case, so it would replace the app itself.
+cp ../target/release/keyreeve "$APP/Contents/MacOS/keyreeve-cli"
 cp "$BIN/keyreeve-vault" dist/keyreeve-vault
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -26,5 +30,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 codesign --force --sign - dist/keyreeve-vault
+codesign --force --sign - "$APP/Contents/MacOS/keyreeve-cli"
 codesign --force --sign - "$APP"
 echo "Built $APP and dist/keyreeve-vault"

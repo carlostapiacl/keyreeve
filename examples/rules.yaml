@@ -19,8 +19,12 @@ rules:
   - match: [.bak, .old]
     tags: [status:backup]
 
-# An exact path replaces the level the rules chose, and adds its tags.
+# An exact path replaces the level the rules chose, and adds its tags. `recipes` lets a key be
+# checked. It is set per file, because a wrong one sends the key to the wrong company.
 files:
   old-notes.txt:
     tags: [status:review]
     level: never
+  app.env:
+    recipes: [github]
+    field: GITHUB_TOKEN

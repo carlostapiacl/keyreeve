@@ -11,12 +11,14 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var reviewed: Bool
     public var lastResult: String
     public var lastChecked: String
+    public var recipes: [String]
+    public var field: String
     public var id: String { path }
 
     public init(
         path: String, level: String = "ask", tags: [String] = [], format: String = "",
         modified: String = "", mode: String = "600", reviewed: Bool = true,
-        lastResult: String = "", lastChecked: String = ""
+        lastResult: String = "", lastChecked: String = "", recipes: [String] = [], field: String = ""
     ) {
         self.path = path
         self.level = level
@@ -27,18 +29,35 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         self.reviewed = reviewed
         self.lastResult = lastResult
         self.lastChecked = lastChecked
+        self.recipes = recipes
+        self.field = field
     }
 
-    /// Why this file deserves a look, or nil. These are the same for anyone's keys.
-    public var attention: String? {
-        let isBackup = tags.contains("status:backup")
-        if lastResult == "works" && isBackup { return "An old copy that still works" }
-        if tags.contains("revoke") { return "Marked to revoke" }
-        if lastResult == "rejected" && !isBackup { return "The last check was rejected" }
-        if level != "none" && mode != "600" && !mode.isEmpty { return "Others can read this file" }
-        if !reviewed { return "Not covered by your rules" }
+    /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
+    public var canCheck: Bool { (level == "free" || level == "ask") && !recipes.isEmpty }
+
+    /// Why a check is not offered, for the button's help text.
+    public var whyNoCheck: String? {
+        if level == "never" { return "This key is set to never: only you use it" }
+        if level == "none" { return "This is not a secret" }
+        if recipes.isEmpty { return "No recipe assigned, so keyreeve does not know where to check it" }
         return nil
     }
+
+    /// Why this file deserves a look and how urgent it is, most urgent first.
+    public var attentionRanked: (rank: Int, text: String)? {
+        let isBackup = tags.contains("status:backup")
+        let revoke = tags.contains("revoke")
+        if revoke && lastResult == "works" { return (0, "Still works: revoke it") }
+        if revoke { return (1, "Marked to revoke") }
+        if lastResult == "works" && isBackup { return (2, "An old copy that still works") }
+        if lastResult == "rejected" && !isBackup { return (3, "The last check was rejected") }
+        if level != "none" && mode != "600" && !mode.isEmpty { return (4, "Others can read this file") }
+        if !reviewed { return (5, "Not covered by your rules") }
+        return nil
+    }
+
+    public var attention: String? { attentionRanked?.text }
 
     public var isSecret: Bool { level != "none" }
 }
@@ -66,6 +85,8 @@ public enum CatalogParser {
         let reviewed = try column("reviewed")
         let result = header.firstIndex(of: "last_result")
         let checked = header.firstIndex(of: "last_checked")
+        let recipes = header.firstIndex(of: "recipes")
+        let field = header.firstIndex(of: "field")
         return rows.dropFirst().compactMap { row in
             guard row.count == header.count else { return nil }
             return CatalogItem(
@@ -77,7 +98,9 @@ public enum CatalogParser {
                 mode: row[mode],
                 reviewed: row[reviewed] == "true",
                 lastResult: result.map { row[$0] } ?? "",
-                lastChecked: checked.map { row[$0] } ?? "")
+                lastChecked: checked.map { row[$0] } ?? "",
+                recipes: recipes.map { row[$0].split(separator: " ").map(String.init) } ?? [],
+                field: field.map { row[$0] } ?? "")
         }
     }
 
@@ -130,8 +153,10 @@ public enum CatalogParser {
 }
 
 public enum Sidebar: Hashable, Sendable {
+    case home
     case all
     case attention
+    case checkable
     case level(String)
     case tag(String)
 }
@@ -139,8 +164,9 @@ public enum Sidebar: Hashable, Sendable {
 public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String) -> [CatalogItem] {
     let chosen = items.filter { item in
         switch selection {
-        case .all: return true
+        case .home, .all: return true
         case .attention: return item.attention != nil
+        case .checkable: return item.canCheck
         case .level(let level): return item.level == level
         case .tag(let tag): return item.tags.contains(tag)
         }
@@ -161,4 +187,109 @@ public func projectTags(in items: [CatalogItem]) -> [(tag: String, count: Int)] 
     }
     return counts.map { (tag: $0.key, count: $0.value) }
         .sorted { ($0.count, $1.tag) > ($1.count, $0.tag) }
+}
+
+
+/// The figures on the home screen, worked out from the catalog alone.
+public struct CatalogStats: Sendable {
+    public struct Bucket: Identifiable, Sendable {
+        public let label: String
+        public let count: Int
+        public let target: Sidebar?
+        public var id: String { label }
+    }
+
+    public let total: Int
+    public let secrets: Int
+    public let needLook: [CatalogItem]
+    public let works: Int
+    public let rejected: Int
+    public let noAnswer: Int
+    public let neverChecked: Int
+    public let canCheck: Int
+    public let projects: [Bucket]
+    public let ages: [Bucket]
+
+    public var checked: Int { works + rejected + noAnswer }
+
+    public init(items: [CatalogItem], now: Date = Date(), maxProjects: Int = 8) {
+        let secretItems = items.filter(\.isSecret)
+        total = items.count
+        secrets = secretItems.count
+        needLook = items.filter { $0.attention != nil }.sorted {
+            ($0.attentionRanked?.rank ?? 9, $0.path) < ($1.attentionRanked?.rank ?? 9, $1.path)
+        }
+        works = secretItems.filter { $0.lastResult == "works" }.count
+        rejected = secretItems.filter { $0.lastResult == "rejected" }.count
+        noAnswer = secretItems.filter { $0.lastResult == "forbidden" || $0.lastResult == "no_result" }.count
+        neverChecked = secretItems.filter { $0.lastResult.isEmpty }.count
+        canCheck = items.filter(\.canCheck).count
+
+        let tags = projectTags(in: secretItems)
+        var buckets = tags.prefix(maxProjects).map {
+            Bucket(label: $0.tag, count: $0.count, target: .tag($0.tag))
+        }
+        let rest = tags.dropFirst(maxProjects).reduce(0) { $0 + $1.count }
+        if rest > 0 { buckets.append(Bucket(label: "Other", count: rest, target: nil)) }
+        projects = buckets
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        var counts = [0, 0, 0, 0]
+        for item in secretItems {
+            guard let date = formatter.date(from: item.modified) else { continue }
+            let days = now.timeIntervalSince(date) / 86_400
+            counts[days < 30 ? 0 : days < 90 ? 1 : days < 365 ? 2 : 3] += 1
+        }
+        ages = zip(["Under 30 days", "30 to 90 days", "90 days to a year", "Over a year"], counts).map {
+            Bucket(label: $0, count: $1, target: nil)
+        }
+    }
+}
+
+/// One thing that happened to a key: a check, or a use through the vault. It holds no value.
+public struct ActivityItem: Identifiable, Hashable, Sendable {
+    public let at: Date
+    public let key: String
+    public let kind: Kind
+    public var id: String { "\(at.timeIntervalSince1970)-\(key)-\(kind)" }
+
+    public enum Kind: Hashable, Sendable {
+        case checked(result: String)
+        case used(by: String)
+    }
+
+    public init(at: Date, key: String, kind: Kind) {
+        self.at = at
+        self.key = key
+        self.kind = kind
+    }
+
+    /// With several recipes for one file in one run, a pass from any of them counts.
+    public static func parse(history: String, usage: String, limit: Int = 8) -> [ActivityItem] {
+        struct Check: Decodable { let at: Double; let file: String; let result: String }
+        struct Use: Decodable { let at: Double; let name: String; let command: String }
+        let decoder = JSONDecoder()
+        let checks = history.split(whereSeparator: \.isNewline).compactMap {
+            try? decoder.decode(Check.self, from: Data($0.utf8))
+        }
+        var merged: [String: Check] = [:]
+        for check in checks {
+            let id = "\(check.at)-\(check.file)"
+            if merged[id] == nil || check.result == "works" { merged[id] = check }
+        }
+        let uses = usage.split(whereSeparator: \.isNewline).compactMap {
+            try? decoder.decode(Use.self, from: Data($0.utf8))
+        }
+        let all =
+            merged.values.map {
+                ActivityItem(at: Date(timeIntervalSince1970: $0.at), key: $0.file, kind: .checked(result: $0.result))
+            }
+            + uses.map {
+                ActivityItem(at: Date(timeIntervalSince1970: $0.at), key: $0.name, kind: .used(by: $0.command))
+            }
+        return Array(all.sorted { ($0.at, $0.key) > ($1.at, $1.key) }.prefix(limit))
+    }
 }

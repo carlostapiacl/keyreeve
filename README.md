@@ -76,7 +76,7 @@ If your keys live in a folder of text files, start here. Neither command changes
 
 ```bash
 keyreeve inventory ~/my-keys --out ~/.keyreeve/inventory.json
-keyreeve catalog ~/.keyreeve/inventory.json --rules ~/.keyreeve/rules.yaml --out ~/.keyreeve/catalog.csv
+keyreeve catalog ~/.keyreeve/inventory.json --rules ~/.keyreeve/rules.yaml --history ~/.keyreeve/history.jsonl --out ~/.keyreeve/catalog.csv
 ```
 
 `inventory` describes each file: name, date, permissions, format, labels and the kind of key, recognized
@@ -126,9 +126,19 @@ app/build-app.sh
 open app/dist/Keyreeve.app
 ```
 
-It reads `~/.keyreeve/catalog.csv`, and it shows which keys need a look: an old copy that still works, a key
-that was rejected, a file others can read. It cannot run a check yet. The build is not notarized, so macOS warns
+It reads `~/.keyreeve/catalog.csv`. The overview shows what to do first, such as an old copy that still works or a key
+that was rejected, along with how many keys were checked, how old the files are and what happened lately. Refresh
+scans the folder again. Each use through the vault is recorded with the key's name and the program's name, and no value. The Check button sends one read-only request for each key, and keys set
+to `ask` need your fingerprint first. Keys set to `never` are not offered. The build is not notarized, so macOS warns
 you the first time.
+
+A check sends a key to a provider, so a tag is not enough for it. A key is offered only if your rules name its recipe,
+or if its prefix proves the provider:
+
+```yaml
+files:
+  app.env: { recipes: [github], field: GITHUB_TOKEN }
+```
 
 ## The vault (Mac)
 
@@ -152,7 +162,7 @@ connect to `verify` or to the app.
 - Connecting the vault to `verify` and to rotation, and storage for Linux and Windows
 - Places to update: `.env`, GitHub, Netlify
 - Recipes that can rotate a real provider
-- Checks and editing in the app
+- Editing tags and levels in the app
 - Approvals that expire
 - Integration with [seisin](https://github.com/carlostapiacl/seisin), which gives each agent its own keys
 

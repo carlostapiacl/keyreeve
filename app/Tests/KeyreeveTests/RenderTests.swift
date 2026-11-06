@@ -1,5 +1,6 @@
 import AppKit
 import KeyreeveCatalog
+import Foundation
 import KeyreeveUI
 import SwiftUI
 import Testing
@@ -8,7 +9,8 @@ import Testing
 @MainActor
 struct RenderTests {
     static let sample = [
-        CatalogItem(path: "backups/billing-old.env", tags: ["shop", "status:backup"], modified: "2025-03-02", lastResult: "works", lastChecked: "2026-11-06", recipes: ["github"]),
+        CatalogItem(path: "old-cloud.csv", tags: ["revoke", "provider:aws"], modified: "2024-02-13", lastResult: "works", lastChecked: "2026-11-06"),
+        CatalogItem(path: "backups/billing-old.env", tags: ["shop", "status:backup"], modified: "2025-03-02", lastResult: "works", lastChecked: "2026-11-06", recipes: ["github"], labels: ["GITHUB_TOKEN", "OTHER"]),
         CatalogItem(path: "hosting-readonly.txt", level: "free", tags: ["infra", "read-only"], modified: "2026-04-19", lastResult: "works", lastChecked: "2026-11-06"),
         CatalogItem(path: "notes/legacy-mail.txt", tags: ["blog"], modified: "2024-02-13", mode: "644"),
         CatalogItem(path: "payments.json", level: "never", tags: ["shop", "money"], modified: "2026-05-30"),
@@ -35,26 +37,37 @@ struct RenderTests {
         }
     }
 
-    @Test func testTheViewsDrawInBothAppearances() throws {
-        let catalog = CatalogView(
-            items: Self.sample, source: "~/.keyreeve/catalog.csv", message: "Checked 1: 1 work", initial: .attention)
-        try render(catalog, named: "catalog-light", appearance: .aqua)
-        try render(catalog, named: "catalog-dark", appearance: .darkAqua)
-        let detail = CatalogView(
-            items: Self.sample, source: "~/.keyreeve/catalog.csv", initial: .attention,
-            chosen: "backups/billing-old.env")
-        try render(detail, named: "detail", appearance: .aqua)
+    func model() -> AppModel {
+        let model = AppModel(
+            files: KeyreeveFiles(directory: FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-render")),
+            binary: nil)
+        model.items = Self.sample
+        model.hasCatalog = true
+        model.unlocked = true
         let at = Date(timeIntervalSince1970: 1_793_900_000)
-        let home = CatalogView(
-            items: Self.sample, source: "~/.keyreeve/catalog.csv",
-            activity: [
-                ActivityItem(at: at, key: "hosting-readonly.txt", kind: .checked(result: "works")),
-                ActivityItem(at: at, key: "mail-token.txt", kind: .checked(result: "rejected")),
-                ActivityItem(at: at.addingTimeInterval(-90_000), key: "hosting-token", kind: .used(by: "deploy.sh")),
-            ])
-        try render(home, named: "home-light", appearance: .aqua)
-        try render(home, named: "home-dark", appearance: .darkAqua)
-        try render(LockedView(message: nil, unlock: {}), named: "locked", appearance: .aqua)
-        try render(EmptyCatalogView(problem: "There is no catalog yet", path: "~/.keyreeve/catalog.csv"), named: "empty", appearance: .aqua)
+        model.activity = [
+            ActivityItem(at: at, key: "hosting-readonly.txt", kind: .checked(result: "works")),
+            ActivityItem(at: at, key: "mail-token.txt", kind: .checked(result: "rejected")),
+            ActivityItem(at: at.addingTimeInterval(-90_000), key: "hosting-token", kind: .used(by: "deploy.sh")),
+        ]
+        model.message = "Up to date"
+        return model
+    }
+
+    @Test func testTheViewsDrawInEachLanguageAndAppearance() throws {
+        defer { UserDefaults.standard.removeObject(forKey: Language.settingsKey) }
+        for language in [Language.english, Language.spanish] {
+            UserDefaults.standard.set(language.rawValue, forKey: Language.settingsKey)
+            let code = language == .spanish ? "es" : "en"
+            let model = self.model()
+            try render(MainView(model: model), named: "home-\(code)-light", appearance: .aqua)
+            try render(MainView(model: model), named: "home-\(code)-dark", appearance: .darkAqua)
+            let detail = MainView(model: model, initial: .attention, chosen: "backups/billing-old.env")
+            try render(detail, named: "detail-\(code)", appearance: .aqua)
+            try render(MainView(model: model, initial: .all), named: "list-\(code)", appearance: .darkAqua)
+            try render(WelcomeView(choose: {}), named: "welcome-\(code)", appearance: .aqua)
+            try render(SettingsView(model: model), named: "settings-\(code)", appearance: .aqua)
+            try render(LockedView(message: nil, unlock: {}), named: "locked-\(code)", appearance: .aqua)
+        }
     }
 }

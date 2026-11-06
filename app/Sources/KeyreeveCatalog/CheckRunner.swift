@@ -19,6 +19,8 @@ public struct KeyreeveFiles: Sendable {
     public var rules: URL { directory.appendingPathComponent("rules.yaml") }
     public var history: URL { directory.appendingPathComponent("history.jsonl") }
     public var usage: URL { directory.appendingPathComponent("usage.jsonl") }
+    public var edits: URL { directory.appendingPathComponent("edits.json") }
+    public var ignored: URL { directory.appendingPathComponent("ignored.json") }
     public var words: URL { directory.appendingPathComponent("words.txt") }
     var plan: URL { directory.appendingPathComponent(".check-plan.json") }
     var settings: URL { directory.appendingPathComponent("app-settings.json") }
@@ -78,7 +80,7 @@ public enum CheckRunner {
             binary,
             ["verify", "--plan", files.plan.path, "--keys", keysFolder.path, "--history", files.history.path])
         // 0 is all passed and 1 is at least one did not. Both finished their work.
-        guard verify == 0 || verify == 1 else { throw CheckError("The check could not start") }
+        guard verify == 0 || verify == 1 else { throw CheckError(T("The check could not start")) }
 
         try rebuildCatalog(binary: binary, files: files)
     }
@@ -91,21 +93,22 @@ public enum CheckRunner {
             arguments += ["--words", files.words.path]
         }
         guard try execute(binary, arguments) == 0 else {
-            throw CheckError("The folder could not be scanned")
+            throw CheckError(T("The folder could not be scanned"))
         }
         try rebuildCatalog(binary: binary, files: files)
     }
 
-    private static func rebuildCatalog(binary: URL, files: KeyreeveFiles) throws {
+    public static func rebuildCatalog(binary: URL, files: KeyreeveFiles) throws {
         guard FileManager.default.fileExists(atPath: files.inventory.path) else {
-            throw CheckError("There is no inventory, so the catalog was not updated")
+            throw CheckError(T("Scan the folder first"))
         }
         var arguments = ["catalog", files.inventory.path, "--out", files.catalog.path, "--history", files.history.path]
         if FileManager.default.fileExists(atPath: files.rules.path) {
             arguments += ["--rules", files.rules.path]
         }
+        arguments += ["--edits", files.edits.path]
         guard try execute(binary, arguments) == 0 else {
-            throw CheckError("The catalog could not be updated")
+            throw CheckError(T("The list could not be updated"))
         }
     }
 

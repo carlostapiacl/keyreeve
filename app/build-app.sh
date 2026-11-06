@@ -9,7 +9,9 @@ swift build -c release
 BIN=$(swift build -c release --show-bin-path)
 APP="dist/Keyreeve.app"
 rm -f "$APP/Contents/MacOS/Keyreeve" "$APP/Contents/MacOS/keyreeve-cli"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+swift Tools/make-icon.swift .build/AppIcon.iconset
+iconutil -c icns .build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN/Keyreeve" "$APP/Contents/MacOS/Keyreeve"
 # Not "keyreeve": most Mac disks ignore case, so it would replace the app itself.
 cp ../target/release/keyreeve "$APP/Contents/MacOS/keyreeve-cli"
@@ -23,6 +25,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>io.github.carlostapiacl.keyreeve</string>
     <key>CFBundleExecutable</key><string>Keyreeve</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>

@@ -57,6 +57,9 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
 - **The recovery key opens everything.** Whoever holds it does not need the Mac.
 - **The app's lock covers the window.** The catalog it shows is a plain file with names and results, and it never holds
   a value.
+- **The app's settings decide where a key is sent.** `edits.json` and your rules name the recipe for each key. A program
+  running as you could change them, and the next check would send the key to another listed provider.
+- **Pressing "I already revoked it" is proof only with a check.** A key with no recipe is marked on your word alone.
 - **The format has had no outside review.** It uses standard CryptoKit parts (P-256, HKDF, AES-GCM), put together here.
 
 ## Known limits of the simulator

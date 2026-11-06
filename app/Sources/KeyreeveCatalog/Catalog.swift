@@ -13,12 +13,16 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var lastChecked: String
     public var recipes: [String]
     public var field: String
+    public var labels: [String]
+    /// When "ignore" ends. Until then the key asks for no attention.
+    public var ignoredUntil: Date?
     public var id: String { path }
 
     public init(
         path: String, level: String = "ask", tags: [String] = [], format: String = "",
         modified: String = "", mode: String = "600", reviewed: Bool = true,
-        lastResult: String = "", lastChecked: String = "", recipes: [String] = [], field: String = ""
+        lastResult: String = "", lastChecked: String = "", recipes: [String] = [], field: String = "",
+        labels: [String] = [], ignoredUntil: Date? = nil
     ) {
         self.path = path
         self.level = level
@@ -31,6 +35,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         self.lastChecked = lastChecked
         self.recipes = recipes
         self.field = field
+        self.labels = labels
+        self.ignoredUntil = ignoredUntil
     }
 
     /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
@@ -38,22 +44,27 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
 
     /// Why a check is not offered, for the button's help text.
     public var whyNoCheck: String? {
-        if level == "never" { return "This key is set to never: only you use it" }
-        if level == "none" { return "This is not a secret" }
-        if recipes.isEmpty { return "No recipe assigned, so keyreeve does not know where to check it" }
+        if level == "never" { return T("Only you use this key") }
+        if level == "none" { return T("This is not a secret") }
+        if recipes.isEmpty { return T("Choose where to check it") }
         return nil
     }
 
+    public var isDone: Bool { tags.contains("status:revoked") || tags.contains("status:retired") }
+
     /// Why this file deserves a look and how urgent it is, most urgent first.
-    public var attentionRanked: (rank: Int, text: String)? {
+    public var attentionRanked: (rank: Int, text: String)? { attentionRanked(at: Date()) }
+
+    public func attentionRanked(at now: Date) -> (rank: Int, text: String)? {
+        if let until = ignoredUntil, until > now { return nil }
         let isBackup = tags.contains("status:backup")
         let revoke = tags.contains("revoke")
-        if revoke && lastResult == "works" { return (0, "Still works: revoke it") }
-        if revoke { return (1, "Marked to revoke") }
-        if lastResult == "works" && isBackup { return (2, "An old copy that still works") }
-        if lastResult == "rejected" && !isBackup { return (3, "The last check was rejected") }
-        if level != "none" && mode != "600" && !mode.isEmpty { return (4, "Others can read this file") }
-        if !reviewed { return (5, "Not covered by your rules") }
+        if revoke && lastResult == "works" { return (0, T("Still works: revoke it")) }
+        if revoke { return (1, T("Marked to revoke")) }
+        if lastResult == "works" && isBackup { return (2, T("An old copy that still works")) }
+        if lastResult == "rejected" && !isBackup && !isDone { return (3, T("The last check was rejected")) }
+        if level != "none" && mode != "600" && !mode.isEmpty { return (4, T("Others can read this file")) }
+        if !reviewed { return (5, T("Not sorted yet")) }
         return nil
     }
 
@@ -87,6 +98,7 @@ public enum CatalogParser {
         let checked = header.firstIndex(of: "last_checked")
         let recipes = header.firstIndex(of: "recipes")
         let field = header.firstIndex(of: "field")
+        let labels = header.firstIndex(of: "labels")
         return rows.dropFirst().compactMap { row in
             guard row.count == header.count else { return nil }
             return CatalogItem(
@@ -100,7 +112,8 @@ public enum CatalogParser {
                 lastResult: result.map { row[$0] } ?? "",
                 lastChecked: checked.map { row[$0] } ?? "",
                 recipes: recipes.map { row[$0].split(separator: " ").map(String.init) } ?? [],
-                field: field.map { row[$0] } ?? "")
+                field: field.map { row[$0] } ?? "",
+                labels: labels.map { row[$0].split(separator: "|").map(String.init) } ?? [])
         }
     }
 
@@ -183,7 +196,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
 public func projectTags(in items: [CatalogItem]) -> [(tag: String, count: Int)] {
     var counts: [String: Int] = [:]
     for item in items {
-        for tag in item.tags where !tag.contains(":") && tag != "confirm" { counts[tag, default: 0] += 1 }
+        for tag in item.tags where !tag.contains(":") && !["confirm", "revoke"].contains(tag) { counts[tag, default: 0] += 1 }
     }
     return counts.map { (tag: $0.key, count: $0.value) }
         .sorted { ($0.count, $1.tag) > ($1.count, $0.tag) }
@@ -230,7 +243,7 @@ public struct CatalogStats: Sendable {
             Bucket(label: $0.tag, count: $0.count, target: .tag($0.tag))
         }
         let rest = tags.dropFirst(maxProjects).reduce(0) { $0 + $1.count }
-        if rest > 0 { buckets.append(Bucket(label: "Other", count: rest, target: nil)) }
+        if rest > 0 { buckets.append(Bucket(label: T("Other"), count: rest, target: nil)) }
         projects = buckets
 
         let formatter = DateFormatter()
@@ -243,7 +256,9 @@ public struct CatalogStats: Sendable {
             let days = now.timeIntervalSince(date) / 86_400
             counts[days < 30 ? 0 : days < 90 ? 1 : days < 365 ? 2 : 3] += 1
         }
-        ages = zip(["Under 30 days", "30 to 90 days", "90 days to a year", "Over a year"], counts).map {
+        ages = zip(
+            [T("Under 30 days"), T("30 to 90 days"), T("90 days to a year"), T("Over a year")], counts
+        ).map {
             Bucket(label: $0, count: $1, target: nil)
         }
     }

@@ -106,6 +106,7 @@ struct RenderTests {
             try render(MainView(model: ready, initial: .vault), named: "vault-rotations-\(code)", appearance: .aqua)
             ready.providers = ProviderDirectory([ProviderInfo(id: "aws", name: "AWS", can_rotate: true)])
             ready.items[0].vault = .sealed
+            try render(MainView(model: ready, initial: .vault), named: "vault-sealed-\(code)", appearance: .aqua)
             try render(MainView(model: ready, initial: .all, chosen: "old-cloud.csv"), named: "rotate-\(code)", appearance: .aqua)
         }
     }

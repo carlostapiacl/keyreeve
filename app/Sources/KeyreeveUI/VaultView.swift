@@ -51,6 +51,7 @@ struct VaultView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 summary
+                if !sealed.isEmpty { sealedCard }
                 if !openRotations.isEmpty { rotationsCard }
                 agentsCard
                 if let report = model.vaultComparison { comparison(report) }
@@ -155,6 +156,24 @@ struct VaultView: View {
                         ForEach(status.manual, id: \.self) { line in
                             Label(T(line), systemImage: "hand.raised").font(Theme.caption).foregroundStyle(Theme.warn)
                                 .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    /// The keys themselves, since using one is why they are here. Each opens on a fingerprint.
+    private var sealedCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionTitle(T("Your sealed keys"))
+                ForEach(sealed) { item in
+                    HStack(spacing: 10) {
+                        KeyRow(item: item, compact: true)
+                        if item.vault == .sealed || item.vault == .outdated {
+                            CopyKeyButton(item: item, model: model)
                         }
                     }
                 }

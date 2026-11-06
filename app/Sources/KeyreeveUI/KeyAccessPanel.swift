@@ -10,7 +10,7 @@ struct KeyAccessPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            copyButton
+            CopyKeyButton(item: item, model: model)
             Text(T("Agents")).font(Theme.caption).foregroundStyle(Theme.muted).padding(.top, 6)
             Text(allowed.isEmpty ? T("No agent can use this key.") : T("Programs an agent may run with this key. Each use asks for your finger, and the agent never gets the value."))
                 .font(Theme.caption).foregroundStyle(Theme.muted)
@@ -37,9 +37,14 @@ struct KeyAccessPanel: View {
             .buttonStyle(KRButtonStyle())
         }
     }
+}
 
-    /// A file with named values asks which one, since "the key" could be any of them.
-    @ViewBuilder private var copyButton: some View {
+/// Copies a sealed key. A file with named values asks which one, since "the key" could be any of them.
+struct CopyKeyButton: View {
+    let item: CatalogItem
+    @ObservedObject var model: AppModel
+
+    var body: some View {
         if item.field.isEmpty && item.labels.count > 1 {
             Menu {
                 ForEach(item.labels, id: \.self) { label in

@@ -67,6 +67,21 @@ every operation, then again at every operation of the recovery. After each stop 
 A pass means the recipe and the engine hold up against the simulator. It does not prove that the
 real provider behaves as the recipe describes.
 
+## See what you have
+
+```bash
+cargo run -- inventory ~/my-keys --out ~/.keyreeve/inventory.json
+```
+
+This describes a folder of keys: file names, dates, permissions, formats, labels and the kind of key,
+recognized by its prefix. It reads `.env` files, JSON and loose notes with `=`, `:`, `=>`, `|` or tabs, in
+any mix. Whatever follows a separator is ignored. From comments and notes it keeps only words on a closed
+list, such as `token` or a provider's name. A label with any other word is counted but not shown.
+
+Values stay out, so you can hand the report to an agent that must not see them. File names and labels do
+go in, so keep the report private. A password in capitals placed before a separator would read as a
+variable name, and a file named after a secret would show that name. It is written with mode 600.
+
 ## What is missing
 
 - `keyreeve rotate` and `resume` as commands, and a test against a real provider

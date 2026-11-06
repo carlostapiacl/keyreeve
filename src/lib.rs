@@ -4,6 +4,7 @@
 //! those steps so that a failure or a crash at any point leaves working keys behind.
 
 pub mod engine;
+pub mod inventory;
 pub mod journal;
 pub mod recipe;
 pub mod secret;

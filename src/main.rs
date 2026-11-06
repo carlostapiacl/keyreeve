@@ -1,5 +1,7 @@
+use keyreeve::inventory;
 use keyreeve::recipe::Recipe;
 use keyreeve::simulate;
+use std::path::Path;
 use std::process::ExitCode;
 use std::{env, fs};
 
@@ -9,8 +11,34 @@ keyreeve rotates API keys on your own machine.
 Usage:
   keyreeve check <recipe.yaml>...      validate recipes
   keyreeve simulate <recipe.yaml>...   run recipes through failures and crashes, offline
+  keyreeve inventory <folder> --out <file>   describe a folder of keys, without their values
   keyreeve --version
 ";
+
+fn run_inventory(args: &[String]) -> ExitCode {
+    let [folder, flag, out] = args else {
+        eprint!("{HELP}");
+        return ExitCode::from(2);
+    };
+    if flag != "--out" {
+        eprint!("{HELP}");
+        return ExitCode::from(2);
+    }
+    let result = inventory::scan(Path::new(folder)).and_then(|report| {
+        inventory::write_report(&report, Path::new(folder), Path::new(out))?;
+        Ok(report)
+    });
+    match result {
+        Ok(report) => {
+            println!("{} files described in {out}", report.items.len());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("inventory: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
 
 const MAX_VIOLATIONS_SHOWN: usize = 20;
 
@@ -37,6 +65,7 @@ fn main() -> ExitCode {
             print!("{HELP}");
             return ExitCode::SUCCESS;
         }
+        "inventory" => return run_inventory(paths),
         "check" | "simulate" if !paths.is_empty() => {}
         _ => {
             eprint!("{HELP}");

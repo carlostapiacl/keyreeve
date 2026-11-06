@@ -158,8 +158,12 @@ fn a_path_in_a_plan_cannot_skip_an_approval() {
     let output = verify(&home.0, &format!(r#"{{"a.txt":"{CANARY}"}}"#), true);
     assert!(!output.status.success());
     let history = fs::read_to_string(home.0.join("history.jsonl")).unwrap();
+    // Refused for what it is. A failed connection would mean it tried to send the key.
     assert!(history.contains("no_result"));
-    assert!(!history.contains("works"));
+    assert!(
+        !history.contains("did not complete"),
+        "it tried to reach the host"
+    );
 }
 
 #[test]

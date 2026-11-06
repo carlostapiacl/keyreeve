@@ -396,7 +396,6 @@ impl World {
                 overlap_secs,
                 issued_name: KEY.to_owned(),
                 known_id: None,
-                trust_recorded_id: true,
             },
             mock: Rc::new(RefCell::new(mock)),
             values: Rc::new(RefCell::new(values)),

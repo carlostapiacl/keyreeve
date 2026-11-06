@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use zeroize::Zeroizing;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
     /// The key's name in the vault, which is its file's path.
@@ -47,21 +47,9 @@ pub struct Plan {
     /// `provider/action`: a button of yours that receives the new key on stdin.
     #[serde(default)]
     pub place_actions: Vec<String>,
-    /// False when the key was replaced by hand after its last rotation.
-    #[serde(default = "yes")]
-    pub trust_recorded_id: bool,
-}
-
-fn yes() -> bool {
-    true
-}
-
-/// The places a rotation started with. Undoing one must reach every place that got the new key,
-/// even if the settings changed in between, so these are kept until the rotation closes.
-#[derive(Debug, Serialize, Deserialize)]
-struct FrozenPlaces {
-    files: Vec<String>,
-    actions: Vec<String>,
+    /// How many lines the journal held for this key when its copy was opened. A different count
+    /// means another window rotated it since then, and the opened copy may be a revoked key.
+    pub expected_events: Option<usize>,
 }
 
 fn frozen_path(journal: &Path, key: &str) -> PathBuf {
@@ -69,15 +57,13 @@ fn frozen_path(journal: &Path, key: &str) -> PathBuf {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    journal.with_extension(format!("places-{digest}"))
+    journal.with_extension(format!("plan-{digest}"))
 }
 
-fn freeze_places(journal: &Path, plan: &Plan) -> Result<(), String> {
-    let frozen = FrozenPlaces {
-        files: plan.place_files.clone(),
-        actions: plan.place_actions.clone(),
-    };
-    let text = serde_json::to_vec(&frozen).map_err(|e| e.to_string())?;
+/// Keeps the plan a rotation started with. Undoing one must reach every place that got the new
+/// key, even if the settings or the keys folder changed in between. It holds no value.
+fn freeze_plan(journal: &Path, plan: &Plan) -> Result<(), String> {
+    let text = serde_json::to_vec(plan).map_err(|e| e.to_string())?;
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -86,22 +72,16 @@ fn freeze_places(journal: &Path, plan: &Plan) -> Result<(), String> {
         options.mode(0o600);
     }
     let path = frozen_path(journal, &plan.key);
-    let mut file = options
-        .open(&path)
-        .map_err(|e| format!("the places: {e}"))?;
+    let mut file = options.open(&path).map_err(|e| format!("the plan: {e}"))?;
     file.write_all(&text)
         .and_then(|()| file.sync_all())
-        .map_err(|e| format!("the places: {e}"))
+        .map_err(|e| format!("the plan: {e}"))
 }
 
-fn restore_places(journal: &Path, plan: &mut Plan) {
-    let frozen = fs::read(frozen_path(journal, &plan.key))
+fn frozen_plan(journal: &Path, key: &str) -> Option<Plan> {
+    fs::read(frozen_path(journal, key))
         .ok()
-        .and_then(|text| serde_json::from_slice::<FrozenPlaces>(&text).ok());
-    if let Some(frozen) = frozen {
-        plan.place_files = frozen.files;
-        plan.place_actions = frozen.actions;
-    }
+        .and_then(|text| serde_json::from_slice(&text).ok())
 }
 
 fn pending_name(key: &str) -> String {
@@ -162,6 +142,21 @@ impl VaultStore {
     }
 }
 
+/// A provider's answer ends up in your files, and some are read by a shell, so a "key" holding
+/// `$(...)` would run there. Too short also fails, because it could not be swapped safely later.
+fn check_new_key(value: &str) -> Result<(), String> {
+    if value.chars().count() < MIN_SWAP_CHARS {
+        return Err("the new key is too short to handle safely".into());
+    }
+    let safe = value.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '+' | '/' | '=' | ':' | '~')
+    });
+    if !safe {
+        return Err("the new key has characters a key should not have".into());
+    }
+    Ok(())
+}
+
 impl Store for VaultStore {
     fn get(&self, name: &str) -> Result<Option<Secret>, StoreError> {
         if name == self.key {
@@ -182,11 +177,8 @@ impl Store for VaultStore {
             self.text = text;
             self.current = value.clone();
         } else {
-            // Too short to swap safely later, so it never becomes the key.
-            if name == pending_name(&self.key) && value.expose().chars().count() < MIN_SWAP_CHARS {
-                return Err(StoreError(
-                    "the new key is too short to handle safely".into(),
-                ));
+            if name == pending_name(&self.key) {
+                check_new_key(value.expose()).map_err(StoreError)?;
             }
             self.write(name, value.expose())?;
             self.temporary.insert(name.to_owned(), value.clone());
@@ -248,6 +240,7 @@ fn report(outcome: Outcome, journal: &Journal, key: &str) -> Report {
         Outcome::RolledBack { reason } => ("rolled_back", Some(reason), None),
         Outcome::AwaitingOverlap { revoke_after } => ("waiting", None, Some(revoke_after)),
         Outcome::RevokePending => ("revoke_pending", None, None),
+        Outcome::NewKeyFailing => ("new_key_failing", None, None),
         Outcome::RollbackBlocked { sink } => ("rollback_blocked", Some(sink), None),
         Outcome::NothingToDo => ("nothing_to_do", None, None),
     };
@@ -291,6 +284,31 @@ pub fn run(
         .map_err(|e| format!("the journal: {e}"))?;
     lock.try_lock()
         .map_err(|_| "another rotation is running".to_owned())?;
+    let mut record = Journal::open(Box::new(FileBackend::new(journal)))
+        .map_err(|e| format!("the journal: {e}"))?;
+    let events = record
+        .entries()
+        .iter()
+        .filter(|e| e.key == plan.key)
+        .count();
+    if plan
+        .expected_events
+        .is_some_and(|expected| expected != events)
+    {
+        return Err("this key changed while it was being opened, so try again".into());
+    }
+    let phase = record.phase(&plan.key);
+    let open = phase != Phase::Idle;
+    if open {
+        match frozen_plan(journal, &plan.key) {
+            Some(frozen) => plan = frozen,
+            // With only a name to go on, nothing says which places hold the new key.
+            None if plan.recipe.is_empty() => {
+                return Err("this rotation's plan is lost, so it needs its key's settings".into())
+            }
+            None => {}
+        }
+    }
     let recipe = resolve(&plan.recipe, plan.host.as_deref())?;
     if !recipe.can_rotate() {
         return Err(format!(
@@ -298,15 +316,11 @@ pub fn run(
             plan.recipe
         ));
     }
-    let mut record = Journal::open(Box::new(FileBackend::new(journal)))
-        .map_err(|e| format!("the journal: {e}"))?;
-    let open = record.phase(&plan.key) != Phase::Idle;
-    if resume && open {
-        restore_places(journal, &mut plan);
-    }
-    let (mut store, mut sinks) = prepare(&plan, &recipe, tool, sealed, !open)?;
-    if !resume && !open {
-        freeze_places(journal, &plan)?;
+    // After promotion only the revocation is left, so a retired service cannot block it.
+    let places_needed = !matches!(phase, Phase::Promoted | Phase::OldRevoked);
+    let (mut store, mut sinks) = prepare(&plan, &recipe, tool, sealed, !open, places_needed)?;
+    if !open {
+        freeze_plan(journal, &plan)?;
     }
     let config = KeyConfig {
         key: plan.key.clone(),
@@ -314,7 +328,6 @@ pub fn run(
         overlap_secs: plan.overlap_secs,
         issued_name: plan.issued_name.clone(),
         known_id: plan.known_id.clone(),
-        trust_recorded_id: plan.trust_recorded_id,
     };
     let mut transport = HttpTransport::for_recipe(&recipe);
     let outcome = {
@@ -353,6 +366,7 @@ fn prepare(
     tool: &Path,
     sealed: &Sealed,
     starting: bool,
+    places_needed: bool,
 ) -> Result<Prepared, String> {
     let text = sealed
         .text(&plan.key)
@@ -389,22 +403,28 @@ fn prepare(
                 .iter()
                 .map(|path| (format!("file:{path}"), path)),
         );
-    for (label, path) in files {
-        let sink = FileSink {
-            label,
-            path: PathBuf::from(path),
-            known: known.clone(),
-        };
-        let held = fs::read_to_string(&sink.path)
-            .map(Zeroizing::new)
-            .map_err(|_| format!("{path} could not be read"))?;
-        if !known.iter().any(|value| holds_key(&held, value.expose())) {
-            return Err(format!("{path} does not hold this key"));
+    if places_needed {
+        for (label, path) in files {
+            let sink = FileSink {
+                label,
+                path: PathBuf::from(path),
+                known: known.clone(),
+            };
+            // Only a new rotation can stop here. An open one must reach its undo, which reports
+            // a place it cannot restore.
+            if starting {
+                let held = fs::read_to_string(&sink.path)
+                    .map(Zeroizing::new)
+                    .map_err(|_| format!("{path} could not be read"))?;
+                if !known.iter().any(|value| holds_key(&held, value.expose())) {
+                    return Err(format!("{path} does not hold this key"));
+                }
+            }
+            sinks.push(Box::new(sink));
         }
-        sinks.push(Box::new(sink));
-    }
-    for place in &plan.place_actions {
-        sinks.push(Box::new(action_sink(place)?));
+        for place in &plan.place_actions {
+            sinks.push(Box::new(action_sink(place)?));
+        }
     }
     let store = VaultStore {
         tool: tool.to_owned(),
@@ -417,9 +437,28 @@ fn prepare(
     Ok((store, sinks))
 }
 
+/// Notes that a key was replaced by hand, so the next rotation does not revoke by its old id.
+pub fn forget_id(journal: &Path, key: &str) -> Result<(), String> {
+    let mut record = Journal::open(Box::new(FileBackend::new(journal)))
+        .map_err(|e| format!("the journal: {e}"))?;
+    if record.phase(key) != Phase::Idle {
+        return Err("a rotation of this key is open".into());
+    }
+    if record.current_id(key).is_some() {
+        record
+            .append(key, now(), Event::Replaced)
+            .map_err(|e| format!("the journal: {e}"))?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct Status {
     pub key: String,
+    /// How many lines the journal holds for this key.
+    pub events: usize,
+    /// The other key this rotation uses to create and revoke, which has to be opened too.
+    pub admin: Option<String>,
     pub phase: &'static str,
     pub at: u64,
     pub revoke_after: Option<u64>,
@@ -457,6 +496,8 @@ pub fn statuses(journal: &Journal) -> Vec<Status> {
                 .unwrap_or(0);
             Status {
                 key: key.to_owned(),
+                events: journal.entries().iter().filter(|e| e.key == key).count(),
+                admin: None,
                 phase: phase_name(journal.phase(key), &events),
                 at,
                 revoke_after: events.iter().find_map(|event| match event {
@@ -478,7 +519,11 @@ pub fn statuses(journal: &Journal) -> Vec<Status> {
 pub fn statuses_json(journal: &Path) -> Result<String, String> {
     let record = Journal::open(Box::new(FileBackend::new(journal)))
         .map_err(|e| format!("the journal: {e}"))?;
-    serde_json::to_string(&statuses(&record)).map_err(|e| e.to_string())
+    let mut list = statuses(&record);
+    for status in &mut list {
+        status.admin = frozen_plan(journal, &status.key).and_then(|plan| plan.admin);
+    }
+    serde_json::to_string(&list).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -504,6 +549,97 @@ mod tests {
     struct Fake {
         verify_status: u16,
         calls: Vec<(String, String, String)>,
+    }
+
+    /// Answers each verify in turn, and each delete with the same status.
+    struct Scripted {
+        verify: std::collections::VecDeque<u16>,
+        delete_status: u16,
+        deleted: usize,
+    }
+
+    impl Transport for Scripted {
+        fn send(&mut self, request: &Request) -> Result<Response, TransportError> {
+            let (status, body) = match request.rendered.method.as_str() {
+                "POST" => (200, r#"{"secret":"CANARY-new-0123456789","id":"new-id"}"#),
+                "GET" => (self.verify.pop_front().unwrap_or(200), "{}"),
+                _ => {
+                    self.deleted += 1;
+                    (self.delete_status, "{}")
+                }
+            };
+            Ok(Response {
+                headers: Vec::new(),
+                status,
+                body: Secret::new(body),
+            })
+        }
+    }
+
+    /// Rotates, then resumes after the overlap with these answers from the provider.
+    fn finish_after_overlap(verify: &[u16], delete_status: u16) -> (Outcome, usize) {
+        let dir = folder(&format!("late-{delete_status}-{}", verify.len()));
+        let recipe = Recipe::parse(RECIPE).unwrap();
+        let mut record = Journal::open(Box::new(FileBackend::new(dir.join("j")))).unwrap();
+        let mut store = store_with(&dir);
+        let config = KeyConfig {
+            key: "k".into(),
+            admin: "k".into(),
+            overlap_secs: 50,
+            issued_name: "n".into(),
+            known_id: Some("old-id".into()),
+        };
+        let mut first = Scripted {
+            verify: [200].into(),
+            delete_status,
+            deleted: 0,
+        };
+        let waiting = Engine {
+            recipe: &recipe,
+            config: &config,
+            transport: &mut first,
+            store: &mut store,
+            journal: &mut record,
+            sinks: Vec::new(),
+            now: &|| 100,
+        }
+        .rotate()
+        .unwrap();
+        assert!(matches!(waiting, Outcome::AwaitingOverlap { .. }));
+        let mut later = Scripted {
+            verify: verify.iter().copied().collect(),
+            delete_status,
+            deleted: 0,
+        };
+        let outcome = Engine {
+            recipe: &recipe,
+            config: &config,
+            transport: &mut later,
+            store: &mut store,
+            journal: &mut record,
+            sinks: Vec::new(),
+            now: &|| 1000,
+        }
+        .resume()
+        .unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        (outcome, later.deleted)
+    }
+
+    #[test]
+    fn a_new_key_that_died_during_the_overlap_keeps_the_old_one() {
+        let (outcome, deleted) = finish_after_overlap(&[401], 200);
+        assert_eq!(outcome, Outcome::NewKeyFailing);
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn a_404_counts_only_if_the_old_key_is_really_dead() {
+        assert_eq!(
+            finish_after_overlap(&[200, 200], 404).0,
+            Outcome::RevokePending
+        );
+        assert_eq!(finish_after_overlap(&[200, 401], 404).0, Outcome::Completed);
     }
 
     impl Transport for Fake {
@@ -566,12 +702,12 @@ mod tests {
             original: Some(original.to_string_lossy().into_owned()),
             place_files: vec![place.to_string_lossy().into_owned()],
             place_actions: Vec::new(),
-            trust_recorded_id: true,
+            expected_events: None,
         };
         let input =
             serde_json::json!({ "dir/key.env": "# note\nTOKEN=CANARY-old-0123456\n" }).to_string();
         let sealed = Sealed::read(input.as_bytes()).unwrap();
-        let (mut store, mut sinks) = prepare(&plan, &recipe, &tool, &sealed, true).unwrap();
+        let (mut store, mut sinks) = prepare(&plan, &recipe, &tool, &sealed, true, true).unwrap();
         let mut record = Journal::open(Box::new(FileBackend::new(dir.join("journal")))).unwrap();
         let config = KeyConfig {
             key: plan.key.clone(),
@@ -579,7 +715,6 @@ mod tests {
             overlap_secs: 0,
             issued_name: plan.issued_name.clone(),
             known_id: plan.known_id.clone(),
-            trust_recorded_id: true,
         };
         let mut fake = Fake {
             verify_status,
@@ -668,11 +803,11 @@ mod tests {
             original: None,
             place_files: vec![place.to_string_lossy().into_owned()],
             place_actions: Vec::new(),
-            trust_recorded_id: true,
+            expected_events: None,
         };
         let sealed = Sealed::read(r#"{"k":"CANARY-old-0123456"}"#.as_bytes()).unwrap();
         let recipe = Recipe::parse(RECIPE).unwrap();
-        let error = prepare(&plan, &recipe, &dir.join("tool"), &sealed, true)
+        let error = prepare(&plan, &recipe, &dir.join("tool"), &sealed, true, true)
             .err()
             .unwrap();
         assert!(error.contains("does not hold this key"));
@@ -690,11 +825,125 @@ mod tests {
         assert!(load_sealed_key(text, Some("TOKEN"), &recipe, true).is_ok());
     }
 
+    fn store_with(dir: &Path) -> VaultStore {
+        VaultStore {
+            tool: tool(dir),
+            key: "k".into(),
+            text: Zeroizing::new("old-value-0123456789".into()),
+            current: Secret::new("old-value-0123456789"),
+            admin: None,
+            temporary: HashMap::new(),
+        }
+    }
+
     #[test]
-    fn places_stay_as_they_were_when_the_rotation_started() {
+    fn a_key_replaced_by_hand_does_not_revoke_the_one_before_it() {
+        let run = |replaced: bool| {
+            let dir = folder(if replaced { "id-dropped" } else { "id-kept" });
+            let recipe = Recipe::parse(RECIPE).unwrap();
+            let path = dir.join("journal");
+            let mut record = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+            record
+                .append("k", 1, Event::Started { old_id: None })
+                .unwrap();
+            record
+                .append("k", 2, Event::Created { new_id: "b".into() })
+                .unwrap();
+            record
+                .append("k", 3, Event::Promoted { revoke_after: 0 })
+                .unwrap();
+            record.append("k", 4, Event::Completed).unwrap();
+            if replaced {
+                forget_id(&path, "k").unwrap();
+                record = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+            }
+            let mut store = store_with(&dir);
+            let config = KeyConfig {
+                key: "k".into(),
+                admin: "k".into(),
+                overlap_secs: 0,
+                issued_name: "n".into(),
+                known_id: None,
+            };
+            let mut fake = Fake {
+                verify_status: 200,
+                calls: Vec::new(),
+            };
+            Engine {
+                recipe: &recipe,
+                config: &config,
+                transport: &mut fake,
+                store: &mut store,
+                journal: &mut record,
+                sinks: Vec::new(),
+                now: &|| 100,
+            }
+            .rotate()
+            .unwrap();
+            fs::remove_dir_all(dir).unwrap();
+            fake.calls
+                .into_iter()
+                .filter(|call| call.0 == "DELETE")
+                .count()
+        };
+        assert_eq!(run(false), 1);
+        assert_eq!(run(true), 0);
+    }
+
+    #[test]
+    fn a_plan_outlives_the_settings() {
         let dir = folder("frozen");
         let journal = dir.join("rotations.jsonl");
-        let plan = |files: Vec<String>| Plan {
+        let plan = Plan {
+            key: "k".into(),
+            recipe: "fake".into(),
+            field: None,
+            host: None,
+            admin: None,
+            admin_field: None,
+            overlap_secs: 0,
+            known_id: None,
+            issued_name: "n".into(),
+            original: Some("/kept".into()),
+            place_files: vec!["/first".into()],
+            place_actions: Vec::new(),
+            expected_events: None,
+        };
+        freeze_plan(&journal, &plan).unwrap();
+        let later = frozen_plan(&journal, "k").unwrap();
+        assert_eq!(later.place_files, ["/first"]);
+        assert_eq!(later.original.as_deref(), Some("/kept"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_key_that_could_run_in_a_shell_never_lands() {
+        let dir = folder("hostile");
+        let mut store = store_with(&dir);
+        for bad in [
+            "short",
+            "$(printf CANARY)AAAAAAAAAA",
+            "abcdefghijklmnop`id`",
+            "abcdefghijklmnop q",
+            "abcdefghijklmnop\nX=1",
+        ] {
+            assert!(store.put("k#pending", &Secret::new(bad)).is_err(), "{bad}");
+        }
+        for good in [
+            "re_abcdefghijklmnop",
+            "lsv2_pt_abc-def.GHI+jk/l==",
+            "AKIA1234567890ABCDEF:secret",
+        ] {
+            assert!(store.put("k#pending", &Secret::new(good)).is_ok(), "{good}");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_retired_place_does_not_block_finishing() {
+        let dir = folder("retired");
+        let recipe = Recipe::parse(RECIPE).unwrap();
+        let plan = Plan {
             key: "k".into(),
             recipe: "fake".into(),
             field: None,
@@ -705,97 +954,15 @@ mod tests {
             known_id: None,
             issued_name: "n".into(),
             original: None,
-            place_files: files,
+            place_files: vec![dir.join("gone.env").to_string_lossy().into_owned()],
             place_actions: Vec::new(),
-            trust_recorded_id: true,
+            expected_events: None,
         };
-        freeze_places(&journal, &plan(vec!["/first".into()])).unwrap();
-        let mut later = plan(Vec::new());
-        restore_places(&journal, &mut later);
-        assert_eq!(later.place_files, ["/first"]);
+        let sealed = Sealed::read(r#"{"k":"old-value-0123456789"}"#.as_bytes()).unwrap();
+        assert!(prepare(&plan, &recipe, &dir.join("t"), &sealed, true, true).is_err());
+        let (_, sinks) = prepare(&plan, &recipe, &dir.join("t"), &sealed, false, false).unwrap();
+        assert!(sinks.is_empty());
         fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_new_key_too_short_never_lands() {
-        let dir = folder("short");
-        let tool = tool(&dir);
-        let mut store = VaultStore {
-            tool,
-            key: "k".into(),
-            text: Zeroizing::new("old-value-0123456789".into()),
-            current: Secret::new("old-value-0123456789"),
-            admin: None,
-            temporary: HashMap::new(),
-        };
-        assert!(store.put("k#pending", &Secret::new("short")).is_err());
-        assert!(store
-            .put("k#pending", &Secret::new("long-enough-0123456789"))
-            .is_ok());
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// A key whose last rotation left id `b`, rotated again.
-    fn revoked_after_rerotating(trust_recorded_id: bool) -> Vec<(String, String, String)> {
-        let dir = folder(if trust_recorded_id {
-            "id-kept"
-        } else {
-            "id-dropped"
-        });
-        let recipe = Recipe::parse(RECIPE).unwrap();
-        let mut record = Journal::open(Box::new(FileBackend::new(dir.join("journal")))).unwrap();
-        record
-            .append("k", 1, Event::Started { old_id: None })
-            .unwrap();
-        record
-            .append("k", 2, Event::Created { new_id: "b".into() })
-            .unwrap();
-        record
-            .append("k", 3, Event::Promoted { revoke_after: 0 })
-            .unwrap();
-        record.append("k", 4, Event::Completed).unwrap();
-        let mut store = VaultStore {
-            tool: tool(&dir),
-            key: "k".into(),
-            text: Zeroizing::new("key-replaced-by-hand-0123".into()),
-            current: Secret::new("key-replaced-by-hand-0123"),
-            admin: None,
-            temporary: HashMap::new(),
-        };
-        let config = KeyConfig {
-            key: "k".into(),
-            admin: "k".into(),
-            overlap_secs: 0,
-            issued_name: "n".into(),
-            known_id: None,
-            trust_recorded_id,
-        };
-        let mut fake = Fake {
-            verify_status: 200,
-            calls: Vec::new(),
-        };
-        Engine {
-            recipe: &recipe,
-            config: &config,
-            transport: &mut fake,
-            store: &mut store,
-            journal: &mut record,
-            sinks: Vec::new(),
-            now: &|| 100,
-        }
-        .rotate()
-        .unwrap();
-        fs::remove_dir_all(dir).unwrap();
-        fake.calls
-    }
-
-    #[test]
-    fn a_key_replaced_by_hand_does_not_revoke_the_one_before_it() {
-        let deletes = |calls: Vec<(String, String, String)>| {
-            calls.into_iter().filter(|call| call.0 == "DELETE").count()
-        };
-        assert_eq!(deletes(revoked_after_rerotating(true)), 1);
-        assert_eq!(deletes(revoked_after_rerotating(false)), 0);
     }
 
     #[test]

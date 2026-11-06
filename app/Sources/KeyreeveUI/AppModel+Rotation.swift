@@ -38,9 +38,17 @@ extension AppModel {
 
     public func rotate(_ item: CatalogItem) { runRotation(item, resume: false) }
 
+    /// Finishes from the plan the rotation started with. The key may no longer be on the list, since
+    /// its original can be gone, and the old key must still be revocable.
     public func finishRotation(of key: String) {
-        guard let item = items.first(where: { $0.path == key }) else { return }
-        runRotation(item, resume: true)
+        guard !busy, let binary, let vaultTool else { return }
+        if let item = items.first(where: { $0.path == key }) {
+            runRotation(item, resume: true)
+            return
+        }
+        guard (try? vaultStore.load())?.entries[key] != nil else { return }
+        let stub = RotationPlan(item: CatalogItem(path: key), places: KeyPlaces(), admin: nil, original: nil)
+        run(plan: stub, admin: nil, resume: true, binary: binary, vaultTool: vaultTool)
     }
 
     func runRotation(_ item: CatalogItem, resume: Bool) {
@@ -48,17 +56,14 @@ extension AppModel {
         let places = self.places[item.path] ?? KeyPlaces()
         let admin = places.admin.flatMap { name in items.first { $0.path == name } }
         let original = keysFolder?.appendingPathComponent(item.path).path
-        var plan = RotationPlan(
+        let plan = RotationPlan(
             item: item, places: places, admin: admin,
             original: original.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil })
-        // A copy sealed by hand after the last rotation is another key, with another id.
-        if let added = (try? vaultStore.load())?.entries[item.path]?.added,
-            let last = rotations.first(where: { $0.key == item.path })?.at,
-            added.timeIntervalSince1970 > last
-        {
-            plan.trust_recorded_id = false
-            plan.known_id = nil
-        }
+        run(plan: plan, admin: admin?.path, resume: resume, binary: binary, vaultTool: vaultTool)
+    }
+
+    private func run(plan: RotationPlan, admin: String?, resume: Bool, binary: URL, vaultTool: URL) {
+        let key = plan.key
         let reason = resume ? T("finish rotating a key") : T("rotate a key with its provider")
         openVault(reason: reason) { unlocked in
             guard let unlocked else {
@@ -72,8 +77,14 @@ extension AppModel {
             let files = self.files
             Task.detached {
                 let result = Result { () throws -> RotationReport in
+                    // Counted before opening: if another window rotates this key in between, the
+                    // command sees a different count and refuses a copy that may be revoked.
+                    var plan = plan
+                    let status = CheckRunner.rotations(binary: binary, files: files).first { $0.key == key }
+                    plan.expected_events = status?.events ?? 0
                     let vault = try store.load()
-                    let wanted = [item.path, admin?.path, "\(item.path)#pending", "\(item.path)#previous"]
+                    // An open rotation goes on with the admin key it started with.
+                    let wanted = [key, resume ? status?.admin ?? admin : admin, "\(key)#pending", "\(key)#previous"]
                         .compactMap { $0 }.filter { vault.entries[$0] != nil }
                     let sealed = try VaultKeeper.open(
                         names: wanted, recipient: try unlocked.recipient(store), store: store, by: "rotate")
@@ -158,8 +169,12 @@ public func rotationMessage(_ report: RotationReport) -> String {
             ? T("Rotated. The old key is revoked.")
             : T("Rotated. The old key still works: revoke it at the provider.")
     case "waiting": return T("The new key is in place. The old one keeps working until you finish.")
+    case "new_key_failing": return T("The new key stopped working, so the old one was kept. Try again later.")
     case "revoke_pending": return T("The new key is in place, but the provider refused to revoke the old one. Try again.")
-    case "rolled_back": return T("Nothing changed: the rotation was undone (%@).", report.reason ?? "")
+    case "rolled_back":
+        return report.manual.isEmpty
+            ? T("Nothing changed: the rotation was undone (%@).", report.reason ?? "")
+            : T("Undone, but the new key is still alive at the provider: revoke it by hand (see Vault).")
     case "rollback_blocked": return T("Stopped: %@ could not go back to the old key.", report.reason ?? "")
     default: return T("Nothing to do")
     }

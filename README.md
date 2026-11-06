@@ -101,7 +101,7 @@ keyreeve verify github --key-file ~/my-keys/app.env --field GITHUB_TOKEN
 keyreeve verify --plan ~/.keyreeve/plan.yaml --keys ~/my-keys
 ```
 
-Each check is one GET request, so it cannot change anything. It prints the result and never the key. A plan
+Each check is one GET request, so it cannot change anything. A provider that uses OAuth first exchanges the key for a token, with a POST that holds the credentials. It prints the result and never the key. A plan
 lists many keys at once:
 
 ```yaml

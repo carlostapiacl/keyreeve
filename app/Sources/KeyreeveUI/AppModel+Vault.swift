@@ -36,7 +36,17 @@ extension AppModel {
         guard !busy, !chosen.isEmpty, let folder = keysFolder else { return }
         let store = vaultStore
         let paths = chosen.map(\.path)
+        // A rotation in progress has its own idea of the current key, and revoking by it would
+        // leave this copy dead.
+        let open = Set(rotations.filter(\.isOpen).map(\.key))
+        guard paths.allSatisfy({ !open.contains($0) }) else {
+            message = T("Close this key's open rotation before sealing it again.")
+            return
+        }
         do {
+            if let binary {
+                for path in paths { try CheckRunner.forgetRotationID(of: path, binary: binary, files: files) }
+            }
             let report = try VaultKeeper.sealAgain(paths: paths, folder: folder, store: store)
             message = report.sealed.count == 1 ? T("1 key sealed") : T("%d keys sealed", report.sealed.count)
         } catch {

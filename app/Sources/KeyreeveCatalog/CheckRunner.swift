@@ -140,6 +140,14 @@ public enum CheckRunner {
         return report
     }
 
+    /// A key replaced by hand is another key, so the id on record must not be revoked for it.
+    public static func forgetRotationID(of key: String, binary: URL, files: KeyreeveFiles) throws {
+        guard FileManager.default.fileExists(atPath: files.rotations.path) else { return }
+        guard try execute(binary, ["rotations", "--journal", files.rotations.path, "--forget-id", key]) == 0 else {
+            throw CheckError(T("The vault could not be saved"))
+        }
+    }
+
     public static func rotations(binary: URL, files: KeyreeveFiles) -> [RotationStatus] {
         guard FileManager.default.fileExists(atPath: files.rotations.path) else { return [] }
         let process = Process()

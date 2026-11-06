@@ -13,7 +13,7 @@ public struct RotationPlan: Encodable, Sendable {
     public var original: String?
     public var place_files: [String]
     public var place_actions: [String]
-    public var trust_recorded_id = true
+    public var expected_events: Int?
 
     public init(
         item: CatalogItem, places: KeyPlaces, admin: CatalogItem?, original: String?, now: Date = Date()
@@ -46,6 +46,8 @@ public struct RotationReport: Decodable, Equatable, Sendable {
 
 public struct RotationStatus: Decodable, Equatable, Identifiable, Sendable {
     public let key: String
+    public let events: Int
+    public let admin: String?
     public let phase: String
     public let at: Double
     public let revoke_after: Double?
@@ -53,8 +55,10 @@ public struct RotationStatus: Decodable, Equatable, Identifiable, Sendable {
     public let manual: [String]
     public var id: String { key }
 
-    public init(key: String, phase: String, at: Double = 0, revoke_after: Double? = nil, reason: String? = nil, manual: [String] = []) {
+    public init(key: String, events: Int = 0, admin: String? = nil, phase: String, at: Double = 0, revoke_after: Double? = nil, reason: String? = nil, manual: [String] = []) {
         self.key = key
+        self.events = events
+        self.admin = admin
         self.phase = phase
         self.at = at
         self.revoke_after = revoke_after

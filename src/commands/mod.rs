@@ -39,8 +39,9 @@ Usage:
       Ask each provider whose key this is, and keep only the fields its file declares.
   keyreeve rotate --plan <plan.json> --vault-tool <program> --journal <file> [--resume]
       Rotate one key held in the vault, with the opened copies as JSON on stdin. The Mac app sends this.
-  keyreeve rotations --journal <file>
+  keyreeve rotations --journal <file> [--forget-id <key>]
       Show where each rotation stands, as JSON. It holds ids and step names, never values.
+      --forget-id notes that a key was replaced by hand, so its old id is not used again.
   keyreeve recipes [--json]
       List the providers keyreeve knows, from what ships and from ~/.keyreeve/providers.
   keyreeve recipes approve <provider>

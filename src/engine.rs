@@ -34,9 +34,6 @@ pub struct KeyConfig {
     pub issued_name: String,
     /// The id of the current key, when it is known from outside this record.
     pub known_id: Option<String>,
-    /// False when the key was replaced by hand after the last rotation, so the id on record is
-    /// another key's, and revoking it could stop a service that still uses that one.
-    pub trust_recorded_id: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -51,6 +48,8 @@ pub enum Outcome {
     },
     /// The new key is in place, but the provider refused to revoke the old one. Safe to retry.
     RevokePending,
+    /// The new key stopped working during the overlap, so the old one is kept. Safe to retry.
+    NewKeyFailing,
     /// A service could not be restored, so its key is not revoked. Safe to retry.
     RollbackBlocked {
         sink: String,
@@ -130,12 +129,10 @@ impl Engine<'_> {
             .get(&key)?
             .ok_or_else(|| Error::KeyMissing(key.clone()))?;
         let admin = self.admin()?;
-        let recorded = if self.config.trust_recorded_id {
-            self.journal.current_id(&key)
-        } else {
-            None
-        };
-        let old_id = recorded.or_else(|| self.config.known_id.clone());
+        let old_id = self
+            .journal
+            .current_id(&key)
+            .or_else(|| self.config.known_id.clone());
 
         // Recorded first: a copy saved before the record exists could never be cleaned up.
         self.record(Event::Started { old_id })?;
@@ -218,10 +215,18 @@ impl Engine<'_> {
                     if (self.now)() < revoke_after {
                         return Ok(Outcome::AwaitingOverlap { revoke_after });
                     }
+                    // Time passed since the check. Never revoke the old key on an old answer.
+                    let current = self
+                        .store
+                        .get(&key)?
+                        .ok_or_else(|| Error::KeyMissing(key.clone()))?;
+                    if !self.verify(&current) {
+                        return Ok(Outcome::NewKeyFailing);
+                    }
                     match self.old_id() {
                         Some(old_id) => {
                             let admin = self.admin()?;
-                            if !self.revoke(&admin, &old_id) {
+                            if !self.revoke_old(&admin, &old_id)? {
                                 return Ok(Outcome::RevokePending);
                             }
                         }
@@ -355,6 +360,25 @@ impl Engine<'_> {
         match self.send(recipe.revoke_step(), &[("id", id)], admin) {
             Ok(response) => recipe.revoke_step().accepts(response.status) || response.status == 404,
             Err(_) => false,
+        }
+    }
+
+    /// A 404 usually means a retry after a crash, but it can also be a provider's bad moment. The
+    /// old key itself can say which: if it still works, it was not revoked.
+    fn revoke_old(&mut self, admin: &Secret, id: &str) -> Result<bool, Error> {
+        let recipe = self.recipe;
+        let Ok(response) = self.send(recipe.revoke_step(), &[("id", id)], admin) else {
+            return Ok(false);
+        };
+        if recipe.revoke_step().accepts(response.status) {
+            return Ok(true);
+        }
+        if response.status != 404 {
+            return Ok(false);
+        }
+        match self.store.get(&self.previous_name())? {
+            Some(old) => Ok(!self.verify(&old)),
+            None => Ok(true),
         }
     }
 

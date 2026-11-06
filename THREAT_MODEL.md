@@ -26,12 +26,15 @@ because they can quote the request. The simulator checks the journal, errors and
 test values.
 
 **A check that changes something.** `keyreeve verify` only sends a GET, and refuses a recipe whose check is another
-method. Provider answers are ignored apart from their status. A provider can still count or log the request, and
+method. A provider using OAuth first gets a token, with a POST holding the credentials. Provider answers are ignored apart from their status. A provider can still count or log the request, and
 a bad GET endpoint on its side could have effects.
 
 **A provider answer that holds too much.** `identify` keeps only the fields the provider's file declares, drops any that
 look like a credential or contain the key, and writes them to a private file. The command reports how many fields it found,
 and not their values.
+
+**A new key that is not a key.** A provider's answer ends up in your files, some of which a shell reads, so a new key with
+characters like `$` or a space is refused before it lands. The rotation then undoes itself.
 
 **A provider file you added.** It receives no key until you approve the hosts it lists. Editing its hosts undoes the approval,
 and it cannot take the name of a provider that ships. A plan, your rules and your edits can only name a provider. A path to a
@@ -78,6 +81,10 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
   or variables. Swift strings are not wiped.
 - **An SSH key from the vault touches the disk.** `ssh` reads keys from files, so the sealed copy spends the call in a file
   only you can read, overwritten and removed afterwards. A crash in between leaves it there.
+- **A program running as you can change the app.** It can replace `keyreeve-cli` or `keyreeve-vault` inside the bundle, and the
+  next fingerprint then hands opened keys to its copy. An agent you run as yourself can do this too, so if you need to keep keys
+  from an agent, run the agent as another macOS user or in a sandbox that cannot write here. Without an Apple signature
+  the app cannot check its own parts.
 - **A rotation writes where you pointed it.** `places.json` names files and buttons that receive the new key, and a program
   running as you could add one. A file must already hold the key, and a button must come from a file you approved, but a
   program that can edit your files could meet both.

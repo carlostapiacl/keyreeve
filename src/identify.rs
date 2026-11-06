@@ -121,14 +121,18 @@ fn safe_field(field: &(String, String), key: &Secret) -> bool {
     safe_value(&field.1, key) && safe_value(&field.0, key)
 }
 
-/// Fills `{field}`. With a field missing there is nothing to suggest.
+/// Fills `{field}` in the file's own template, once. A value is a provider's answer, so a brace in
+/// it is text and is never read as another field.
 pub fn suggest(template: &str, fields: &BTreeMap<String, String>) -> Option<String> {
-    let mut out = template.to_owned();
-    while let Some(start) = out.find('{') {
-        let end = start + out[start..].find('}')?;
-        let value = fields.get(&out[start + 1..end])?;
-        out.replace_range(start..=end, value);
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        let end = start + rest[start..].find('}')?;
+        out.push_str(&rest[..start]);
+        out.push_str(fields.get(&rest[start + 1..end])?);
+        rest = &rest[end + 1..];
     }
+    out.push_str(rest);
     Some(out)
 }
 
@@ -161,30 +165,35 @@ pub fn run_plan_with(
                     if let ssh::Reply::Accepted(account) = source.greet(&recipe)? {
                         fields.insert("account".to_owned(), account);
                     }
-                    return Ok((recipe, fields));
+                    return Ok((recipe, fields, None));
                 }
                 let key = source.load(entry.field.as_deref(), &recipe)?;
                 if let Some(run) = &recipe.auth.run {
                     let answer =
                         script::run(&providers::programs_folder(), run, "identify", Some(&key))?;
+                    // The same promise as for an answer over HTTP: only what the file declares.
+                    let declared = recipe.identify.as_ref().map(|found| &found.fields);
                     let fields = answer
                         .fields
                         .into_iter()
+                        .filter(|field| declared.is_some_and(|names| names.contains_key(&field.0)))
                         .filter(|field| safe_field(field, &key))
                         .collect();
-                    return Ok((recipe, fields));
+                    return Ok((recipe, fields, Some(key)));
                 }
                 let mut transport = HttpTransport::for_recipe(&recipe);
-                identify(&recipe, &key, &mut transport).map(|fields| (recipe, fields))
+                identify(&recipe, &key, &mut transport).map(|fields| (recipe, fields, Some(key)))
             });
         // The output says how much was found, and the values stay in the private file.
         match result {
-            Ok((recipe, fields)) if !fields.is_empty() => {
+            Ok((recipe, fields, key)) if !fields.is_empty() => {
                 lines.push((label, format!("identified, {} fields", fields.len())));
+                // Pieces that each pass the filter can spell the key once they are joined.
                 let suggested_name = recipe
                     .suggested_name
                     .as_deref()
-                    .and_then(|t| suggest(t, &fields));
+                    .and_then(|t| suggest(t, &fields))
+                    .filter(|name| key.as_ref().is_none_or(|key| safe_value(name, key)));
                 saved.insert(
                     entry.file.clone(),
                     Details {
@@ -355,5 +364,24 @@ mod tests {
         let named = ("CANARYkey1234567890".to_owned(), "account".to_owned());
         assert!(!safe_field(&named, &key));
         assert!(safe_field(&("account".to_owned(), "me".to_owned()), &key));
+    }
+
+    #[test]
+    fn a_brace_in_an_answer_is_only_text() {
+        let fields = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                .collect()
+        };
+        assert_eq!(
+            suggest("GitHub · {account}", &fields(&[("account", "{account}")])).as_deref(),
+            Some("GitHub · {account}")
+        );
+        assert_eq!(
+            suggest("{a}", &fields(&[("a", "x{b}"), ("b", "y")])).as_deref(),
+            Some("x{b}")
+        );
+        assert_eq!(suggest("{missing}", &fields(&[])), None);
     }
 }

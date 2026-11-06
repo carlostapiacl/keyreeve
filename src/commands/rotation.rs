@@ -46,6 +46,18 @@ pub fn run_rotate(args: &[String]) -> ExitCode {
 }
 
 pub fn run_rotations(args: &[String]) -> ExitCode {
+    if let [flag, journal, forget, key] = args {
+        if flag != "--journal" || forget != "--forget-id" {
+            return usage();
+        }
+        return match rotate::forget_id(Path::new(journal), key) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("rotations: {error}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let [flag, journal] = args else {
         return usage();
     };

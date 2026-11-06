@@ -250,8 +250,8 @@ keyreeve-vault export hosting-token --recovery | age -d -i recovery-key.txt
 ```
 
 The first line of what comes out names the key, and the rest is its value. The keys in the chip use age's `p256tag` recipient. The
-file format is reviewed by others and tested here against the official tool in both directions. The code that writes it is mine, and it
-has had no outside review.
+file format is public and used by other tools, and it is tested here against the official one in both directions. The code that
+writes it is mine, and it has had no outside review.
 
 ## Keys and agents
 

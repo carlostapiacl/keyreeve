@@ -8,7 +8,7 @@ name: My deploys
 hosts: []
 auth:
   type: command
-  run: { program: github-secret.sh }
+  run: { program: no-check.sh }
 actions:
   - id: github-secret
     label: GitHub secret

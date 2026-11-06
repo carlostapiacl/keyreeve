@@ -95,13 +95,13 @@ struct AuditLogTests {
 }
 
 final class FakeProxy: KeyProxy, @unchecked Sendable {
-    var added: [(grant: String, provider: String, value: String)] = []
+    var added: [(grant: String, provider: String, text: String, field: String?)] = []
     var removed: [String] = []
     var refuses = false
-    func add(grant: String, key: String, provider: String, value: String, expires: Date) throws -> (standIn: String, token: String) {
+    func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date) throws -> String {
         if refuses { throw VaultError("this provider cannot use a stand-in") }
-        added.append((grant, provider, value))
-        return ("STAND-IN", "TOKEN-\(grant)")
+        added.append((grant, provider, text, field))
+        return "STAND-IN"
     }
     func remove(grant: String) { removed.append(grant) }
     var endpoint: KeyService.ProxyEndpoint { KeyService.ProxyEndpoint(port: 9, ca: "/ca", bundle: "/bundle") }
@@ -166,12 +166,12 @@ struct KeyServiceTests {
     @Test func testTheFieldGoesToTheProxyAndTheValueNeverComesBack() throws {
         let f = Fixture()
         let answer = f.use("mail")
-        #expect(f.proxy.added.first?.value == "CANARY-mail")
+        #expect(f.proxy.added.first?.text.contains("CANARY-mail") == true)
+        #expect(f.proxy.added.first?.field == "API")
         #expect(f.proxy.added.first?.provider == "resend")
         #expect(answer.value == nil)
         let encoded = String(decoding: try JSONEncoder().encode(answer), as: UTF8.self)
         #expect(!encoded.contains("CANARY"))
-        #expect(answer.token == "TOKEN-\(f.proxy.added[0].grant)")
         #expect(answer.proxy?.port == 9)
     }
 

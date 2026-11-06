@@ -108,7 +108,6 @@ fn upstream(reply: &'static str) -> Upstream {
 struct Run {
     proxy: Arc<Proxy>,
     port: u16,
-    token: String,
     bundle: PathBuf,
     events: Receiver<Event>,
     seen: Arc<Mutex<Vec<String>>>,
@@ -136,21 +135,18 @@ fn run_with(reply: &'static str, hosts: &[&str], in_url: bool, expires: u64) -> 
     ));
     let trust = proxy.write_trust(&folder).unwrap();
     let port = proxy.listen().unwrap();
-    let token = proxy
-        .add(Grant {
-            id: "g-1".into(),
-            key: "my-key".into(),
-            stand_in: Secret::new(FAKE),
-            real: Secret::new(REAL),
-            hosts: hosts.iter().map(|host| (*host).to_owned()).collect(),
-            in_url,
-            expires,
-        })
-        .unwrap();
+    proxy.add(Grant {
+        id: "g-1".into(),
+        key: "my-key".into(),
+        stand_in: Secret::new(FAKE),
+        real: Secret::new(REAL),
+        hosts: hosts.iter().map(|host| (*host).to_owned()).collect(),
+        in_url,
+        expires,
+    });
     Run {
         proxy,
         port,
-        token,
         bundle: trust.bundle,
         events,
         seen: up.seen,
@@ -164,16 +160,13 @@ fn run() -> Run {
 }
 
 /// A real client, with the environment a command would get. Returns its body and the status it saw.
-fn curl(run: &Run, token: &str, args: &[&str]) -> (String, String) {
+fn curl(run: &Run, args: &[&str]) -> (String, String) {
     let output = Command::new("curl")
         .args(["-sS", "--max-time", "15", "-o", "-", "-w", "\n%{http_code}"])
         .args(args)
         .env_clear()
         .env("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
-        .env(
-            "HTTPS_PROXY",
-            format!("http://keyreeve:{token}@127.0.0.1:{}", run.port),
-        )
+        .env("HTTPS_PROXY", format!("http://127.0.0.1:{}", run.port))
         .env("CURL_CA_BUNDLE", &run.bundle)
         .output()
         .unwrap();
@@ -191,7 +184,6 @@ fn the_real_key_reaches_only_the_provider_and_the_command_never_sees_it() {
     let run = run();
     let (body, code) = curl(
         &run,
-        &run.token,
         &[
             "-H",
             &format!("Authorization: Bearer {FAKE}"),
@@ -223,7 +215,7 @@ fn the_real_key_reaches_only_the_provider_and_the_command_never_sees_it() {
 #[test]
 fn a_password_in_basic_auth_is_swapped() {
     let run = run();
-    let (_, code) = curl(&run, &run.token, &["-u", &format!("me:{FAKE}"), &url("/")]);
+    let (_, code) = curl(&run, &["-u", &format!("me:{FAKE}"), &url("/")]);
     assert_eq!(code, "200");
     let seen = run.seen.lock().unwrap();
     assert!(!seen[0].contains(FAKE));
@@ -239,13 +231,9 @@ fn a_password_in_basic_auth_is_swapped() {
 fn a_body_keeps_the_stand_in_in_both_framings() {
     let run = run();
     let body = format!("{{\"key\":\"{FAKE}\"}}");
-    assert_eq!(
-        curl(&run, &run.token, &["--data", &body, &url("/a")]).1,
-        "200"
-    );
+    assert_eq!(curl(&run, &["--data", &body, &url("/a")]).1, "200");
     let (_, code) = curl(
         &run,
-        &run.token,
         &[
             "-H",
             "Transfer-Encoding: chunked",
@@ -266,11 +254,11 @@ fn a_body_keeps_the_stand_in_in_both_framings() {
 #[test]
 fn the_address_is_swapped_only_for_a_provider_that_wants_it_there() {
     let plain = run();
-    curl(&plain, &plain.token, &[&url(&format!("/bot{FAKE}/me"))]);
+    curl(&plain, &[&url(&format!("/bot{FAKE}/me"))]);
     assert!(plain.seen.lock().unwrap()[0].contains(FAKE));
 
     let in_url = run_with("hello", &["localhost"], true, u64::MAX);
-    curl(&in_url, &in_url.token, &[&url(&format!("/bot{FAKE}/me"))]);
+    curl(&in_url, &[&url(&format!("/bot{FAKE}/me"))]);
     assert!(in_url.seen.lock().unwrap()[0].contains(REAL));
     let event = in_url.events.recv().unwrap();
     assert!(
@@ -287,26 +275,59 @@ fn a_provider_that_echoes_the_key_gets_the_stand_in_back() {
         false,
         u64::MAX,
     );
-    let (body, _) = curl(&run, &run.token, &[&url("/")]);
+    let auth = format!("Authorization: Bearer {FAKE}");
+    let (body, _) = curl(&run, &["-H", &auth, &url("/")]);
     assert_eq!(body, format!("your key is {FAKE}!"));
 }
 
 #[test]
-fn no_token_a_bad_token_or_an_ended_permission_gets_nothing() {
+fn a_request_with_no_stand_in_goes_out_as_it_came() {
     let run = run();
-    let (_, code) = curl(&run, "wrong", &[&url("/")]);
-    assert_ne!(code, "200");
-    assert!(run.seen.lock().unwrap().is_empty());
+    let bearer = "Authorization: Bearer somebody-elses-value";
+    assert_eq!(curl(&run, &["-H", bearer, &url("/")]).1, "200");
+    let seen = run.seen.lock().unwrap();
+    assert!(seen[0].contains("somebody-elses-value"));
+    assert!(!seen[0].contains(REAL));
+    assert!(
+        run.events.try_recv().is_err(),
+        "no key was used, so nothing to record"
+    );
+}
+
+#[test]
+fn an_ended_permission_no_longer_turns_into_the_key() {
+    let auth = format!("Authorization: Bearer {FAKE}");
+    let removed = run();
+    assert_eq!(curl(&removed, &["-H", &auth, &url("/")]).1, "200");
+    assert!(removed.seen.lock().unwrap()[0].contains(REAL));
+    removed.proxy.remove("g-1");
+    // With no permission for this host, it gets a plain tunnel, which reaches nothing here.
+    assert_ne!(curl(&removed, &["-H", &auth, &url("/")]).1, "200");
+    assert_eq!(removed.seen.lock().unwrap().len(), 1);
 
     let expired = run_with("hello", &["localhost"], false, 1);
-    assert_ne!(curl(&expired, &expired.token, &[&url("/")]).1, "200");
+    assert_ne!(curl(&expired, &["-H", &auth, &url("/")]).1, "200");
     assert!(expired.seen.lock().unwrap().is_empty());
+}
 
-    let removed = crate::run();
-    assert_eq!(curl(&removed, &removed.token, &[&url("/")]).1, "200");
-    removed.proxy.remove("g-1");
-    assert_ne!(curl(&removed, &removed.token, &[&url("/")]).1, "200");
-    assert_eq!(removed.seen.lock().unwrap().len(), 1);
+#[test]
+fn one_keys_stand_in_is_not_another_hosts() {
+    // A second permission for this host must not turn the first one's stand-in into its key.
+    let run = run_with("hello", &["localhost"], false, u64::MAX);
+    run.proxy.add(Grant {
+        id: "g-2".into(),
+        key: "other".into(),
+        stand_in: Secret::new("other-stand-in-000000"),
+        real: Secret::new("other-real-key-000000"),
+        hosts: vec!["localhost".into()],
+        in_url: false,
+        expires: u64::MAX,
+    });
+    let header = "Authorization: Bearer other-stand-in-000000";
+    assert_eq!(curl(&run, &["-H", header, &url("/")]).1, "200");
+    let seen = run.seen.lock().unwrap();
+    assert!(seen[0].contains("other-real-key-000000"));
+    assert!(!seen[0].contains(REAL));
 }
 
 #[test]
@@ -316,7 +337,6 @@ fn another_host_gets_a_tunnel_and_never_the_key() {
     let run = run_with("hello", &["api.example.com"], false, u64::MAX);
     let (_, code) = curl(
         &run,
-        &run.token,
         &[
             "-H",
             &format!("Authorization: Bearer {FAKE}"),
@@ -334,7 +354,6 @@ fn the_key_never_reaches_a_host_that_is_not_its_own() {
     let run = run_with("hello", &["api.example.com"], false, u64::MAX);
     let (_, code) = curl(
         &run,
-        &run.token,
         &["-H", &format!("Authorization: Bearer {FAKE}"), &url("/")],
     );
     assert_ne!(code, "200");
@@ -348,11 +367,7 @@ fn the_key_never_reaches_a_host_that_is_not_its_own() {
 #[test]
 fn a_host_header_naming_elsewhere_is_refused() {
     let run = run();
-    let (_, code) = curl(
-        &run,
-        &run.token,
-        &["-H", "Host: evil.example.com", &url("/")],
-    );
+    let (_, code) = curl(&run, &["-H", "Host: evil.example.com", &url("/")]);
     assert_eq!(code, "421");
     assert!(run.seen.lock().unwrap().is_empty());
 }
@@ -365,7 +380,6 @@ fn a_big_body_arrives_whole() {
     std::fs::write(&file, &body).unwrap();
     let (_, code) = curl(
         &run,
-        &run.token,
         &["--data-binary", &format!("@{}", file.display()), &url("/")],
     );
     assert_eq!(code, "200");
@@ -389,5 +403,5 @@ fn a_request_cut_short_does_not_stop_others() {
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", run.port)).unwrap();
     stream.write_all(b"CONNECT localhost").unwrap();
     drop(stream);
-    assert_eq!(curl(&run, &run.token, &[&url("/")]).1, "200");
+    assert_eq!(curl(&run, &[&url("/")]).1, "200");
 }

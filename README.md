@@ -277,7 +277,7 @@ it, and stops on its own when idle. Locking the app ends every permission. The v
 
 The swap happens in headers and in Basic passwords, and in the address for a provider that takes its key there. A body keeps the stand-in, so a
 tool that sends its key in a body fails and leaks nothing. A reply that echoes the key gets the stand-in back. Other hosts get a tunnel, with TLS
-end to end. Measured through it with fake keys: `curl`, `gh`, `netlify`, Node and Python.
+end to end. The stand-in is what lets a request use the key, so nothing else needs to be in the command's environment.
 
 `--real` hands the command the real key, for what cannot use a stand-in, such as a provider that signs requests or a script of your own. It asks for
 your finger every time and is logged apart. A command that sends a stand-in past the proxy, or ignores its variables, simply fails to authenticate.

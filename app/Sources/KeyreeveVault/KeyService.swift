@@ -2,7 +2,8 @@ import Foundation
 
 /// Whatever holds the real values and puts them on the wire. Tests use a stand-in for it.
 public protocol KeyProxy: AnyObject, Sendable {
-    func add(grant: String, key: String, provider: String, value: String, expires: Date) throws -> (standIn: String, token: String)
+    /// `text` is the sealed file as it is. The proxy reads the key from it, as a check would.
+    func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date) throws -> String
     func remove(grant: String)
     var endpoint: KeyService.ProxyEndpoint { get throws }
 }
@@ -57,20 +58,18 @@ public final class KeyService: @unchecked Sendable {
         /// The real key, only for a request that asked for it with its own fingerprint.
         public var value: String?
         public var standIn: String?
-        public var token: String?
         public var proxy: ProxyEndpoint?
         public var variable: String?
         public var grants: [GrantInfo]?
 
         public init(
-            ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil, token: String? = nil,
+            ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil,
             proxy: ProxyEndpoint? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
         ) {
             self.ok = ok
             self.error = error
             self.value = value
             self.standIn = standIn
-            self.token = token
             self.proxy = proxy
             self.variable = variable
             self.grants = grants
@@ -90,7 +89,6 @@ public final class KeyService: @unchecked Sendable {
         let program: String
         let expires: Date
         let standIn: String
-        let token: String
     }
 
     public static let defaultSeconds = 5 * 60
@@ -214,11 +212,10 @@ public final class KeyService: @unchecked Sendable {
             let expires = now().addingTimeInterval(TimeInterval(seconds))
             let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
             // From here the value lives in the proxy, and this process keeps only the stand-in.
-            let added = try proxy.add(
-                grant: grantID, key: id, provider: provider,
-                value: try EnvReferences.value(in: sealed, field: key.field), expires: expires)
-            granted = Grant(
-                id: grantID, key: id, program: name, expires: expires, standIn: added.standIn, token: added.token)
+            let standIn = try proxy.add(
+                grant: grantID, key: id, provider: provider, text: String(decoding: sealed, as: UTF8.self),
+                field: key.field, expires: expires)
+            granted = Grant(id: grantID, key: id, program: name, expires: expires, standIn: standIn)
             grants.append(granted)
             try log.append(
                 event: "granted", key: id, grant: granted.id, observed: caller, declared: declared,
@@ -226,7 +223,7 @@ public final class KeyService: @unchecked Sendable {
         }
         try log.append(event: "used", key: id, grant: granted.id, observed: caller, declared: declared)
         return Response(
-            ok: true, standIn: granted.standIn, token: granted.token, proxy: try proxy.endpoint, variable: key.variable)
+            ok: true, standIn: granted.standIn, proxy: try proxy.endpoint, variable: key.variable)
     }
 }
 
@@ -322,7 +319,7 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
         try input.fileHandleForWriting.write(contentsOf: line)
     }
 
-    public func add(grant: String, key: String, provider: String, value: String, expires: Date) throws -> (standIn: String, token: String) {
+    public func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date) throws -> String {
         let semaphore = DispatchSemaphore(value: 0)
         lock.lock()
         waiting[grant] = semaphore
@@ -334,10 +331,12 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
             lock.unlock()
         }
         do {
-            try send([
-                "op": "add", "grant": grant, "key": key, "provider": provider, "value": value,
+            var message: [String: Any] = [
+                "op": "add", "grant": grant, "key": key, "provider": provider, "text": text,
                 "expires": Int(expires.timeIntervalSince1970),
-            ])
+            ]
+            if let field { message["field"] = field }
+            try send(message)
         } catch {
             throw VaultError("the proxy stopped")
         }
@@ -345,7 +344,7 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
         lock.lock()
         let answer = answers[grant]
         lock.unlock()
-        if let standIn = answer?["stand_in"] as? String, let token = answer?["token"] as? String { return (standIn, token) }
+        if let standIn = answer?["stand_in"] as? String { return standIn }
         throw VaultError(answer?["error"] as? String ?? "the proxy did not answer")
     }
 

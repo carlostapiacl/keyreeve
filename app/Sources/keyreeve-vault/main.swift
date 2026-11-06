@@ -207,11 +207,11 @@ do {
             guard let value = answer.value else { fail("the key could not be used", code: 77) }
             setenv(variable, value, 1)
         } else {
-            guard let standIn = answer.standIn, let token = answer.token, let proxy = answer.proxy else {
+            guard let standIn = answer.standIn, let proxy = answer.proxy else {
                 fail("the key could not be used", code: 77)
             }
             setenv(variable, standIn, 1)
-            let address = "http://keyreeve:\(token)@127.0.0.1:\(proxy.port)"
+            let address = "http://127.0.0.1:\(proxy.port)"
             for name in ["HTTPS_PROXY", "https_proxy"] { setenv(name, address, 1) }
             // Node does not read those variables unless it is told to.
             setenv("NODE_USE_ENV_PROXY", "1", 1)

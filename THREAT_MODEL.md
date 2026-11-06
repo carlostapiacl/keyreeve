@@ -115,6 +115,8 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   `printenv` and a leaked variable give nothing. A program running as you can still use the key through the proxy while a permission lasts,
   doing whatever that key allows at its provider, and it can read your original files or replace these binaries. keyreeve is not a
   sandbox. If that matters, run the agent in one, and keep the keys folder and `~/.keyreeve` out of its reach.
+- **The stand-in is a credential for the proxy.** Any program that gets it can use the key through the proxy while the permission
+  lasts, and any local program can open a plain tunnel through the proxy, which gives it nothing it could not do alone.
 - **The proxy reads that traffic.** It ends TLS for a key's hosts, with a CA made for each run whose key stays in memory. Only commands
   started by `use` are pointed at that CA. The system's own trust store is never touched.
 - **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a

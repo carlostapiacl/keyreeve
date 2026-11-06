@@ -2,6 +2,9 @@
 //! the real address through this proxy. Only on the way to a host that key belongs to does the proxy
 //! end TLS and put the real value in the request's headers. Sent anywhere else, the stand-in is useless.
 //!
+//! The stand-in is also the credential for the proxy. Holding it is what lets a request use the key, so
+//! no token has to live next to it, and it works with clients that do not send proxy credentials.
+//!
 //! The real value arrives from the vault's service over stdin, and stays in memory. Every other host
 //! gets a plain tunnel, with TLS end to end. This does not confine a program: it keeps the key out of
 //! the program's hands, and what the program can do with its other permissions is its own matter.
@@ -14,7 +17,6 @@ use rustls::{
     ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection, StreamOwned,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -71,9 +73,6 @@ fn random_bytes(count: usize) -> io::Result<Vec<u8>> {
 /// digit becomes a random one of its kind. Tools that check a key's format accept it, and swapping it
 /// changes no length, so a request's framing stays as it was.
 pub fn mint_stand_in(real: &str, prefixes: &[String]) -> Result<String, String> {
-    if real.chars().count() < 8 {
-        return Err("this key is too short to stand in for".into());
-    }
     let prefix = prefixes
         .iter()
         .filter(|prefix| real.starts_with(prefix.as_str()))
@@ -91,19 +90,15 @@ pub fn mint_stand_in(real: &str, prefixes: &[String]) -> Result<String, String> 
             other => other,
         });
     }
-    if out == real {
-        return Err("this key has too little in it to stand in for".into());
+    // It works as a password for the proxy, so it needs enough randomness to be one.
+    let random_part = real[prefix..]
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .count();
+    if random_part < 16 {
+        return Err("this key is too short to stand in for, so it needs --real".into());
     }
     Ok(out)
-}
-
-/// Compares every byte of two digests, so timing says nothing about how close a guess came.
-fn same_token(known: &str, given: &str) -> bool {
-    Sha256::digest(known.as_bytes())
-        .iter()
-        .zip(Sha256::digest(given.as_bytes()).iter())
-        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
-        == 0
 }
 
 fn base64_encode(data: &[u8]) -> String {
@@ -315,37 +310,34 @@ impl Proxy {
         Ok(Trust { ca, bundle })
     }
 
-    /// Returns the token that lets a command use this permission through the proxy.
-    pub fn add(&self, grant: Grant) -> io::Result<String> {
-        let token: String = random_bytes(32)?
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+    pub fn add(&self, grant: Grant) {
         self.grants
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(token.clone(), Arc::new(grant));
-        Ok(token)
+            .insert(grant.id.clone(), Arc::new(grant));
     }
 
     pub fn remove(&self, id: &str) {
         self.grants
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, grant| grant.id != id);
+            .remove(id);
     }
 
-    fn grant_for(&self, token: &str) -> Option<Arc<Grant>> {
+    /// The permissions in force for this host. An ended one is gone, and its stand-in with it.
+    fn grants_for(&self, host: &str) -> Vec<Arc<Grant>> {
         let mut grants = self.grants.lock().unwrap_or_else(|e| e.into_inner());
         grants.retain(|_, grant| grant.expires > now());
-        // Comparing each one whole, so timing says nothing about how close a guess came.
-        let mut found = None;
-        for (known, grant) in grants.iter() {
-            if same_token(known, token) {
-                found = Some(grant.clone());
-            }
-        }
-        found
+        grants
+            .values()
+            .filter(|grant| {
+                grant
+                    .hosts
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(host))
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn listen(self: &Arc<Self>) -> io::Result<u16> {
@@ -374,32 +366,19 @@ impl Proxy {
         client.set_read_timeout(Some(IO_TIMEOUT))?;
         client.set_write_timeout(Some(IO_TIMEOUT))?;
         let mut reader = BufReader::new(client.try_clone()?);
-        let (first, headers) = read_head(&mut reader)?;
+        let (first, _) = read_head(&mut reader)?;
         let mut writer = client;
         let mut parts = first.split(' ');
         let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
         if method != "CONNECT" {
             return answer(&mut writer, 405, "only CONNECT goes through here");
         }
-        let Some(grant) = header(&headers, "proxy-authorization")
-            .and_then(token_from)
-            .and_then(|token| self.grant_for(&token))
-        else {
-            return writer.write_all(
-                b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"keyreeve\"\r\nConnection: close\r\n\r\n",
-            );
-        };
         let Some((host, port)) = split_target(target) else {
             return answer(&mut writer, 400, "that is not host:port");
         };
-        if port == 443
-            && grant
-                .hosts
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(&host))
-        {
+        if port == 443 && !self.grants_for(&host).is_empty() {
             writer.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")?;
-            return self.terminated(&grant, &host, writer, reader);
+            return self.terminated(&host, writer, reader);
         }
         self.tunnel(&host, port, writer, reader)
     }
@@ -436,7 +415,6 @@ impl Proxy {
 
     fn terminated(
         &self,
-        grant: &Grant,
         host: &str,
         client: TcpStream,
         leftover: BufReader<TcpStream>,
@@ -490,6 +468,13 @@ impl Proxy {
                 .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
             stream.get_mut().flush()?;
         }
+        // Holding a stand-in is what lets a request use its key. With none, it goes out as it came.
+        let grant = self.grants_for(host).into_iter().find(|grant| {
+            (grant.in_url && target.contains(grant.stand_in.expose()))
+                || headers.iter().any(|(name, value)| {
+                    !name.eq_ignore_ascii_case("host") && swap_header(value, grant) != *value
+                })
+        });
         headers.retain(|(name, _)| {
             ![
                 "proxy-authorization",
@@ -506,17 +491,17 @@ impl Proxy {
         });
         let mut out = format!(
             "{method} {} HTTP/1.1\r\n",
-            if grant.in_url {
-                target.replace(grant.stand_in.expose(), grant.real.expose())
-            } else {
-                target.clone()
+            match &grant {
+                Some(grant) if grant.in_url => {
+                    target.replace(grant.stand_in.expose(), grant.real.expose())
+                }
+                _ => target.clone(),
             }
         );
         for (name, value) in &headers {
-            let value = if name.eq_ignore_ascii_case("host") {
-                value.clone()
-            } else {
-                swap_header(value, grant)
+            let value = match &grant {
+                Some(grant) if !name.eq_ignore_ascii_case("host") => swap_header(value, grant),
+                _ => value.clone(),
             };
             out.push_str(&format!("{name}: {value}\r\n"));
         }
@@ -543,7 +528,9 @@ impl Proxy {
         if sent.is_err() {
             return answer(stream.get_mut(), 502, "the request could not be sent");
         }
-        let mut scrub = Scrubber::new(grant.real.expose(), grant.stand_in.expose());
+        let mut scrub = grant
+            .as_ref()
+            .map(|grant| Scrubber::new(grant.real.expose(), grant.stand_in.expose()));
         let mut status = 0;
         let mut buffer = vec![0u8; 16 * 1024];
         loop {
@@ -559,13 +546,23 @@ impl Proxy {
             if status == 0 {
                 status = status_of(&buffer[..count]);
             }
-            let clean = scrub.push(&buffer[..count]);
-            stream.get_mut().write_all(&clean)?;
+            match &mut scrub {
+                Some(scrub) => {
+                    let clean = scrub.push(&buffer[..count]);
+                    stream.get_mut().write_all(&clean)?;
+                }
+                None => stream.get_mut().write_all(&buffer[..count])?,
+            }
         }
-        stream.get_mut().write_all(&scrub.finish())?;
+        if let Some(scrub) = &mut scrub {
+            stream.get_mut().write_all(&scrub.finish())?;
+        }
         stream.get_mut().flush()?;
         stream.get_mut().conn.send_close_notify();
         let _ = stream.get_mut().flush();
+        let Some(grant) = grant else {
+            return Ok(());
+        };
         let path = target
             .split('?')
             .next()
@@ -681,18 +678,6 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .iter()
         .find(|(known, _)| known.eq_ignore_ascii_case(name))
         .map(|(_, value)| value.as_str())
-}
-
-fn token_from(value: &str) -> Option<String> {
-    let (scheme, rest) = value.split_once(' ')?;
-    if scheme.eq_ignore_ascii_case("bearer") {
-        return Some(rest.trim().to_owned());
-    }
-    if !scheme.eq_ignore_ascii_case("basic") {
-        return None;
-    }
-    let decoded = String::from_utf8(base64_decode(rest)?).ok()?;
-    decoded.split_once(':').map(|(_, token)| token.to_owned())
 }
 
 fn read_line_capped(reader: &mut impl BufRead) -> io::Result<Option<String>> {
@@ -827,7 +812,9 @@ enum Control {
         grant: String,
         key: String,
         provider: String,
-        value: String,
+        /// The sealed file's text, which this reads the key from as a check would.
+        text: String,
+        field: Option<String>,
         expires: u64,
     },
     Remove {
@@ -846,7 +833,6 @@ enum Reply {
     Added {
         grant: String,
         stand_in: String,
-        token: String,
     },
     Failed {
         grant: String,
@@ -900,20 +886,17 @@ pub fn serve_from_stdin(folder: &Path) -> Result<(), String> {
                 grant,
                 key,
                 provider,
-                value,
+                text,
+                field,
                 expires,
             } => {
-                let value = zeroize::Zeroizing::new(value);
-                match prepare_grant(&grant, &key, &provider, &value, expires).and_then(|ready| {
-                    let stand_in = ready.stand_in.expose().to_owned();
-                    let token = proxy.add(ready).map_err(|e| e.to_string())?;
-                    Ok((stand_in, token))
-                }) {
-                    Ok((stand_in, token)) => say(&Reply::Added {
-                        grant,
-                        stand_in,
-                        token,
-                    }),
+                let text = zeroize::Zeroizing::new(text);
+                match prepare_grant(&grant, &key, &provider, &text, field.as_deref(), expires) {
+                    Ok(ready) => {
+                        let stand_in = ready.stand_in.expose().to_owned();
+                        proxy.add(ready);
+                        say(&Reply::Added { grant, stand_in });
+                    }
                     Err(error) => say(&Reply::Failed { grant, error }),
                 }
             }
@@ -926,7 +909,8 @@ fn prepare_grant(
     id: &str,
     key: &str,
     provider: &str,
-    value: &str,
+    text: &str,
+    field: Option<&str>,
     expires: u64,
 ) -> Result<Grant, String> {
     let recipe = providers::load(provider)?;
@@ -935,6 +919,9 @@ fn prepare_grant(
             "{provider} cannot use a stand-in, so this key needs --real"
         ));
     }
+    // The same reading a check uses, so a file that checks also works here.
+    let key_value = crate::verify::read_key_for(text, field, &recipe)?;
+    let value = key_value.expose();
     if value.chars().any(char::is_control) {
         return Err("this key has characters that cannot go in a header".into());
     }
@@ -967,7 +954,7 @@ mod tests {
 
     #[test]
     fn a_stand_in_keeps_the_shape_and_nothing_else() {
-        let real = "re_AbCd-1234.efgh";
+        let real = "re_AbCd-1234.efghIJKLmnop";
         let fake = mint_stand_in(real, &["re_".into()]).unwrap();
         assert_eq!(fake.len(), real.len());
         assert!(fake.starts_with("re_"));
@@ -978,6 +965,7 @@ mod tests {
             assert_eq!(a.is_ascii_digit(), b.is_ascii_digit());
         }
         assert!(mint_stand_in("short", &[]).is_err());
+        assert!(mint_stand_in("re_abcd", &["re_".into()]).is_err());
         assert_ne!(
             mint_stand_in(real, &[]).unwrap(),
             mint_stand_in(real, &[]).unwrap()
@@ -1037,13 +1025,5 @@ mod tests {
         assert!(body_framing(&[pair("Content-Length", "3"), pair("content-length", "4")]).is_err());
         assert!(body_framing(&[pair("Content-Length", "x")]).is_err());
         assert!(body_framing(&[pair("Transfer-Encoding", "gzip")]).is_err());
-    }
-
-    #[test]
-    fn a_token_comes_from_either_scheme() {
-        assert_eq!(token_from("Bearer abc").as_deref(), Some("abc"));
-        let basic = format!("Basic {}", base64_encode(b"keyreeve:abc"));
-        assert_eq!(token_from(&basic).as_deref(), Some("abc"));
-        assert_eq!(token_from("Digest abc"), None);
     }
 }

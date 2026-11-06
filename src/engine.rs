@@ -36,6 +36,8 @@ pub struct KeyConfig {
     pub known_id: Option<String>,
     /// A key a person made at the provider's page, for a provider with no way to make one here.
     pub handed_over: Option<Secret>,
+    /// A person said the overlap can end now, because their services already use the new key.
+    pub revoke_now: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -149,7 +151,8 @@ impl Engine<'_> {
         self.record(Event::Started { old_id })?;
         self.store.put(&self.previous_name(), &current)?;
 
-        let created = match self.config.handed_over.clone() {
+        // Only for a provider this engine cannot make keys with, where a person does both ends.
+        let created = match self.config.handed_over.clone().filter(|_| self.by_hand()) {
             Some(value) => Create::Issued {
                 id: HANDED_OVER_ID.to_owned(),
                 value,
@@ -254,8 +257,14 @@ impl Engine<'_> {
                         self.record(Event::OldRevoked)?;
                         continue;
                     }
+                    // A person revokes this one, whenever their services are ready.
+                    if self.by_hand() {
+                        self.manual("revoke the old key at the provider")?;
+                        self.record(Event::OldRevoked)?;
+                        continue;
+                    }
                     let revoke_after = self.revoke_after();
-                    if (self.now)() < revoke_after {
+                    if !self.config.revoke_now && (self.now)() < revoke_after {
                         return Ok(Outcome::AwaitingOverlap { revoke_after });
                     }
                     // Time passed since the check. Never revoke the old key on an old answer.
@@ -265,11 +274,6 @@ impl Engine<'_> {
                         .ok_or_else(|| Error::KeyMissing(key.clone()))?;
                     if !self.verify(&current) {
                         return Ok(Outcome::NewKeyFailing);
-                    }
-                    if self.by_hand() {
-                        self.manual("revoke the old key at the provider")?;
-                        self.record(Event::OldRevoked)?;
-                        continue;
                     }
                     match self.old_id() {
                         Some(old_id) => {
@@ -400,7 +404,14 @@ impl Engine<'_> {
         let recipe = self.recipe;
         let id = self.new_id().unwrap_or_default();
         match self.send(&recipe.verify, &[("id", id.as_str())], value) {
-            Ok(response) => recipe.verify.accepts(response.status),
+            // The same reading as a check: some refusals prove the key exists.
+            Ok(response) => {
+                recipe.verify.accepts(response.status)
+                    || recipe.verify.alive_if.as_ref().is_some_and(|alive| {
+                        alive.status == response.status
+                            && response.body.expose().contains(&alive.contains)
+                    })
+            }
             Err(_) => false,
         }
     }

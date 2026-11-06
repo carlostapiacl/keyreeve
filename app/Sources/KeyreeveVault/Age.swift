@@ -8,6 +8,9 @@ public enum Age {
     static let header = "age-encryption.org/v1"
     static let chunkSize = 64 * 1024
     static let maxFileBytes = 16 * 1024 * 1024
+    /// Well under the limit for opening, so everything sealed here can always be opened, with room
+    /// for the header and each chunk's tag.
+    public static let maxPlainBytes = 8 * 1024 * 1024
 
     public struct Stanza: Equatable {
         public let type: String
@@ -27,6 +30,7 @@ public enum Age {
     // MARK: Files
 
     public static func encrypt(_ plain: Data, to recipients: [Recipient]) throws -> Data {
+        guard plain.count <= maxPlainBytes else { throw VaultError("that is too large to be a key") }
         let fileKey = randomBytes(16)
         let stanzas = try recipients.map { try $0.wrap(fileKey) }
         var head = Data("\(header)\n".utf8)

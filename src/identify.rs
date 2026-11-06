@@ -116,6 +116,20 @@ fn safe_value(value: &str, key: &Secret) -> bool {
             .all(|word| word.len() < 16 || kind_of(word).is_none())
 }
 
+/// The same promise as for an answer over HTTP: only what the file declares, and nothing like the key.
+fn program_fields(
+    fields: BTreeMap<String, String>,
+    recipe: &Recipe,
+    key: &Secret,
+) -> BTreeMap<String, String> {
+    let declared = recipe.identify.as_ref().map(|found| &found.fields);
+    fields
+        .into_iter()
+        .filter(|field| declared.is_some_and(|names| names.contains_key(&field.0)))
+        .filter(|field| safe_field(field, key))
+        .collect()
+}
+
 /// A program can get the name wrong as easily as the value, and both are written to a file.
 fn safe_field(field: &(String, String), key: &Secret) -> bool {
     safe_value(&field.1, key) && safe_value(&field.0, key)
@@ -171,14 +185,7 @@ pub fn run_plan_with(
                 if let Some(run) = &recipe.auth.run {
                     let answer =
                         script::run(&providers::programs_folder(), run, "identify", Some(&key))?;
-                    // The same promise as for an answer over HTTP: only what the file declares.
-                    let declared = recipe.identify.as_ref().map(|found| &found.fields);
-                    let fields = answer
-                        .fields
-                        .into_iter()
-                        .filter(|field| declared.is_some_and(|names| names.contains_key(&field.0)))
-                        .filter(|field| safe_field(field, &key))
-                        .collect();
+                    let fields = program_fields(answer.fields, &recipe, &key);
                     return Ok((recipe, fields, Some(key)));
                 }
                 let mut transport = HttpTransport::for_recipe(&recipe);
@@ -383,5 +390,24 @@ mod tests {
             Some("x{b}")
         );
         assert_eq!(suggest("{missing}", &fields(&[])), None);
+    }
+
+    #[test]
+    fn a_program_keeps_only_the_fields_its_file_declares() {
+        let declared = Recipe::parse("schema: 1\nprovider: p\nhosts: []\nauth: { type: command, run: { program: p.sh } }\nidentify: { request: { method: GET, path: / }, fields: { account: \"reply:\" } }\n").unwrap();
+        let bare = Recipe::parse(
+            "schema: 1\nprovider: p\nhosts: []\nauth: { type: command, run: { program: p.sh } }\n",
+        )
+        .unwrap();
+        let key = Secret::new("CANARYkey1234567890");
+        let answer = || -> BTreeMap<String, String> {
+            [("account", "me"), ("private_note", "other")]
+                .into_iter()
+                .map(|(a, b)| (a.to_owned(), b.to_owned()))
+                .collect()
+        };
+        let kept = program_fields(answer(), &declared, &key);
+        assert_eq!(kept.keys().collect::<Vec<_>>(), ["account"]);
+        assert!(program_fields(answer(), &bare, &key).is_empty());
     }
 }

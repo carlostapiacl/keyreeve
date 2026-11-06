@@ -119,7 +119,36 @@ struct AgentTests {
         #expect(out.status == 0)
         #expect(out.text == "v1")
         let big = try AgentRunner.run(["/bin/sh", "-c", "head -c 200000 /dev/zero"], variable: "X", value: "v")
-        #expect(big.text.utf8.count <= AgentRunner.maxOutput)
+        #expect(big.text.utf8.count <= AgentRunner.maxOutput + 64)
+    }
+
+    @Test func testAProgramThatWillNotStopDoesNotHoldTheServer() throws {
+        let started = Date()
+        let out = try AgentRunner.run(
+            ["/bin/sh", "-c", "trap '' TERM; sleep 60 & wait"], variable: "X", value: "v", limit: 1)
+        #expect(out.status == -1)
+        #expect(Date().timeIntervalSince(started) < 10)
+    }
+
+    @Test func testAKeyAtTheCutIsHiddenWhole() throws {
+        let padding = String(repeating: "x", count: AgentRunner.maxOutput - 5)
+        let result = try call(bridge(Log(), output: padding + Self.canary), "run_with_key", run)
+        #expect(!result.text.contains("CANARY"))
+        #expect(!result.text.contains(String(Self.canary.prefix(5))))
+    }
+
+    @Test func testAFieldUsesItsLastValueAndCommentsStayOut() throws {
+        #expect(try EnvReferences.value(in: Data("T=old\nT=new\n".utf8), field: "T") == "new")
+        #expect(EnvReferences.parse(#"A="keyreeve://k" # production"#) == [.reference(name: "A", key: "k", field: nil)])
+        #expect(EnvReferences.parse("A=keyreeve://k # production") == [.reference(name: "A", key: "k", field: nil)])
+        #expect(EnvReferences.parse("A=has#hash") == [.value(name: "A", value: "has#hash")])
+    }
+
+    @Test func testAnUnknownProtocolVersionGetsOneThisSpeaks() throws {
+        let b = bridge(Log())
+        let hello = try #require(b.handle(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2099-01-01"}}"#))
+        #expect(!hello.contains("2099"))
+        #expect(hello.contains("2025-06-18"))
     }
 
     @Test func testReferencesParseAndResolve() throws {

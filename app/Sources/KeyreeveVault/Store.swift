@@ -139,7 +139,8 @@ public struct VaultStore: Sendable {
 
     private func withLock<T>(_ body: () throws -> T) throws -> T {
         try prepareDirectory()
-        let descriptor = open(directory.appendingPathComponent(".lock").path, O_RDWR | O_CREAT, 0o600)
+        // Close on exec: a child that inherited this would hold the vault's lock for as long as it runs.
+        let descriptor = open(directory.appendingPathComponent(".lock").path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw VaultError("the vault could not be locked") }
         defer { close(descriptor) }
         guard flock(descriptor, LOCK_EX) == 0 else { throw VaultError("the vault could not be locked") }
@@ -158,7 +159,7 @@ public struct VaultStore: Sendable {
     private func write(_ data: Data, to url: URL) throws {
         try prepareDirectory()
         let temp = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
-        let descriptor = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        let descriptor = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw VaultError("the vault could not be saved") }
         var saved = false
         defer {

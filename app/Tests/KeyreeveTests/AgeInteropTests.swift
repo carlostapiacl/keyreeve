@@ -4,6 +4,7 @@ import KeyreeveVault
 import Testing
 
 /// Proves the vault's files are real age files, against the official tools when they are installed.
+@Suite(.serialized)
 struct AgeInteropTests {
     static let tool = ["/usr/local/bin/age", "/opt/homebrew/bin/age"].first(where: FileManager.default.isExecutableFile)
 
@@ -11,6 +12,10 @@ struct AgeInteropTests {
         let process = Process()
         let stdin = Pipe()
         let stdout = Pipe()
+        // These run in parallel, so one age must not inherit another's pipe and wait on it forever.
+        for handle in [stdin.fileHandleForReading, stdin.fileHandleForWriting, stdout.fileHandleForReading, stdout.fileHandleForWriting] {
+            _ = fcntl(handle.fileDescriptor, F_SETFD, FD_CLOEXEC)
+        }
         process.executableURL = URL(fileURLWithPath: try #require(Self.tool))
         process.arguments = arguments
         process.standardInput = stdin
@@ -19,7 +24,8 @@ struct AgeInteropTests {
         try process.run()
         // age streams, so a large input would fill both pipes if this waited on either one.
         let writer = stdin.fileHandleForWriting
-        DispatchQueue.global().async {
+        // On a thread of its own: the shared pool is full of tests waiting on programs.
+        Thread.detachNewThread {
             try? writer.write(contentsOf: input)
             try? writer.close()
         }
@@ -81,6 +87,14 @@ struct AgeInteropTests {
         var changed = file
         changed[10] ^= 1
         XCTAssertThrowsError(try Age.decrypt(changed, with: recovery))
+    }
+
+    @Test func testEverythingSealedCanBeOpened() throws {
+        let recovery = Age.X25519Identity()
+        let largest = Data(count: Age.maxPlainBytes)
+        let file = try Age.encrypt(largest, to: [recovery.recipient])
+        #expect(try Age.decrypt(file, with: recovery) == largest)
+        XCTAssertThrowsError(try Age.encrypt(Data(count: Age.maxPlainBytes + 1), to: [recovery.recipient]))
     }
 
     @Test func testAKeyFromAgeKeygenWorks() throws {

@@ -5,8 +5,14 @@ use std::path::Path;
 use std::process::ExitCode;
 
 pub fn run_rotate(args: &[String]) -> ExitCode {
-    let resume = args.iter().any(|arg| arg == "--resume");
-    let rest: Vec<&String> = args.iter().filter(|arg| *arg != "--resume").collect();
+    let options = rotate::RunOptions {
+        resume: args.iter().any(|arg| arg == "--resume"),
+        revoke_now: args.iter().any(|arg| arg == "--revoke-now"),
+    };
+    let rest: Vec<&String> = args
+        .iter()
+        .filter(|arg| *arg != "--resume" && *arg != "--revoke-now")
+        .collect();
     let mut found = HashMap::new();
     for pair in rest.chunks(2) {
         let [name, value] = pair else {
@@ -30,7 +36,7 @@ pub fn run_rotate(args: &[String]) -> ExitCode {
             Path::new(tool),
             Path::new(journal),
             &sealed,
-            resume,
+            options,
         )
     });
     match result {

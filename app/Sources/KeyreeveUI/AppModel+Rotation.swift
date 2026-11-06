@@ -58,10 +58,18 @@ extension AppModel {
             Task.detached {
                 let result = Result { () throws -> CheckRunner.KeyCheck in
                     let vault = try store.load()
-                    guard let last = vault.replaced?[key]?.indices.last else { return .unknown }
-                    let value = try vault.openReplaced(name: key, index: last, with: try unlocked.recipient(store))
-                    return try CheckRunner.checkText(
-                        String(decoding: value, as: UTF8.self), recipe: recipe, field: field, binary: binary)
+                    // The newest copy that differs from the key in use. A rotation resumed after a
+                    // crash can save the new key twice, and testing that would say the old one lives.
+                    let identity = try unlocked.recipient(store)
+                    let current = try vault.open(name: key, with: identity)
+                    for index in (vault.replaced?[key]?.indices ?? 0..<0).reversed() {
+                        let value = try vault.openReplaced(name: key, index: index, with: identity)
+                        if value != current {
+                            return try CheckRunner.checkText(
+                                String(decoding: value, as: UTF8.self), recipe: recipe, field: field, binary: binary)
+                        }
+                    }
+                    return .unknown
                 }
                 await MainActor.run {
                     self.busy = false
@@ -81,7 +89,7 @@ extension AppModel {
     /// its original can be gone, and the old key must still be revocable.
     public func finishRotation(of key: String) {
         guard !busy, let binary, let vaultTool else { return }
-        if let item = items.first(where: { $0.path == key }) {
+        if let item = items.first(where: { $0.path == key }), item.vault == .sealed || item.vault == .outdated {
             runRotation(item, resume: true)
             return
         }
@@ -105,6 +113,8 @@ extension AppModel {
         plan: RotationPlan, admin: String?, resume: Bool, handedOver: String? = nil, binary: URL, vaultTool: URL
     ) {
         let key = plan.key
+        // Pressing the button is a person saying the old key can go, which ends a waiting overlap.
+        let revokeNow = resume
         let reason = resume ? T("finish rotating a key") : T("rotate a key with its provider")
         openVault(reason: reason) { unlocked in
             guard let unlocked else {
@@ -131,7 +141,8 @@ extension AppModel {
                         names: wanted, recipient: try unlocked.recipient(store), store: store, by: "rotate")
                     if let handedOver { sealed["\(key)#incoming"] = handedOver }
                     return try CheckRunner.rotate(
-                        plan: plan, resume: resume, sealed: sealed, binary: binary, vaultTool: vaultTool, files: files)
+                        plan: plan, resume: resume, revokeNow: revokeNow, sealed: sealed, binary: binary, vaultTool: vaultTool,
+                        files: files)
                 }
                 await MainActor.run {
                     self.busy = false
@@ -203,20 +214,24 @@ extension AppModel {
 }
 
 
-/// The result of a rotation in a person's words.
+/// The result of a rotation in a person's words, which depend on what is left for them to do.
 public func rotationMessage(_ report: RotationReport) -> String {
+    let oldStillAlive = report.manual.contains { $0.contains("revoke it by hand") || $0.contains("revoke the old key") }
+    let newStillAlive = report.manual.contains { $0.contains("revoke the unused key") || $0.contains("delete the new key") }
     switch report.outcome {
     case "completed":
-        return report.manual.isEmpty
-            ? T("Rotated. The old key is revoked.")
-            : T("Rotated. The old key still works: revoke it at the provider.")
+        if report.manual.isEmpty { return T("Rotated. The old key is revoked.") }
+        return oldStillAlive
+            ? T("Rotated. The old key still works: revoke it at the provider.")
+            : T("Rotated. Some steps need you: see Vault.")
     case "waiting": return T("The new key is in place. The old one keeps working until you finish.")
     case "new_key_failing": return T("The new key stopped working, so the old one was kept. Try again later.")
     case "revoke_pending": return T("The new key is in place, but the provider refused to revoke the old one. Try again.")
     case "rolled_back":
-        return report.manual.isEmpty
-            ? T("Nothing changed: the rotation was undone (%@).", report.reason ?? "")
-            : T("Undone, but the new key is still alive at the provider: revoke it by hand (see Vault).")
+        if report.manual.isEmpty { return T("Nothing changed: the rotation was undone (%@).", report.reason ?? "") }
+        return newStillAlive
+            ? T("Undone, but the new key is still alive at the provider: revoke it by hand (see Vault).")
+            : T("Undone, but check the provider: see Vault.")
     case "rollback_blocked": return T("Stopped: %@ could not go back to the old key.", report.reason ?? "")
     default: return T("Nothing to do")
     }

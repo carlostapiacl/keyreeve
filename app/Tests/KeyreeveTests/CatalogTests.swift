@@ -476,6 +476,19 @@ struct SealedRunTests {
         XCTAssertFalse(try read(root, "args").contains("a.txt"))
     }
 
+    @Test func testEachEndingSaysWhatIsTrue() throws {
+        func message(_ outcome: String, _ manual: [String]) throws -> String {
+            let list = String(decoding: try JSONEncoder().encode(manual), as: UTF8.self)
+            return rotationMessage(try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"\#(outcome)","manual":\#(list)}"#.utf8)))
+        }
+        let done = try message("completed", ["broken still holds the old key: update it by hand"])
+        #expect(done == T("Rotated. Some steps need you: see Vault."))
+        #expect(try message("completed", ["the id of the previous key is unknown: revoke it by hand"]) == T("Rotated. The old key still works: revoke it at the provider."))
+        #expect(try message("completed", ["revoke the old key at the provider"]) == T("Rotated. The old key still works: revoke it at the provider."))
+        #expect(try message("rolled_back", ["a key may have been created: check the provider"]) == T("Undone, but check the provider: see Vault."))
+        #expect(try message("rolled_back", ["revoke the unused key x by hand"]) == T("Undone, but the new key is still alive at the provider: revoke it by hand (see Vault)."))
+    }
+
     @Test @MainActor func testACompletedRotationDoesNotClaimARevocationItDidNotDo() throws {
         let manual = try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"completed","manual":["x"]}"#.utf8))
         let clean = try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"completed","manual":[]}"#.utf8))

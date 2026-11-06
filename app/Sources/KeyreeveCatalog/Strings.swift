@@ -331,6 +331,8 @@ public let spanish: [String: String] = [
     "Tried with a real key: %@": "Probado con una clave real: %@",
     "Rotated with a real key: %@": "Rotado con una clave real: %@",
     "Not tried with a real key yet": "Aún sin probar con una clave real",
+    "Rotated. Some steps need you: see Vault.": "Rotada. Algunos pasos quedan en tus manos: mira Bóveda.",
+    "Undone, but check the provider: see Vault.": "Se deshizo, pero revisa el proveedor: mira Bóveda.",
     "Keep keys out of plain files": "Saca tus claves de los archivos de texto",
     "The vault seals each key with a key inside this Mac's chip. Your finger opens it, and nothing else on this Mac can read it without asking.": "La bóveda sella cada clave con una llave dentro del chip de este Mac. Se abre con tu huella, y nada más en este Mac puede leerla sin pedirla.",
     "You get a recovery key once. If this Mac dies, it is the only way back in, so have paper at hand.": "Recibes una clave de recuperación una sola vez. Si este Mac muere, es la única forma de volver a entrar, así que ten papel a mano.",

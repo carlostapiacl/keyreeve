@@ -17,7 +17,7 @@ public enum EnvReferences {
             if line.hasPrefix("export ") { line = String(line.dropFirst(7)) }
             guard let separator = line.firstIndex(of: "=") else { return nil }
             let name = line[..<separator].trimmingCharacters(in: .whitespaces)
-            let value = unquote(line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces))
+            let value = cleaned(line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces))
             guard value.hasPrefix(scheme) else { return .value(name: name, value: value) }
             let target = value.dropFirst(scheme.count)
             // A path can hold `#` only in a rotation's own names, which are not keys anyone refers to.
@@ -29,18 +29,25 @@ public enum EnvReferences {
         }
     }
 
-    private static func unquote(_ text: String) -> String {
-        guard text.count >= 2, let first = text.first, first == text.last, first == "\"" || first == "'" else {
-            return text
+    /// A quoted value ends at its quote, and an unquoted one at a comment after a space.
+    private static func cleaned(_ text: String) -> String {
+        if let first = text.first, first == "\"" || first == "'",
+            let end = text.dropFirst().firstIndex(of: first)
+        {
+            return String(text[text.index(after: text.startIndex)..<end])
         }
-        return String(text.dropFirst().dropLast())
+        if let comment = text.range(of: " #") {
+            return text[..<comment.lowerBound].trimmingCharacters(in: .whitespaces)
+        }
+        return text
     }
 
     /// The value a reference means, from the sealed text of a file: one field, or a one-line file.
     public static func value(in sealed: Data, field: String?) throws -> String {
         guard let text = String(data: sealed, encoding: .utf8) else { throw VaultError("this key is not text") }
         if let field {
-            for case .value(let name, let value) in parse(text) where name == field { return value }
+            // The last one, as a shell or `env` would end up with.
+            for case .value(let name, let value) in parse(text).reversed() where name == field { return value }
             throw VaultError("this key has no field \(field)")
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -115,7 +122,7 @@ public struct AgentBridge {
         switch method {
         case "initialize":
             return reply(id: id, result: [
-                "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
+                "protocolVersion": Self.version(for: params["protocolVersion"] as? String),
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": "keyreeve", "version": "0.1.0"],
             ])
@@ -172,7 +179,15 @@ public struct AgentBridge {
         let value = try EnvReferences.value(in: sealed, field: arguments["field"] as? String)
         record(key, program, reason)
         let output = try run(command, variable, value)
-        return "exit \(output.status)\n\(Self.redact(output.text, value: value))"
+        // Hidden first and cut after, so the cut cannot leave half a key showing.
+        let clean = String(decoding: Data(Self.redact(output.text, value: value).utf8).prefix(AgentRunner.maxOutput), as: UTF8.self)
+        return "exit \(output.status)\n\(clean)"
+    }
+
+    /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.
+    static func version(for requested: String?) -> String {
+        let supported = ["2025-06-18", "2025-03-26", "2024-11-05"]
+        return requested.flatMap { supported.contains($0) ? $0 : nil } ?? supported[0]
     }
 
     static func isVariableName(_ name: String) -> Bool {
@@ -234,9 +249,14 @@ public enum AgentRunner {
     public static let limit: TimeInterval = 120
     public static let maxOutput = 64 * 1024
 
-    public static func run(_ command: [String], variable: String, value: String) throws -> AgentBridge.Output {
+    public static func run(
+        _ command: [String], variable: String, value: String, limit: TimeInterval = limit
+    ) throws -> AgentBridge.Output {
         let process = Process()
         let pipe = Pipe()
+        // A program started later must not inherit this, or the output would never end.
+        _ = fcntl(pipe.fileHandleForReading.fileDescriptor, F_SETFD, FD_CLOEXEC)
+        _ = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETFD, FD_CLOEXEC)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = command
         process.environment = ProcessInfo.processInfo.environment.merging([variable: value]) { _, new in new }
@@ -244,17 +264,49 @@ public enum AgentRunner {
         process.standardOutput = pipe
         process.standardError = pipe
         try process.run()
-        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + limit, execute: timer)
-        defer { timer.cancel() }
-        var output = Data()
-        while true {
-            let chunk = pipe.fileHandleForReading.availableData
-            if chunk.isEmpty { break }
-            // Keeps draining past the cap, so a program with a lot to say does not block forever.
-            if output.count < maxOutput { output += chunk.prefix(maxOutput - output.count) }
+
+        // Room past the cap, so a key that starts before the cap arrives whole and can be hidden.
+        let keep = maxOutput + value.utf8.count * 2 + 16
+        let collected = Collected()
+        let reader = DispatchGroup()
+        reader.enter()
+        let handle = pipe.fileHandleForReading
+        // On a thread of its own, which may stay blocked until a stubborn child lets go of the pipe.
+        Thread.detachNewThread {
+            while true {
+                let chunk = handle.availableData
+                if chunk.isEmpty { break }
+                collected.add(chunk, keeping: keep)
+            }
+            reader.leave()
         }
-        process.waitUntilExit()
-        return AgentBridge.Output(status: process.terminationStatus, text: String(decoding: output, as: UTF8.self))
+        // A program can ignore being asked to stop, or leave a child holding the output open. Neither
+        // may hold the server, which has one request at a time.
+        let finished = reader.wait(timeout: .now() + limit) == .success
+        if !finished, process.isRunning {
+            process.terminate()
+            Thread.sleep(forTimeInterval: 1)
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+        if finished { process.waitUntilExit() }
+        let status: Int32 = finished ? process.terminationStatus : -1
+        return AgentBridge.Output(status: status, text: String(decoding: collected.data, as: UTF8.self))
+    }
+
+    private final class Collected: @unchecked Sendable {
+        private let lock = NSLock()
+        private var bytes = Data()
+
+        func add(_ chunk: Data, keeping limit: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            if bytes.count < limit { bytes += chunk.prefix(limit - bytes.count) }
+        }
+
+        var data: Data {
+            lock.lock()
+            defer { lock.unlock() }
+            return bytes
+        }
     }
 }

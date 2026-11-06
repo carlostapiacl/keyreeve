@@ -397,6 +397,7 @@ impl World {
                 issued_name: KEY.to_owned(),
                 known_id: None,
                 handed_over: None,
+                revoke_now: false,
             },
             mock: Rc::new(RefCell::new(mock)),
             values: Rc::new(RefCell::new(values)),

@@ -274,7 +274,7 @@ An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve
 a program with one, and no tool returns a value. Nothing is allowed until you write `~/.keyreeve/agent-commands.json`
 ([example](examples/agent-commands.json)), which says which programs may use which keys. Each use asks for your finger, with a prompt
 that shows the program and the key, and the agent's reason goes in the usage log. Choose programs that cannot print what they
-receive: the output hides the plain key and its base64, but a program can hide it in other ways.
+receive: the output hides the plain key and its base64, but a program can hide it in other ways. A run stops after 2 minutes.
 
 ## Rotate a key
 

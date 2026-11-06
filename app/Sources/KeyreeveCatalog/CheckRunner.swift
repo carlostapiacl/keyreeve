@@ -60,7 +60,7 @@ public enum CheckRunner {
     /// The providers keyreeve knows, from what ships and from your own files.
     public static func providers(binary: URL) -> ProviderDirectory {
         let process = Process()
-        let pipe = Pipe()
+        let pipe = privatePipe()
         process.executableURL = binary
         process.arguments = ["recipes", "--json"]
         process.standardOutput = pipe
@@ -112,16 +112,18 @@ public enum CheckRunner {
 
     /// Runs one rotation with the opened copies on stdin, and returns what happened.
     public static func rotate(
-        plan: RotationPlan, resume: Bool, sealed: [String: String], binary: URL, vaultTool: URL, files: KeyreeveFiles
+        plan: RotationPlan, resume: Bool, revokeNow: Bool = false, sealed: [String: String], binary: URL, vaultTool: URL,
+        files: KeyreeveFiles
     ) throws -> RotationReport {
         try files.writePrivate(try JSONEncoder().encode(plan), to: files.rotationPlan)
         defer { try? FileManager.default.removeItem(at: files.rotationPlan) }
         var arguments = ["rotate", "--plan", files.rotationPlan.path, "--vault-tool", vaultTool.path, "--journal", files.rotations.path]
         if resume { arguments.append("--resume") }
+        if revokeNow { arguments.append("--revoke-now") }
         let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        let input = Pipe()
+        let output = privatePipe()
+        let errors = privatePipe()
+        let input = privatePipe()
         process.executableURL = binary
         process.arguments = arguments
         process.standardOutput = output
@@ -165,7 +167,7 @@ public enum CheckRunner {
     public static func rotations(binary: URL, files: KeyreeveFiles) -> [RotationStatus] {
         guard FileManager.default.fileExists(atPath: files.rotations.path) else { return [] }
         let process = Process()
-        let pipe = Pipe()
+        let pipe = privatePipe()
         process.executableURL = binary
         process.arguments = ["rotations", "--journal", files.rotations.path]
         process.standardOutput = pipe
@@ -191,13 +193,13 @@ public enum CheckRunner {
             if !item.field.isEmpty { arguments += ["--field", item.field] }
         }
         let process = Process()
-        let pipe = Pipe()
+        let pipe = privatePipe()
         process.executableURL = binary
         process.arguments = arguments
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         let input = sealed.map { Data($0.utf8) }
-        let inputPipe = input.map { _ in Pipe() }
+        let inputPipe = input.map { _ in privatePipe() }
         if let inputPipe { process.standardInput = inputPipe }
         try process.run()
         if let input, let inputPipe { send(input, to: inputPipe) }
@@ -205,6 +207,15 @@ public enum CheckRunner {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw CheckError(T("The action did not finish")) }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A pipe a child must not inherit by accident. A program started at the same moment would otherwise
+    /// keep this pipe's write end open, and the command reading the keys would never see their end.
+    static func privatePipe() -> Pipe {
+        let pipe = Pipe()
+        _ = fcntl(pipe.fileHandleForReading.fileDescriptor, F_SETFD, FD_CLOEXEC)
+        _ = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETFD, FD_CLOEXEC)
+        return pipe
     }
 
     /// Copies from the vault, as the command wants them. No copies means nothing to send.
@@ -224,12 +235,12 @@ public enum CheckRunner {
         _ binary: URL, _ arguments: [String], stdin: Data? = nil, progress: @Sendable (Int, Int) -> Void
     ) throws -> Int32 {
         let process = Process()
-        let pipe = Pipe()
+        let pipe = privatePipe()
         process.executableURL = binary
         process.arguments = arguments
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        let inputPipe = stdin.map { _ in Pipe() }
+        let inputPipe = stdin.map { _ in privatePipe() }
         if let inputPipe { process.standardInput = inputPipe }
         try process.run()
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }
@@ -257,7 +268,7 @@ public enum CheckRunner {
         process.arguments = arguments
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        let inputPipe = stdin.map { _ in Pipe() }
+        let inputPipe = stdin.map { _ in privatePipe() }
         if let inputPipe { process.standardInput = inputPipe }
         try process.run()
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }

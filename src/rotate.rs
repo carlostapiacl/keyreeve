@@ -270,12 +270,29 @@ fn manual_of(journal: &Journal, key: &str) -> Vec<String> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunOptions {
+    pub resume: bool,
+    /// End the overlap now, because a person said their services use the new key.
+    pub revoke_now: bool,
+}
+
+/// A pasted key must be a new one. The old key gets revoked after this, so pasting the current key
+/// by mistake would end with every service holding a dead key.
+fn check_handed_over(value: &Secret, current: &Secret) -> Result<(), String> {
+    check_new_key(value.expose())?;
+    if value == current {
+        return Err("that is the key you already have, so make a new one at the provider".into());
+    }
+    Ok(())
+}
+
 pub fn run(
     plan: &Path,
     tool: &Path,
     journal: &Path,
     sealed: &Sealed,
-    resume: bool,
+    options: RunOptions,
 ) -> Result<Report, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
     let mut plan: Plan = serde_json::from_str(&text).map_err(|e| format!("the plan: {e}"))?;
@@ -322,6 +339,12 @@ pub fn run(
     let recipe = resolve(&plan.recipe, plan.host.as_deref())?;
     let handed_over = sealed.text(&incoming_name(&plan.key)).map(Secret::new);
     if !open {
+        if recipe.can_rotate() && handed_over.is_some() {
+            return Err(format!(
+                "{} makes its own keys, so none is pasted",
+                plan.recipe
+            ));
+        }
         let by_hand = recipe.can_rotate_by_hand() && handed_over.is_some();
         if !recipe.can_rotate() && !by_hand {
             return Err(format!(
@@ -329,15 +352,15 @@ pub fn run(
                 plan.recipe
             ));
         }
-        // Checked here too, since a person pasting a key should hear about a bad one at once.
-        if let Some(value) = &handed_over {
-            check_new_key(value.expose())?;
-        }
     }
     // After promotion only the revocation is left, so a retired service cannot block it.
     let places_needed = !matches!(phase, Phase::Promoted | Phase::OldRevoked);
     let (mut store, mut sinks) = prepare(&plan, &recipe, tool, sealed, !open, places_needed)?;
     if !open {
+        // Checked here, since a person pasting a key should hear about a bad one at once.
+        if let Some(value) = &handed_over {
+            check_handed_over(value, &store.current)?;
+        }
         freeze_plan(journal, &plan)?;
     }
     let config = KeyConfig {
@@ -347,6 +370,7 @@ pub fn run(
         issued_name: plan.issued_name.clone(),
         known_id: plan.known_id.clone(),
         handed_over,
+        revoke_now: options.revoke_now,
     };
     let mut transport = HttpTransport::for_recipe(&recipe);
     let outcome = {
@@ -363,7 +387,7 @@ pub fn run(
             sinks: places,
             now: &now,
         };
-        if resume {
+        if options.resume {
             engine.resume()
         } else {
             engine.rotate()
@@ -608,6 +632,7 @@ mod tests {
             issued_name: "n".into(),
             known_id: Some("old-id".into()),
             handed_over: None,
+            revoke_now: false,
         };
         let mut first = Scripted {
             verify: [200].into(),
@@ -736,6 +761,7 @@ mod tests {
             issued_name: plan.issued_name.clone(),
             known_id: plan.known_id.clone(),
             handed_over: None,
+            revoke_now: false,
         };
         let mut fake = Fake {
             verify_status,
@@ -886,6 +912,7 @@ mod tests {
                 issued_name: "n".into(),
                 known_id: None,
                 handed_over: None,
+                revoke_now: false,
             };
             let mut fake = Fake {
                 verify_status: 200,
@@ -1011,6 +1038,7 @@ mod tests {
             issued_name: "n".into(),
             known_id: None,
             handed_over: handed_over.map(Secret::new),
+            revoke_now: false,
         };
         let mut fake = Fake {
             verify_status: verify,
@@ -1036,6 +1064,121 @@ mod tests {
         let current = store.current.expose().to_owned();
         fs::remove_dir_all(dir).unwrap();
         (outcome, fake.calls, manual, current)
+    }
+
+    #[test]
+    fn pasting_the_key_you_already_have_is_refused() {
+        let current = Secret::new("current-key-0123456789");
+        assert!(check_handed_over(&current, &current)
+            .unwrap_err()
+            .contains("already have"));
+        assert!(check_handed_over(&Secret::new("another-key-0123456789"), &current).is_ok());
+        assert!(check_handed_over(&Secret::new("short"), &current).is_err());
+    }
+
+    #[test]
+    fn a_pasted_key_is_ignored_where_the_engine_makes_its_own() {
+        // A provider that makes keys is asked to. The pasted value goes nowhere.
+        let (outcome, calls, _, current) = rotate_kind(
+            "paste-dual",
+            RECIPE,
+            Some("pasted-key-0123456789"),
+            200,
+            None,
+        );
+        assert_eq!(outcome, Outcome::Completed);
+        assert_eq!(current, "CANARY-new-0123456789");
+        assert!(calls.iter().any(|call| call.0 == "POST"));
+    }
+
+    #[test]
+    fn a_refusal_that_proves_the_key_is_alive_passes() {
+        const ALIVE: &str = "schema: 1\nprovider: fake\nhosts: [api.example.com]\nauth: { header: Authorization, prefix: \"Bearer \" }\nverify: { method: GET, path: /me, alive_if: { status: 401, contains: missing_permissions } }\n";
+        struct Alive;
+        impl Transport for Alive {
+            fn send(&mut self, _: &Request) -> Result<Response, TransportError> {
+                Ok(Response {
+                    headers: Vec::new(),
+                    status: 401,
+                    body: Secret::new("missing_permissions"),
+                })
+            }
+        }
+        let dir = folder("alive");
+        let recipe = Recipe::parse(ALIVE).unwrap();
+        let mut record = Journal::open(Box::new(FileBackend::new(dir.join("j")))).unwrap();
+        let mut store = store_with(&dir);
+        let config = KeyConfig {
+            key: "k".into(),
+            admin: "k".into(),
+            overlap_secs: 0,
+            issued_name: "n".into(),
+            known_id: None,
+            handed_over: Some(Secret::new("made-by-hand-0123456789")),
+            revoke_now: false,
+        };
+        let outcome = Engine {
+            recipe: &recipe,
+            config: &config,
+            transport: &mut Alive,
+            store: &mut store,
+            journal: &mut record,
+            sinks: Vec::new(),
+            now: &|| 100,
+        }
+        .rotate()
+        .unwrap();
+        assert_eq!(outcome, Outcome::Completed);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_person_can_end_the_overlap_early() {
+        let dir = folder("early");
+        let recipe = Recipe::parse(RECIPE).unwrap();
+        let mut record = Journal::open(Box::new(FileBackend::new(dir.join("j")))).unwrap();
+        let mut store = store_with(&dir);
+        let mut config = KeyConfig {
+            key: "k".into(),
+            admin: "k".into(),
+            overlap_secs: 86_400,
+            issued_name: "n".into(),
+            known_id: Some("old-id".into()),
+            handed_over: None,
+            revoke_now: false,
+        };
+        let mut provider = Scripted {
+            verify: [200, 200].into(),
+            delete_status: 200,
+            deleted: 0,
+        };
+        let waiting = Engine {
+            recipe: &recipe,
+            config: &config,
+            transport: &mut provider,
+            store: &mut store,
+            journal: &mut record,
+            sinks: Vec::new(),
+            now: &|| 100,
+        }
+        .rotate()
+        .unwrap();
+        assert!(matches!(waiting, Outcome::AwaitingOverlap { .. }));
+        config.revoke_now = true;
+        let done = Engine {
+            recipe: &recipe,
+            config: &config,
+            transport: &mut provider,
+            store: &mut store,
+            journal: &mut record,
+            sinks: Vec::new(),
+            now: &|| 101,
+        }
+        .resume()
+        .unwrap();
+        assert_eq!(done, Outcome::Completed);
+        assert_eq!(provider.deleted, 1);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

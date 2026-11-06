@@ -38,7 +38,7 @@ Usage:
       Check the keys agents can use, which need no fingerprint. For a weekly schedule.
   keyreeve identify --plan <plan.yaml> --keys <folder> --details <file> [--sealed-stdin]
       Ask each provider whose key this is, and keep only the fields its file declares.
-  keyreeve rotate --plan <plan.json> --vault-tool <program> --journal <file> [--resume]
+  keyreeve rotate --plan <plan.json> --vault-tool <program> --journal <file> [--resume] [--revoke-now]
       Rotate one key held in the vault, with the opened copies as JSON on stdin. The Mac app sends this.
   keyreeve rotations --journal <file> [--forget-id <key>]
       Show where each rotation stands, as JSON. It holds ids and step names, never values.

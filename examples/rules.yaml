@@ -1,0 +1,26 @@
+# Keep your own copy outside any repository: file names and project names are private.
+#
+# A rule matches when any `match` text appears, ignoring case, in a file's path, labels or kinds.
+# Tags add up. The most restrictive level wins: never, then ask, then free, then none.
+# With no matching level, a file is `ask`, and a `.pub` file is `none`.
+
+rules:
+  - match: [billing-api, shop]
+    tags: [project:shop]
+
+  - match: [stripe, paypal]
+    tags: [money]
+    level: never
+
+  - match: [readonly, -ro-]
+    tags: [read-only]
+    level: free
+
+  - match: [.bak, .old]
+    tags: [status:backup]
+
+# An exact path replaces the level the rules chose, and adds its tags.
+files:
+  old-notes.txt:
+    tags: [status:review]
+    level: never

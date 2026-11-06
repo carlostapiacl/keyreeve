@@ -8,6 +8,7 @@
 //! From a comment or a note, only words on a closed list are kept.
 
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -126,7 +127,28 @@ const KNOWN_WORDS: &[&str] = &[
     "webhook",
     "whatsapp",
     "youtube",
+    // Other languages.
+    "chave",
+    "clé",
+    "kennwort",
+    "passwort",
+    "schlüssel",
+    "senha",
+    "usuário",
+    "utilisateur",
 ];
+
+/// Your own words that may leave a note or a label, such as project names.
+pub type ExtraWords = BTreeSet<String>;
+
+/// Reads one word per line. Blank lines and lines starting with `#` are skipped.
+pub fn parse_words(text: &str) -> ExtraWords {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_lowercase)
+        .collect()
+}
 
 /// Prefixes that providers publish or that are widely known. Longer prefixes go first.
 const KINDS: &[(&str, &str)] = &[
@@ -183,32 +205,34 @@ pub struct Report {
     pub items: Vec<Item>,
 }
 
-pub fn scan(root: &Path) -> io::Result<Report> {
+pub fn scan(root: &Path, extra: &ExtraWords) -> io::Result<Report> {
     let mut paths = Vec::new();
     collect(root, &mut paths)?;
     paths.sort();
     let items = paths
         .iter()
-        .map(|path| describe(root, path))
+        .map(|path| describe(root, path, extra))
         .collect::<io::Result<_>>()?;
     Ok(Report { schema: 1, items })
 }
 
-/// Writes a report only this user can read, into a private folder outside the scanned one.
+/// Writes a report outside the scanned folder.
 pub fn write_report(report: &Report, root: &Path, out: &Path) -> io::Result<()> {
-    let parent = out
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let parent = parent_of(out);
     create_private_dir(parent)?;
-    let root = fs::canonicalize(root)?;
-    if fs::canonicalize(parent)?.starts_with(&root) {
+    if fs::canonicalize(parent)?.starts_with(fs::canonicalize(root)?) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "the report must be outside the scanned folder",
         ));
     }
     let text = serde_json::to_string_pretty(report).map_err(io::Error::other)?;
+    write_private(out, &text)
+}
+
+/// Writes a file only this user can read, creating a private folder if needed.
+pub fn write_private(out: &Path, text: &str) -> io::Result<()> {
+    create_private_dir(parent_of(out))?;
     let mut options = fs::OpenOptions::new();
     options.create(true).write(true).truncate(true);
     #[cfg(unix)]
@@ -222,7 +246,13 @@ pub fn write_report(report: &Report, root: &Path, out: &Path) -> io::Result<()> 
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
-    write_all(file, &text)
+    write_all(file, text)
+}
+
+fn parent_of(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
 }
 
 fn write_all(mut file: fs::File, text: &str) -> io::Result<()> {
@@ -261,7 +291,7 @@ fn collect(dir: &Path, paths: &mut Vec<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
-fn describe(root: &Path, path: &Path) -> io::Result<Item> {
+fn describe(root: &Path, path: &Path, extra: &ExtraWords) -> io::Result<Item> {
     let meta = fs::symlink_metadata(path)?;
     let mut item = Item {
         path: path
@@ -286,7 +316,7 @@ fn describe(root: &Path, path: &Path) -> io::Result<Item> {
         item.format = "too-large";
     } else {
         let bytes = Zeroizing::new(fs::read(path)?);
-        classify(&bytes, &mut item);
+        classify(&bytes, extra, &mut item);
     }
     Ok(item)
 }
@@ -309,13 +339,15 @@ fn decode(bytes: &[u8]) -> Option<Zeroizing<String>> {
         .or_else(|| bytes.strip_prefix(&[0xFE, 0xFF]))
     {
         let big_endian = bytes[0] == 0xFE;
+        let (pairs, _odd_byte) = rest.as_chunks::<2>();
         let units: Zeroizing<Vec<u16>> = Zeroizing::new(
-            rest.chunks_exact(2)
-                .map(|pair| {
+            pairs
+                .iter()
+                .map(|&pair| {
                     if big_endian {
-                        u16::from_be_bytes([pair[0], pair[1]])
+                        u16::from_be_bytes(pair)
                     } else {
-                        u16::from_le_bytes([pair[0], pair[1]])
+                        u16::from_le_bytes(pair)
                     }
                 })
                 .collect(),
@@ -331,7 +363,7 @@ fn decode(bytes: &[u8]) -> Option<Zeroizing<String>> {
     }))
 }
 
-fn classify(bytes: &[u8], item: &mut Item) {
+fn classify(bytes: &[u8], extra: &ExtraWords, item: &mut Item) {
     let Some(text) = decode(bytes) else {
         item.format = "binary";
         return;
@@ -351,11 +383,11 @@ fn classify(bytes: &[u8], item: &mut Item) {
     } else if !trimmed.contains(char::is_whitespace) && separator_at(trimmed).is_none() {
         item.format = "single-value";
     } else {
-        read_lines(trimmed, item);
+        read_lines(trimmed, extra, item);
     }
 }
 
-fn read_lines(text: &str, item: &mut Item) {
+fn read_lines(text: &str, extra: &ExtraWords, item: &mut Item) {
     let mut assignments = 0;
     let mut other_lines = 0;
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
@@ -365,12 +397,12 @@ fn read_lines(text: &str, item: &mut Item) {
                     item.commented_fields.push(label.to_owned());
                 }
             }
-            add_hints(comment, item);
+            add_hints(comment, extra, item);
         } else if let Some((label, _value)) = split_label(line) {
             if is_identifier(label) && line.contains('=') {
                 assignments += 1;
                 item.fields.push(label.to_owned());
-            } else if safe_label(label) {
+            } else if safe_label(label, extra) {
                 other_lines += 1;
                 item.fields.push(label.to_owned());
             } else {
@@ -378,10 +410,10 @@ fn read_lines(text: &str, item: &mut Item) {
                 item.fields_hidden += 1;
             }
         } else if let Some(section) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            add_hints(section, item);
+            add_hints(section, extra, item);
         } else {
             other_lines += 1;
-            add_hints(line, item);
+            add_hints(line, extra, item);
         }
     }
     item.format = match (assignments, other_lines, item.fields.is_empty()) {
@@ -441,7 +473,7 @@ fn is_identifier(label: &str) -> bool {
 
 /// A label from a loose file passes only if every word is on the closed list, because the
 /// left side of a separator can hold a password, as in `pass:user` or `password hunter: x`.
-fn safe_label(label: &str) -> bool {
+fn safe_label(label: &str, extra: &ExtraWords) -> bool {
     if label.chars().count() > MAX_FIELD_LEN {
         return false;
     }
@@ -449,23 +481,26 @@ fn safe_label(label: &str) -> bool {
         .split([' ', '_', '-', '.'])
         .filter(|word| !word.is_empty())
         .collect();
-    !words.is_empty() && words.len() <= MAX_LABEL_WORDS && words.iter().all(|w| known_label_word(w))
+    !words.is_empty()
+        && words.len() <= MAX_LABEL_WORDS
+        && words.iter().all(|w| known_label_word(w, extra))
 }
 
 /// Allows a short counter after the word, as in `token2`.
-fn known_label_word(word: &str) -> bool {
+fn known_label_word(word: &str, extra: &ExtraWords) -> bool {
     let letters = word.trim_end_matches(|c: char| c.is_ascii_digit());
-    word.len() - letters.len() <= 2 && known_word(letters)
+    word.len() - letters.len() <= 2 && known_word(letters, extra)
 }
 
-fn known_word(word: &str) -> bool {
-    KNOWN_WORDS.contains(&word.to_lowercase().as_str())
+fn known_word(word: &str, extra: &ExtraWords) -> bool {
+    let word = word.to_lowercase();
+    KNOWN_WORDS.contains(&word.as_str()) || extra.contains(&word)
 }
 
-fn add_hints(text: &str, item: &mut Item) {
+fn add_hints(text: &str, extra: &ExtraWords, item: &mut Item) {
     let words = text
         .split(|c: char| !c.is_alphabetic())
-        .filter(|word| known_word(word))
+        .filter(|word| known_word(word, extra))
         .map(str::to_lowercase);
     item.hints.extend(words);
 }
@@ -582,7 +617,7 @@ mod tests {
     #[test]
     fn no_value_reaches_the_report() {
         let dir = sample();
-        let report = scan(&dir.0).unwrap();
+        let report = scan(&dir.0, &ExtraWords::new()).unwrap();
         let json = serde_json::to_string(&report).unwrap();
         let debug = format!("{report:?}");
         for canary in CANARIES {
@@ -595,7 +630,7 @@ mod tests {
     #[test]
     fn describes_each_format() {
         let dir = sample();
-        let report = scan(&dir.0).unwrap();
+        let report = scan(&dir.0, &ExtraWords::new()).unwrap();
         assert_eq!(report.items.len(), 8);
 
         let token = item(&report, "token.txt");
@@ -632,7 +667,7 @@ mod tests {
         fs::write(outside.0.join("real.txt"), "CANARYoutside\n").unwrap();
         std::os::unix::fs::symlink(outside.0.join("real.txt"), dir.0.join("link.txt")).unwrap();
         std::os::unix::fs::symlink(&outside.0, dir.0.join("linkdir")).unwrap();
-        let report = scan(&dir.0).unwrap();
+        let report = scan(&dir.0, &ExtraWords::new()).unwrap();
         assert_eq!(item(&report, "link.txt").format, "symlink");
         assert_eq!(item(&report, "linkdir").format, "symlink");
         assert!(!serde_json::to_string(&report)
@@ -646,7 +681,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = sample();
         let outside = Dir::new("report");
-        let report = scan(&dir.0).unwrap();
+        let report = scan(&dir.0, &ExtraWords::new()).unwrap();
 
         let out = outside.0.join("private/report.json");
         write_report(&report, &dir.0, &out).unwrap();
@@ -663,14 +698,14 @@ mod tests {
 
     fn classified(bytes: &[u8]) -> Item {
         let mut item = Item::default();
-        classify(bytes, &mut item);
+        classify(bytes, &ExtraWords::new(), &mut item);
         item
     }
 
     #[test]
     fn an_env_file_with_comments_keeps_its_names() {
         let item = classified(
-            b"# netlify de prueba\n\nexport API_KEY=abc\n# OLD_TOKEN=viejo\nDB_PASS=x=y:z\n",
+            b"# netlify sandbox\n\nexport API_KEY=abc\n# OLD_TOKEN=viejo\nDB_PASS=x=y:z\n",
         );
         assert_eq!(item.format, "env");
         assert_eq!(item.fields, ["API_KEY", "DB_PASS"]);
@@ -680,7 +715,7 @@ mod tests {
 
     #[test]
     fn one_odd_line_does_not_lose_the_rest_of_the_file() {
-        let item = classified(b"API_KEY=abc\nesto es una nota suelta\nDB_PASS=x\n");
+        let item = classified(b"API_KEY=abc\na loose note\nDB_PASS=x\n");
         assert_eq!(item.format, "labeled");
         assert_eq!(item.fields, ["API_KEY", "DB_PASS"]);
     }
@@ -718,9 +753,9 @@ mod tests {
     #[test]
     fn no_value_leaks_from_a_messy_file() {
         let text = "\
-# token netlify CANARYa1 de prueba
+# token netlify CANARYa1 for testing
 // password: CANARYa2
-; CANARYa3 viejo
+; CANARYa3 old
 -- clave CANARYa4
 [CANARYa5]
 CANARYa6: usuario
@@ -729,7 +764,7 @@ Passw0rdCANARY8:admin
 yo@CANARYa9.com:secreta
 https://user:CANARYb1@example.com/path
 token=CANARYb2:CANARYb3=CANARYb4
-clave de la app CANARYb5
+app key CANARYb5
 CANARYb6
 password CANARYb7: valor
 ";
@@ -769,6 +804,19 @@ password CANARYb7: valor
         let colon = classified(b"hunter:Passw0rd\n");
         assert!(colon.fields.is_empty());
         assert_eq!(colon.fields_hidden, 1);
+    }
+
+    #[test]
+    fn your_own_words_can_appear_only_if_you_list_them() {
+        let text = b"# shop netlify\nshop token: x\nnote\n";
+        let plain = classified(text);
+        assert_eq!(plain.hints, ["netlify"]);
+        assert!(plain.fields.is_empty());
+
+        let mut item = Item::default();
+        classify(text, &parse_words("# mine\n\nSHOP\n"), &mut item);
+        assert_eq!(item.hints, ["netlify", "shop"]);
+        assert_eq!(item.fields, ["shop token"]);
     }
 
     #[test]

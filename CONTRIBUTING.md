@@ -1,6 +1,8 @@
 # Contributing
 
-The most useful contribution is a recipe for a provider you use.
+The most useful contribution is a recipe for a provider you use. New key prefixes and label words for
+`keyreeve inventory` are also welcome, in `KINDS` and `KNOWN_WORDS` in `src/inventory.rs`, with a link to
+where the provider documents the prefix. A label word must be common enough that it cannot be a password.
 
 ## Writing a recipe
 
@@ -27,8 +29,8 @@ or `$.data.0.id`.
 ## Before you open a pull request
 
 ```bash
-cargo run -- check recipes/<provider>.yaml
-cargo run -- simulate recipes/<provider>.yaml
+keyreeve check recipes/<provider>.yaml
+keyreeve simulate recipes/<provider>.yaml
 ```
 
 Your pull request should say:

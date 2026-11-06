@@ -159,8 +159,35 @@ final class AppModel: ObservableObject {
     func windowGotFocus() { lockTask?.cancel() }
 }
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// A window remembered on a display you are not looking at reads as an app that did not open.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async {
+            guard let window = NSApp.windows.first(where: { $0.canBecomeMain }) else { return }
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+            if let visible = screen?.visibleFrame, !visible.intersects(window.frame) || screen != window.screen {
+                let size = NSSize(
+                    width: min(window.frame.width, visible.width), height: min(window.frame.height, visible.height))
+                window.setFrame(
+                    NSRect(
+                        x: visible.midX - size.width / 2, y: visible.midY - size.height / 2,
+                        width: size.width, height: size.height),
+                    display: true)
+            }
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// With no window there is nothing to use, and a running app with no window looks broken.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
 @main
 struct KeyreeveApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
 
     var body: some Scene {

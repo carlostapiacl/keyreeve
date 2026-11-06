@@ -3,6 +3,8 @@ provider: sentry
 name: Sentry
 dashboard: https://sentry.io/settings/account/api/auth-tokens/
 prefixes: [sntrys_, sntryu_]
+rotate_every_days: 365
+criticality_hint: 2
 hosts: [sentry.io]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /api/0/organizations/ }

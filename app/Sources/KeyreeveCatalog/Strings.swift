@@ -30,6 +30,18 @@ public func translate(_ english: String, to language: Language) -> String {
 }
 
 public let spanish: [String: String] = [
+    "An internal secret has no provider to ask": "Un secreto interno no tiene proveedor a quién preguntar",
+    "Internal secrets": "Secretos internos",
+    "Internal secret, no provider": "Secreto interno, sin proveedor",
+    "Older than suggested": "Más antiguas de lo sugerido",
+    "Server address": "Dirección del servidor",
+    "Sets the server this key is sent to. It must offer HTTPS.": "Define el servidor al que se envía esta clave. Debe tener HTTPS.",
+    "Suggested by the provider's file": "Sugerida por el archivo del proveedor",
+    "That is not a server address": "Esa no es una dirección de servidor",
+    "Add your server's address first": "Primero agrega la dirección de tu servidor",
+    "Ask for my fingerprint again after": "Volver a pedir la huella después de",
+    "Every time": "Cada vez",
+    "While this lasts, the app can check keys without asking. Locking it ends the period, and the vault always asks.": "Mientras dure, la app puede probar claves sin preguntar. Bloquearla termina el período, y la bóveda siempre pregunta.",
     "Check this key": "Probar esta clave",
     "Checking is off for this key": "Esta clave no se puede probar",
     "Critical": "Crítica",

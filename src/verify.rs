@@ -5,7 +5,8 @@ use crate::inventory::{split_label, strip_comment};
 use crate::providers;
 use crate::recipe::{extract, Recipe};
 use crate::secret::Secret;
-use crate::transport::{HttpTransport, Request, Transport, TransportError};
+use crate::ssh;
+use crate::transport::{exchange_token, HttpTransport, Request, Transport, TransportError};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
@@ -110,9 +111,12 @@ pub(crate) struct PlanKey {
     pub(crate) file: String,
     pub(crate) recipe: String,
     pub(crate) field: Option<String>,
+    /// The server, for a provider each person runs themselves.
+    pub(crate) host: Option<String>,
 }
 
-/// Sends the recipe's verify step. Only a GET runs, so a check cannot change anything.
+/// Sends the recipe's verify step. Only a GET runs, or the token exchange a provider requires,
+/// so a check cannot change anything.
 pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Verdict {
     let step = &recipe.verify;
     if step.method != "GET" {
@@ -121,19 +125,60 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
     if step.path.contains("{id}") {
         return Verdict::NoResult("this recipe's check needs a key id".into());
     }
-    let request = Request::for_step(recipe, step, &[], key);
+    let credential = if recipe.auth.kind.as_deref() == Some("oauth_token") {
+        match exchange_token(recipe, key, transport) {
+            Err(error) => return failed(error),
+            Ok(response) if !(200..=299).contains(&response.status) => {
+                return if (400..=499).contains(&response.status) {
+                    Verdict::Rejected
+                } else {
+                    Verdict::NoResult(format!("HTTP {}", response.status))
+                };
+            }
+            Ok(response) => {
+                if recipe.auth.token_is_proof {
+                    return Verdict::Works {
+                        host: recipe.auth.token_host.clone().unwrap_or_default(),
+                    };
+                }
+                let token = serde_json::from_str::<serde_json::Value>(response.body.expose())
+                    .ok()
+                    .and_then(|json| extract(&json, "$.access_token"));
+                let Some(token) = token else {
+                    return Verdict::NoResult("the answer could not be read".into());
+                };
+                Secret::new(token)
+            }
+        }
+    } else {
+        key.clone()
+    };
+    let request = Request::for_step(recipe, step, &[], &credential);
     let host = request.rendered.host.clone();
     match transport.send(&request) {
         Ok(response) if step.accepts(response.status) => Verdict::Works { host },
+        Ok(response)
+            if step.alive_if.as_ref().is_some_and(|alive| {
+                alive.status == response.status && response.body.expose().contains(&alive.contains)
+            }) =>
+        {
+            Verdict::Works { host }
+        }
         Ok(response) if response.status == 401 || step.reject.contains(&response.status) => {
             Verdict::Rejected
         }
         Ok(response) if response.status == 403 => Verdict::Forbidden,
         Ok(response) => Verdict::NoResult(format!("HTTP {}", response.status)),
-        Err(TransportError::HostNotAllowed(host)) => {
+        Err(error) => failed(error),
+    }
+}
+
+fn failed(error: TransportError) -> Verdict {
+    match error {
+        TransportError::HostNotAllowed(host) => {
             Verdict::NoResult(format!("host {host} is not in the recipe"))
         }
-        Err(TransportError::Failed) => Verdict::NoResult("the request did not complete".into()),
+        TransportError::Failed => Verdict::NoResult("the request did not complete".into()),
     }
 }
 
@@ -206,7 +251,11 @@ pub(crate) fn load_recipe(name: &str) -> Result<Recipe, String> {
     providers::load(name)
 }
 
-pub(crate) fn load_key(path: &Path, field: Option<&str>) -> Result<Secret, String> {
+pub(crate) fn load_key(
+    path: &Path,
+    field: Option<&str>,
+    recipe: &Recipe,
+) -> Result<Secret, String> {
     let shown = path.display();
     let size = fs::metadata(path)
         .map_err(|e| format!("{shown}: {}", e.kind()))?
@@ -218,12 +267,72 @@ pub(crate) fn load_key(path: &Path, field: Option<&str>) -> Result<Secret, Strin
         .map(Zeroizing::new)
         .map_err(|e| format!("{shown}: {}", e.kind()))?;
     let text = std::str::from_utf8(&text).map_err(|_| format!("{shown}: not UTF-8 text"))?;
-    read_key(text, field).map_err(|e| format!("{shown}: {e}"))
+    read_key_for(text, field, recipe).map_err(|e| format!("{shown}: {e}"))
+}
+
+/// Like `read_key`, and in a file of notes it also finds the one word that starts with this
+/// provider's prefix. With two candidates it refuses, because guessing could send the wrong key.
+pub fn read_key_for(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<Secret, String> {
+    match read_key(text, field) {
+        Ok(key) => Ok(key),
+        Err(error) if field.is_some() || recipe.prefixes.is_empty() => Err(error),
+        Err(error) => {
+            let mut found: Vec<&str> = text
+                .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
+                .filter(|word| {
+                    recipe
+                        .prefixes
+                        .iter()
+                        .any(|prefix| word.starts_with(prefix.as_str()))
+                })
+                .collect();
+            found.sort_unstable();
+            found.dedup();
+            match found.as_slice() {
+                [only] => Ok(Secret::new(*only)),
+                [] => Err(error),
+                _ => Err(
+                    "the file holds several keys of this provider, so name one with --field".into(),
+                ),
+            }
+        }
+    }
+}
+
+/// The provider's file, pointed at the server when each person runs their own.
+pub(crate) fn resolve(name: &str, host: Option<&str>) -> Result<Recipe, String> {
+    let recipe = load_recipe(name)?;
+    if !recipe.self_hosted {
+        return Ok(recipe);
+    }
+    let host = host.ok_or_else(|| format!("{name} needs the address of your server"))?;
+    if !providers::host_approved(name, host) {
+        return Err(format!("{host} is not approved for {name}"));
+    }
+    Ok(recipe.at_host(host))
 }
 
 pub fn run_one(name: &str, file: &Path, field: Option<&str>) -> Result<Verdict, String> {
-    let recipe = load_recipe(name)?;
-    let key = load_key(file, field)?;
+    run_at(name, file, field, None)
+}
+
+pub(crate) fn run_at(
+    name: &str,
+    file: &Path,
+    field: Option<&str>,
+    host: Option<&str>,
+) -> Result<Verdict, String> {
+    let recipe = resolve(name, host)?;
+    if recipe.auth.kind.as_deref() == Some("ssh") {
+        return ssh::greet(&recipe, file).map(|reply| match reply {
+            ssh::Reply::Accepted(_) => Verdict::Works {
+                host: recipe.hosts[0].clone(),
+            },
+            ssh::Reply::Refused => Verdict::Rejected,
+            ssh::Reply::Unknown => Verdict::NoResult("could not connect".into()),
+        });
+    }
+    let key = load_key(file, field, &recipe)?;
     Ok(check(
         &recipe,
         &key,
@@ -307,6 +416,7 @@ mod tests {
             ));
             match self.status {
                 Some(status) => Ok(Response {
+                    headers: Vec::new(),
                     status,
                     body: Secret::new("CANARYbody"),
                 }),
@@ -416,6 +526,7 @@ mod tests {
             file: "../outside.txt".into(),
             recipe: "hetzner".into(),
             field: None,
+            host: None,
         };
         assert!(run_entry(&entry, Path::new("/tmp"))
             .unwrap_err()
@@ -424,6 +535,7 @@ mod tests {
             file: "/etc/passwd".into(),
             recipe: "hetzner".into(),
             field: None,
+            host: None,
         };
         assert!(run_entry(&entry, Path::new("/tmp")).is_err());
     }
@@ -458,6 +570,88 @@ mod tests {
         assert_eq!(key.expose(), "AKIACANARY:CANARYsecret");
         let error = read_key(text, Some("Access key ID+Missing")).unwrap_err();
         assert!(!error.contains("CANARY"), "{error}");
+    }
+
+    #[test]
+    fn a_restricted_key_counts_as_alive_only_with_the_declared_answer() {
+        struct Answer(u16, &'static str);
+        impl Transport for Answer {
+            fn send(&mut self, _: &Request) -> Result<Response, TransportError> {
+                Ok(Response {
+                    headers: Vec::new(),
+                    status: self.0,
+                    body: Secret::new(self.1),
+                })
+            }
+        }
+        let recipe = load_recipe("resend").unwrap();
+        let key = Secret::new("re_x");
+        assert!(check(
+            &recipe,
+            &key,
+            &mut Answer(401, "{\"name\":\"restricted_api_key\"}")
+        )
+        .works());
+        assert_eq!(
+            check(&recipe, &key, &mut Answer(401, "{\"name\":\"invalid\"}")),
+            Verdict::Rejected
+        );
+    }
+
+    #[test]
+    fn a_key_in_the_address_stays_out_of_the_verdict() {
+        let recipe = load_recipe("telegram").unwrap();
+        let mut transport = Fixed {
+            status: Some(404),
+            sent: Vec::new(),
+        };
+        let verdict = check(&recipe, &Secret::new("123:CANARY/x"), &mut transport);
+        assert_eq!(verdict, Verdict::Rejected);
+        assert!(transport.sent[0].1.is_empty(), "no header carries it");
+        assert!(!format!("{verdict} {verdict:?}").contains("CANARY"));
+    }
+
+    #[test]
+    fn a_token_exchange_proves_the_key_without_another_request() {
+        let recipe = load_recipe("paypal").unwrap();
+        let mut transport = Fixed {
+            status: Some(200),
+            sent: Vec::new(),
+        };
+        assert!(check(&recipe, &Secret::new("id:secret"), &mut transport).works());
+        assert_eq!(transport.sent.len(), 1);
+        assert_eq!(transport.sent[0].0, "POST");
+        let mut refused = Fixed {
+            status: Some(401),
+            sent: Vec::new(),
+        };
+        assert_eq!(
+            check(&recipe, &Secret::new("id:secret"), &mut refused),
+            Verdict::Rejected
+        );
+    }
+
+    #[test]
+    fn finds_a_key_in_notes_by_its_prefix_and_refuses_to_guess() {
+        let recipe = load_recipe("resend").unwrap();
+        let one = "cuenta: yo\nclave re_CANARY1 para envios\n";
+        assert_eq!(
+            read_key_for(one, None, &recipe).unwrap().expose(),
+            "re_CANARY1"
+        );
+        let two = "re_CANARY1 y re_CANARY2\n";
+        let error = read_key_for(two, None, &recipe).unwrap_err();
+        assert!(error.contains("several") && !error.contains("CANARY"));
+        let none = "nada util aqui\n";
+        assert!(read_key_for(none, None, &recipe).is_err());
+    }
+
+    #[test]
+    fn a_self_hosted_provider_needs_an_approved_address() {
+        assert!(resolve("coolify", None).unwrap_err().contains("address"));
+        assert!(resolve("coolify", Some("not-approved.example.com"))
+            .unwrap_err()
+            .contains("not approved"));
     }
 
     #[test]

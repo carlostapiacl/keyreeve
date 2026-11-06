@@ -1,0 +1,14 @@
+schema: 1
+provider: elevenlabs
+name: ElevenLabs
+dashboard: https://elevenlabs.io/app/settings/api-keys
+prefixes: [sk_]
+rotate_every_days: 365
+criticality_hint: 2
+hosts: [api.elevenlabs.io]
+auth: { header: xi-api-key }
+verify: { method: GET, path: /v1/user }
+identify:
+  request: { method: GET, path: /v1/user }
+  fields: { account: $.first_name, id: $.user_id }
+suggested_name: "ElevenLabs · {account}"

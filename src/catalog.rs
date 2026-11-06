@@ -63,6 +63,7 @@ pub struct Edit {
     pub name: Option<String>,
     pub description: Option<String>,
     pub criticality: Option<u8>,
+    pub host: Option<String>,
 }
 
 pub fn parse_edits(text: &str) -> Result<BTreeMap<String, Edit>, String> {
@@ -94,6 +95,8 @@ pub struct FileOverride {
     pub recipes: Vec<String>,
     /// The label or JSON path that holds the key, in a file with more than one value.
     pub field: Option<String>,
+    /// Your server, for a provider each person runs themselves.
+    pub host: Option<String>,
 }
 
 /// The parts of an inventory that a catalog uses.
@@ -134,6 +137,11 @@ pub struct Row {
     pub description: String,
     /// 1 to 5, or 0 if nobody rated it.
     pub criticality: u8,
+    /// True if the number came from the provider's file, and not from you.
+    pub criticality_suggested: bool,
+    /// How often the provider's file suggests changing this key, or 0.
+    pub rotate_days: u32,
+    pub host: String,
 }
 
 pub fn parse_inventory(text: &str) -> Result<Vec<InventoryItem>, String> {
@@ -234,6 +242,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
     }
     let mut field = file.and_then(|f| f.field.clone()).unwrap_or_default();
     let (mut name, mut description) = (String::new(), String::new());
+    let mut host = file.and_then(|f| f.host.clone()).unwrap_or_default();
     let mut level = level;
     let mut tags: Vec<String> = tags.into_iter().collect();
     if let Some(edit) = rules.edits.get(&item.path) {
@@ -251,6 +260,14 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         name = edit.name.clone().unwrap_or_default();
         description = edit.description.clone().unwrap_or_default();
         criticality = edit.criticality.unwrap_or(criticality);
+        host = edit.host.clone().unwrap_or(host);
+    }
+    let (hint, rotate_days) = recipes
+        .first()
+        .map_or((None, None), |recipe| crate::providers::hints(recipe));
+    let criticality_suggested = criticality == 0 && hint.is_some();
+    if criticality_suggested {
+        criticality = hint.unwrap_or(0);
     }
     Row {
         path: item.path.clone(),
@@ -268,12 +285,15 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         name,
         description,
         criticality: criticality.min(5),
+        criticality_suggested,
+        rotate_days: rotate_days.unwrap_or(0),
+        host,
     }
 }
 
 pub fn to_csv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field,name,description,criticality\n",
+        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field,name,description,criticality,criticality_suggested,rotate_days,host\n",
     );
     for row in rows {
         let cells = [
@@ -292,6 +312,9 @@ pub fn to_csv(rows: &[Row]) -> String {
             csv_cell(&row.name),
             csv_cell(&row.description),
             row.criticality.to_string(),
+            row.criticality_suggested.to_string(),
+            row.rotate_days.to_string(),
+            csv_cell(&row.host),
         ];
         out.push_str(&cells.join(","));
         out.push('\n');
@@ -551,6 +574,22 @@ files: { fixed.txt: { criticality: 2 } }
         );
         let levels: Vec<u8> = rows.iter().map(|row| row.criticality).collect();
         assert_eq!(levels, [5, 3, 2, 1, 0]);
+
+        let rated =
+            rules("files: { a: { recipes: [stripe] }, b: { recipes: [stripe], criticality: 1 } }");
+        let rows = build(&[item("a"), item("b")], &rated, &[]);
+        assert_eq!(
+            (
+                rows[0].criticality,
+                rows[0].criticality_suggested,
+                rows[0].rotate_days
+            ),
+            (5, true, 180)
+        );
+        assert_eq!(
+            (rows[1].criticality, rows[1].criticality_suggested),
+            (1, false)
+        );
     }
 
     #[test]

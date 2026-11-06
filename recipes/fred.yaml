@@ -1,0 +1,9 @@
+schema: 1
+provider: fred
+name: FRED
+dashboard: https://fredaccount.stlouisfed.org/apikeys
+rotate_every_days: 730
+criticality_hint: 1
+hosts: [api.stlouisfed.org]
+auth: { type: url }
+verify: { method: GET, path: "/fred/category?category_id=0&file_type=json&api_key={key}", reject: [400] }

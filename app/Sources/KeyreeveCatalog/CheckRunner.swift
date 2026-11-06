@@ -61,10 +61,13 @@ public enum CheckRunner {
             let file: String
             let recipe: String
             let field: String?
+            let host: String?
         }
         let keys = items.filter(\.canCheck).flatMap { item in
             item.recipes.map {
-                Key(file: item.path, recipe: $0, field: item.field.isEmpty ? nil : item.field)
+                Key(
+                    file: item.path, recipe: $0, field: item.field.isEmpty ? nil : item.field,
+                    host: item.host.isEmpty ? nil : item.host)
             }
         }
         return try JSONEncoder().encode(Plan(keys: keys))
@@ -110,6 +113,12 @@ public enum CheckRunner {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return ProviderDirectory.parse(data)
+    }
+
+    public static func approveHost(_ host: String, for provider: String, binary: URL) throws {
+        guard try execute(binary, ["recipes", "approve-host", provider, host]) == 0 else {
+            throw CheckError(T("That is not a server address"))
+        }
     }
 
     public static func approve(_ provider: String, binary: URL) throws {

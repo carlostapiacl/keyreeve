@@ -57,7 +57,7 @@ struct ActionTests {
     ])
 
     @Test func testProvidersComeFromTheirFiles() {
-        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"suggested_name":null,"problem":null}]"#.utf8)
+        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"self_hosted":false,"suggested_name":null,"problem":null}]"#.utf8)
         XCTAssertEqual(ProviderDirectory.parse(data).name(of: "x"), "X")
         XCTAssertEqual(ProviderDirectory.parse(Data("nope".utf8)).all.count, 0)
         XCTAssertEqual(directory.usable.map(\.id), ["langsmith", "aws"])
@@ -87,6 +87,51 @@ struct ActionTests {
         XCTAssertEqual(stats.needLook.map(\.path), ["alive"])
         XCTAssertEqual(alive.title, "Old cloud")
         XCTAssertEqual(dead.title, "dead")
+    }
+
+    @Test func testAFingerprintLastsTheChosenPeriod() {
+        var window = ConfirmationWindow()
+        XCTAssertFalse(window.isOpen(minutes: 5, at: now))
+        window.confirm(at: now)
+        XCTAssertEqual(window.isOpen(minutes: 5, at: now.addingTimeInterval(299)), true)
+        XCTAssertFalse(window.isOpen(minutes: 5, at: now.addingTimeInterval(300)))
+        XCTAssertFalse(window.isOpen(minutes: 0, at: now))  // zero means every time
+        XCTAssertFalse(window.isOpen(minutes: 5, at: now.addingTimeInterval(-10)))  // a clock moved back ends it
+        window.close()
+        XCTAssertFalse(window.isOpen(minutes: 5, at: now))
+    }
+
+    @Test func testAnInternalSecretOffersNoCheck() {
+        let item = CatalogItem(path: "jwt", tags: ["internal"], recipes: ["aws"])
+        XCTAssertFalse(item.canCheck)
+        XCTAssertNotNil(item.whyNoCheck)
+        XCTAssertEqual(filter([item], by: .internalOnly, search: "").count, 1)
+    }
+
+    @Test func testASelfHostedProviderNeedsAnAddressFirst() {
+        let hosted = ProviderDirectory([ProviderInfo(id: "panel", name: "Panel", can_identify: true, self_hosted: true)])
+        let bare = CatalogItem(path: "a", recipes: ["panel"])
+        XCTAssertEqual(hosted.needsHost(bare), true)
+        XCTAssertFalse(hosted.canCheck(bare))
+        XCTAssertFalse(hosted.canIdentify(bare))
+        let set = CatalogItem(path: "a", recipes: ["panel"], host: "panel.example.com")
+        XCTAssertEqual(hosted.canCheck(set), true)
+        XCTAssertEqual(hosted.canIdentify(set), true)
+    }
+
+    @Test func testAgeComparesAgainstTheProvidersSuggestion() {
+        let old = CatalogItem(path: "a", modified: "2020-01-01", rotateDays: 90)
+        let fresh = CatalogItem(path: "b", modified: "2026-12-30", rotateDays: 90)
+        let none = CatalogItem(path: "c", modified: "2020-01-01")
+        XCTAssertEqual(old.isOlderThanSuggested(at: now), true)
+        XCTAssertFalse(fresh.isOlderThanSuggested(at: Date(timeIntervalSince1970: 1_798_761_600)))
+        XCTAssertFalse(none.isOlderThanSuggested(at: now))
+        XCTAssertEqual(CatalogStats(items: [old, none], now: now).stale, 1)
+    }
+
+    @Test func testAPlanCarriesTheServer() throws {
+        let plan = try CheckRunner.plan(for: [CatalogItem(path: "a", recipes: ["panel"], host: "panel.example.com")])
+        XCTAssertEqual(String(decoding: plan, as: UTF8.self).contains("panel.example.com"), true)
     }
 
     @Test func testMostCriticalComesFirst() {

@@ -2,7 +2,9 @@ schema: 1
 provider: openai
 name: OpenAI
 dashboard: https://platform.openai.com/api-keys
-prefixes: []
+prefixes: [sk-proj-, sk-svcacct-, sk-admin-]
+rotate_every_days: 180
+criticality_hint: 3
 hosts: [api.openai.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /v1/models }

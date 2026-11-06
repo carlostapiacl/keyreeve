@@ -25,6 +25,13 @@ impl Request {
         vars: &[(&str, &str)],
         credential: &Secret,
     ) -> Self {
+        let with_key;
+        let vars = if recipe.auth.kind.as_deref() == Some("url") {
+            with_key = [vars, &[("key", credential.expose())]].concat();
+            with_key.as_slice()
+        } else {
+            vars
+        };
         let rendered = step.render(recipe, vars);
         let mut headers: Vec<(String, String)> = recipe
             .headers
@@ -32,6 +39,16 @@ impl Request {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         let auth = match recipe.auth.kind.as_deref() {
+            // The address already carries the key, so no header does.
+            Some("url") | Some("ssh") => (String::new(), Secret::new("")),
+            Some("basic") => (
+                "authorization".to_owned(),
+                Secret::new(format!("Basic {}", base64(credential.expose().as_bytes()))),
+            ),
+            Some("oauth_token") => (
+                "authorization".to_owned(),
+                Secret::new(format!("Bearer {}", credential.expose())),
+            ),
             Some("aws_sigv4") => {
                 let stamp = sigv4::stamp_now();
                 let (access, secret) = credential.expose().split_once(':').unwrap_or(("", ""));
@@ -65,8 +82,77 @@ impl Request {
     }
 }
 
+/// Encodes bytes as base64, the one use being HTTP Basic.
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let group = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for index in 0..4 {
+            if index <= chunk.len() {
+                out.push(TABLE[(group >> (18 - 6 * index)) as usize & 63] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// Exchanges a key for a short-lived token. The key is two or three parts joined by `:`. Returns
+/// the status and the provider's answer, which holds the token, so it stays in a `Secret`.
+pub fn exchange_token(
+    recipe: &Recipe,
+    key: &Secret,
+    transport: &mut dyn Transport,
+) -> Result<Response, TransportError> {
+    let parts: Vec<&str> = key.expose().splitn(3, ':').collect();
+    let (id, secret) = (
+        parts.first().copied().unwrap_or(""),
+        parts.get(1).copied().unwrap_or(""),
+    );
+    let mut form = format!(
+        "grant_type={}&client_id={}&client_secret={}",
+        recipe.auth.grant.as_deref().unwrap_or_default(),
+        form_encode(id),
+        form_encode(secret)
+    );
+    if let Some(refresh) = parts.get(2) {
+        form.push_str(&format!("&refresh_token={}", form_encode(refresh)));
+    }
+    transport.send(&Request {
+        rendered: Rendered {
+            method: "POST".into(),
+            host: recipe.auth.token_host.clone().unwrap_or_default(),
+            path: recipe.auth.token_path.clone().unwrap_or_default(),
+            body: Some(form.into_bytes()),
+        },
+        headers: vec![(
+            "content-type".into(),
+            "application/x-www-form-urlencoded".into(),
+        )],
+        auth: (String::new(), Secret::new("")),
+    })
+}
+
+fn form_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 pub struct Response {
     pub status: u16,
+    /// Headers in lowercase, read only when a provider's file names one.
+    pub headers: Vec<(String, String)>,
     /// Can hold a new key, so it stays out of errors and logs.
     pub body: Secret,
 }
@@ -128,13 +214,21 @@ impl Transport for HttpTransport {
         for (name, value) in &request.headers {
             builder = builder.header(name, value);
         }
-        builder = builder.header(&request.auth.0, request.auth.1.expose());
+        if !request.auth.0.is_empty() {
+            builder = builder.header(&request.auth.0, request.auth.1.expose());
+        }
 
         // Errors from the client are dropped on purpose: they can quote the request.
         let mut response = match &rendered.body {
             Some(body) => {
+                let has_type = request
+                    .headers
+                    .iter()
+                    .any(|(name, _)| name == "content-type");
+                if !has_type {
+                    builder = builder.header("content-type", "application/json");
+                }
                 let built = builder
-                    .header("content-type", "application/json")
                     .body(body.clone())
                     .map_err(|_| TransportError::Failed)?;
                 self.agent.run(built)
@@ -147,6 +241,16 @@ impl Transport for HttpTransport {
         .map_err(|_| TransportError::Failed)?;
 
         let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|text| (name.as_str().to_owned(), text.to_owned()))
+            })
+            .collect();
         let body = response
             .body_mut()
             .with_config()
@@ -155,6 +259,7 @@ impl Transport for HttpTransport {
             .map_err(|_| TransportError::Failed)?;
         Ok(Response {
             status,
+            headers,
             body: Secret::new(String::from_utf8_lossy(&body).into_owned()),
         })
     }
@@ -213,6 +318,14 @@ mod tests {
             headers: Vec::new(),
             auth: ("authorization".into(), Secret::new("canary")),
         }
+    }
+
+    #[test]
+    fn encodes_base64_as_the_standard_does() {
+        assert_eq!(base64(b"a"), "YQ==");
+        assert_eq!(base64(b"ab"), "YWI=");
+        assert_eq!(base64(b"abc"), "YWJj");
+        assert_eq!(base64(b"user:pass"), "dXNlcjpwYXNz");
     }
 
     #[test]

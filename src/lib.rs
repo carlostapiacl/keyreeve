@@ -13,6 +13,7 @@ pub mod recipe;
 pub mod secret;
 pub mod sigv4;
 pub mod simulate;
+pub mod ssh;
 pub mod store;
 pub mod transport;
 pub mod verify;

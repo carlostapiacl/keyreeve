@@ -33,11 +33,13 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let approved: Bool
     public let can_check: Bool
     public let can_identify: Bool
+    public let self_hosted: Bool
     public let problem: String?
 
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
-        approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, problem: String? = nil
+        approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, self_hosted: Bool = false,
+        problem: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -47,6 +49,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         self.approved = approved
         self.can_check = can_check
         self.can_identify = can_identify
+        self.self_hosted = self_hosted
         self.problem = problem
     }
 
@@ -76,8 +79,15 @@ public struct ProviderDirectory: Sendable {
             .first.flatMap(URL.init(string:))
     }
 
+    /// A provider each person runs needs the address of your server before it can be asked.
+    public func needsHost(_ item: CatalogItem) -> Bool {
+        item.host.isEmpty && item.recipes.contains { id in all.contains { $0.id == id && $0.self_hosted } }
+    }
+
+    public func canCheck(_ item: CatalogItem) -> Bool { item.canCheck && !needsHost(item) }
+
     public func canIdentify(_ item: CatalogItem) -> Bool {
-        guard item.canCheck else { return false }
+        guard canCheck(item) else { return false }
         return item.recipes.contains { id in usable.contains { $0.id == id && $0.can_identify } }
     }
 }
@@ -130,10 +140,11 @@ public struct KeyEdit: Codable, Equatable, Sendable {
     public var name: String?
     public var description: String?
     public var criticality: Int?
+    public var host: String?
 
     public init(
         tags: [String]? = nil, level: String? = nil, recipes: [String]? = nil, field: String? = nil,
-        name: String? = nil, description: String? = nil, criticality: Int? = nil
+        name: String? = nil, description: String? = nil, criticality: Int? = nil, host: String? = nil
     ) {
         self.tags = tags
         self.level = level
@@ -142,6 +153,23 @@ public struct KeyEdit: Codable, Equatable, Sendable {
         self.name = name
         self.description = description
         self.criticality = criticality
+        self.host = host
+    }
+}
+
+/// How long a fingerprint stays good for the app's own actions. Zero means asking every time.
+public struct ConfirmationWindow: Sendable {
+    public private(set) var confirmedAt: Date?
+
+    public init() {}
+
+    public mutating func confirm(at now: Date = Date()) { confirmedAt = now }
+    public mutating func close() { confirmedAt = nil }
+
+    public func isOpen(minutes: Int, at now: Date = Date()) -> Bool {
+        guard minutes > 0, let confirmedAt else { return false }
+        let elapsed = now.timeIntervalSince(confirmedAt)
+        return elapsed >= 0 && elapsed < Double(minutes) * 60
     }
 }
 
@@ -172,6 +200,7 @@ extension KeyreeveFiles {
         merged.name = edit.name ?? merged.name
         merged.description = edit.description ?? merged.description
         merged.criticality = edit.criticality ?? merged.criticality
+        merged.host = edit.host ?? merged.host
         all[path] = merged
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]

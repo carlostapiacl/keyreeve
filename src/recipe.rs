@@ -39,6 +39,13 @@ pub struct Recipe {
     /// Starts of keys that belong to this provider and no other.
     #[serde(default)]
     pub prefixes: Vec<String>,
+    /// How often a key like this should change, as a suggestion you can ignore.
+    pub rotate_every_days: Option<u32>,
+    /// How bad a leak usually is, from 1 to 5, until you rate the key yourself.
+    pub criticality_hint: Option<u8>,
+    /// Each person runs their own server, so its address comes with the key and needs approval.
+    #[serde(default)]
+    pub self_hosted: bool,
     pub hosts: Vec<String>,
     pub auth: Auth,
     #[serde(default)]
@@ -75,6 +82,16 @@ pub struct Auth {
     pub prefix: String,
     pub service: Option<String>,
     pub region: Option<String>,
+    /// `oauth_token`: `client_credentials` takes id and secret, `refresh_token` adds a refresh token.
+    pub grant: Option<String>,
+    pub token_host: Option<String>,
+    pub token_path: Option<String>,
+    /// Getting a token is enough to know the key works.
+    #[serde(default)]
+    pub token_is_proof: bool,
+    /// `ssh`: the login name, and the text around the account in the server's greeting.
+    pub user: Option<String>,
+    pub reply_between: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -90,6 +107,15 @@ pub struct Step {
     /// Statuses a provider uses for a bad key, besides 401. Only in `verify`.
     #[serde(default)]
     pub reject: Vec<u16>,
+    /// A refusal that still proves the key exists, such as a restricted key. Only in `verify`.
+    pub alive_if: Option<AliveIf>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AliveIf {
+    pub status: u16,
+    pub contains: String,
 }
 
 /// A request ready to send, with its placeholders filled in.
@@ -116,6 +142,7 @@ impl Recipe {
 
     fn validate(&self) -> Result<(), RecipeError> {
         let fail = |message: String| Err(RecipeError(message));
+        let url_key = self.auth.kind.as_deref() == Some("url");
         if self.schema != 1 {
             return fail(format!("unknown schema {}, expected 1", self.schema));
         }
@@ -127,8 +154,16 @@ impl Recipe {
         if !name_ok {
             return fail("provider must use lowercase letters, digits and hyphens".into());
         }
-        if self.hosts.is_empty() {
-            return fail("hosts must list at least one host".into());
+        if self.self_hosted != self.hosts.is_empty() {
+            return fail(
+                "a self_hosted recipe lists no hosts, and any other lists at least one".into(),
+            );
+        }
+        if self
+            .criticality_hint
+            .is_some_and(|hint| !(1..=5).contains(&hint))
+        {
+            return fail("criticality_hint goes from 1 to 5".into());
         }
         if let Some(host) = self.hosts.iter().find(|host| !valid_host(host)) {
             return fail(format!(
@@ -154,6 +189,51 @@ impl Recipe {
                     return fail("a recipe with aws_sigv4 cannot rotate yet".into());
                 }
             }
+            Some("url") => {
+                if self.create.is_some() {
+                    return fail("a recipe that puts the key in the address cannot rotate".into());
+                }
+                if !self.verify.path.contains("{key}") {
+                    return fail("auth type url needs {key} in verify.path".into());
+                }
+            }
+            Some("basic") => {}
+            Some("oauth_token") => {
+                let grant = self.auth.grant.as_deref();
+                if !matches!(grant, Some("client_credentials" | "refresh_token")) {
+                    return fail(
+                        "oauth_token needs grant: client_credentials or refresh_token".into(),
+                    );
+                }
+                let host_ok = self
+                    .auth
+                    .token_host
+                    .as_ref()
+                    .is_some_and(|h| self.hosts.contains(h));
+                let path_ok = self
+                    .auth
+                    .token_path
+                    .as_ref()
+                    .is_some_and(|p| p.starts_with('/'));
+                if !host_ok || !path_ok {
+                    return fail(
+                        "oauth_token needs a token_host listed in hosts, and a token_path".into(),
+                    );
+                }
+            }
+            Some("ssh") => {
+                if self.auth.user.is_none() || self.hosts.len() != 1 || self.identify.is_none() {
+                    return fail("ssh needs auth.user, one host and identify".into());
+                }
+                if self
+                    .auth
+                    .reply_between
+                    .as_ref()
+                    .is_none_or(|parts| parts.len() != 2)
+                {
+                    return fail("ssh needs reply_between with two texts".into());
+                }
+            }
             Some(other) => return fail(format!("unknown auth type {other:?}")),
         }
         if let Some(url) = &self.dashboard {
@@ -165,13 +245,14 @@ impl Recipe {
             return fail("a prefix needs at least 3 characters".into());
         }
         if let Some(identify) = &self.identify {
-            self.validate_step("identify", &identify.request, &["GET"], &[], false)?;
+            let vars: &[&str] = if url_key { &["key"] } else { &[] };
+            self.validate_step("identify", &identify.request, &["GET"], vars, false)?;
             match identify.format.as_deref() {
                 None | Some("json") => {
                     if let Some((_, path)) = identify
                         .fields
                         .iter()
-                        .find(|(_, path)| !valid_json_path(path))
+                        .find(|(_, path)| !valid_identify_source(path))
                     {
                         return fail(format!("identify field {path:?} must look like $.a.b"));
                     }
@@ -212,7 +293,13 @@ impl Recipe {
             }
         }
 
-        self.validate_step("verify", &self.verify, &["GET", "POST"], &["id"], false)?;
+        let verify_vars: &[&str] = if url_key { &["id", "key"] } else { &["id"] };
+        self.validate_step("verify", &self.verify, &["GET", "POST"], verify_vars, false)?;
+        if let Some(alive) = &self.verify.alive_if {
+            if !(400..=499).contains(&alive.status) || alive.contains.is_empty() {
+                return fail("alive_if needs a 4xx status and a text".into());
+            }
+        }
         if let Some(status) = self
             .verify
             .reject
@@ -253,6 +340,13 @@ impl Recipe {
             return fail("revoke must use {id}, or it cannot say which key to revoke".into());
         }
         Ok(())
+    }
+
+    /// The same recipe, pointed at one person's server.
+    pub fn at_host(&self, host: &str) -> Self {
+        let mut recipe = self.clone();
+        recipe.hosts = vec![host.to_owned()];
+        recipe
     }
 
     pub fn display_name(&self) -> &str {
@@ -358,7 +452,11 @@ impl Step {
         });
         Rendered {
             method: self.method.clone(),
-            host: self.host.clone().unwrap_or_else(|| recipe.hosts[0].clone()),
+            host: self
+                .host
+                .clone()
+                .or_else(|| recipe.hosts.first().cloned())
+                .unwrap_or_default(),
             path,
             body,
         }
@@ -478,6 +576,19 @@ fn valid_header_name(name: &str) -> bool {
 
 fn has_control(text: &str) -> bool {
     text.chars().any(char::is_control)
+}
+
+/// Where a field of `identify` comes from: the answer, a header, the token answer or a greeting.
+fn valid_identify_source(path: &str) -> bool {
+    let named = ["header:", "token:"].iter().any(|prefix| {
+        path.strip_prefix(prefix).is_some_and(|name| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        })
+    });
+    named || path == "reply:" || valid_json_path(path)
 }
 
 fn valid_json_path(path: &str) -> bool {

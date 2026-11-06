@@ -38,7 +38,7 @@ public struct MainView: View {
     private var scope: [CatalogItem] {
         chosenRows.isEmpty ? shown : shown.filter { chosenRows.contains($0.id) }
     }
-    private var checkable: [CatalogItem] { scope.filter(\.canCheck) }
+    private var checkable: [CatalogItem] { scope.filter(model.providers.canCheck) }
     private var identifiable: [CatalogItem] { scope.filter(model.providers.canIdentify) }
 
     public var body: some View {
@@ -98,6 +98,8 @@ public struct MainView: View {
         case .archive: return T("Archive")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
+        case .stale: return T("Older than suggested")
+        case .internalOnly: return T("Internal secrets")
         case .level(let level): return levelName(level)
         case .tag(let tag): return tag
         }
@@ -129,6 +131,8 @@ public struct MainView: View {
                 Menu {
                     Button(T("All keys")) { selection = .all }
                     Button(T("Critical keys")) { selection = .critical }
+                    Button(T("Older than suggested")) { selection = .stale }
+                    Button(T("Internal secrets")) { selection = .internalOnly }
                     Button(T("Can be checked")) { selection = .checkable }
                     Divider()
                     ForEach(["free", "ask", "never", "none"], id: \.self) { level in
@@ -236,8 +240,10 @@ struct KeyRow: View {
             }
             HStack {
                 if item.criticality > 0 {
-                    CriticalityMeter(value: item.criticality)
-                        .help("\(T("Criticality")): \(criticalityName(item.criticality))")
+                    CriticalityMeter(value: item.criticality, suggested: item.criticalitySuggested)
+                        .help(
+                            "\(T("Criticality")): \(criticalityName(item.criticality))"
+                                + (item.criticalitySuggested ? ". \(T("Suggested by the provider's file"))" : ""))
                 }
             }
             .frame(width: 34, alignment: .leading)
@@ -286,6 +292,7 @@ struct KeyDetail: View {
     @State private var name = ""
     @State private var note = ""
     @State private var confirmArchive = false
+    @State private var host = ""
 
     var body: some View {
         ScrollView {
@@ -342,9 +349,11 @@ struct KeyDetail: View {
                 Label(T("Check this key"), systemImage: "checkmark.shield")
             }
             .buttonStyle(KRButtonStyle(primary: item.attention == nil))
-            .disabled(model.busy || !item.canCheck)
+            .disabled(model.busy || !model.providers.canCheck(item))
             if let why = item.whyNoCheck {
                 Text(why).font(Theme.caption).foregroundStyle(Theme.muted)
+            } else if model.providers.needsHost(item) {
+                Text(T("Add your server's address first")).font(Theme.caption).foregroundStyle(Theme.muted)
             }
         }
     }
@@ -360,10 +369,10 @@ struct KeyDetail: View {
                             Text("\(step)")
                                 .font(.system(size: 12, weight: .medium))
                                 .monospacedDigit()
-                                .foregroundStyle(step == item.criticality ? Theme.onAccent : Theme.text)
+                                .foregroundStyle(chosen(step) ? Theme.onAccent : Theme.text)
                                 .frame(width: 30, height: 24)
                                 .background(
-                                    step == item.criticality ? Theme.accent : Theme.raised,
+                                    chosen(step) ? Theme.accent : Theme.raised,
                                     in: RoundedRectangle(cornerRadius: Theme.smallRadius))
                                 .contentShape(Rectangle())
                         }
@@ -371,16 +380,24 @@ struct KeyDetail: View {
                         .help(criticalityName(step))
                     }
                 }
-                Text(item.criticality == 0 ? T("How bad would a leak be?") : criticalityName(item.criticality))
-                    .font(Theme.caption)
+                Text(
+                    item.criticality == 0
+                        ? T("How bad would a leak be?")
+                        : criticalityName(item.criticality)
+                            + (item.criticalitySuggested ? ". \(T("Suggested by the provider's file"))" : "")
+                )
+                .font(Theme.caption)
                     .foregroundStyle(Theme.muted)
             }
         }
     }
 
+    private func chosen(_ step: Int) -> Bool { step == item.criticality && !item.criticalitySuggested }
+
     private func syncFields() {
         name = item.name
         note = item.description
+        host = item.host
     }
 
     private var header: some View {
@@ -390,7 +407,9 @@ struct KeyDetail: View {
             Text(item.path).font(Theme.code).foregroundStyle(Theme.faint).textSelection(.enabled)
             HStack(spacing: 6) {
                 ResultBadge(item: item)
-                if item.criticality > 0 { CriticalityMeter(value: item.criticality) }
+                if item.criticality > 0 {
+                    CriticalityMeter(value: item.criticality, suggested: item.criticalitySuggested)
+                }
                 if !item.lastChecked.isEmpty {
                     Text(item.lastChecked).font(Theme.caption).foregroundStyle(Theme.faint).monospacedDigit()
                 }
@@ -453,10 +472,21 @@ struct KeyDetail: View {
     /// One provider, or several set by hand elsewhere, which stay until someone changes them.
     private var recipeBinding: Binding<String> {
         Binding(
-            get: { item.recipes.joined(separator: " ") },
+            get: { item.isInternal ? internalChoice : item.recipes.joined(separator: " ") },
             set: { value in
-                model.save(KeyEdit(recipes: value.split(separator: " ").map(String.init)), for: item)
+                let tags = item.tags.filter { $0 != "internal" }
+                if value == internalChoice {
+                    model.save(KeyEdit(tags: tags + ["internal"], recipes: []), for: item)
+                } else {
+                    model.save(KeyEdit(tags: tags, recipes: value.split(separator: " ").map(String.init)), for: item)
+                }
             })
+    }
+
+    private let internalChoice = "__internal__"
+
+    private var isSelfHosted: Bool {
+        item.recipes.contains { id in model.providers.all.contains { $0.id == id && $0.self_hosted } }
     }
 
     @ViewBuilder private var checkPlace: some View {
@@ -464,6 +494,8 @@ struct KeyDetail: View {
             VStack(alignment: .leading, spacing: 6) {
                 Picker("", selection: recipeBinding) {
                     Text(T("Nobody")).tag("")
+                    Text(T("Internal secret, no provider")).tag(internalChoice)
+                    Divider()
                     ForEach(model.providers.usable) { Text($0.name).tag($0.id) }
                     if item.recipes.count > 1 {
                         Text(item.recipes.map(model.providers.name(of:)).joined(separator: ", "))
@@ -475,6 +507,19 @@ struct KeyDetail: View {
                     .font(Theme.caption)
                     .foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        if isSelfHosted {
+            fact(T("Server address")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("panel.example.com", text: $host)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { model.setHost(host, on: item) }
+                    Text(T("Sets the server this key is sent to. It must offer HTTPS."))
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         if !item.recipes.isEmpty && !item.labels.isEmpty {
@@ -677,6 +722,7 @@ public struct SettingsView: View {
     @AppStorage(SettingsKey.appearance) private var appearance = "system"
     @AppStorage(SettingsKey.lockMinutes) private var lockMinutes = 5
     @AppStorage(SettingsKey.scanOnOpen) private var scanOnOpen = true
+    @AppStorage(SettingsKey.fingerprintMinutes) private var fingerprintMinutes = 5
 
     public init(model: AppModel) { self.model = model }
 
@@ -706,6 +752,15 @@ public struct SettingsView: View {
                     ForEach([1, 5, 15, 60], id: \.self) { Text("\($0) \(T("minutes"))").tag($0) }
                 }
                 Toggle(T("Scan when opening"), isOn: $scanOnOpen)
+            }
+            Section {
+                Picker(T("Ask for my fingerprint again after"), selection: $fingerprintMinutes) {
+                    Text(T("Every time")).tag(0)
+                    ForEach([1, 5, 15, 30], id: \.self) { Text("\($0) \(T("minutes"))").tag($0) }
+                }
+            } footer: {
+                Text(T("While this lasts, the app can check keys without asking. Locking it ends the period, and the vault always asks."))
+                    .font(.caption)
             }
             Section(T("Files")) {
                 LabeledContent(T("Folder")) {

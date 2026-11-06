@@ -1,0 +1,14 @@
+schema: 1
+provider: mercadopago
+name: Mercado Pago
+dashboard: https://www.mercadopago.cl/developers/panel/app
+prefixes: [APP_USR-]
+rotate_every_days: 180
+criticality_hint: 5
+hosts: [api.mercadopago.com]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /users/me }
+identify:
+  request: { method: GET, path: /users/me }
+  fields: { account: $.email, name: $.nickname, id: $.id }
+suggested_name: "Mercado Pago · {account}"

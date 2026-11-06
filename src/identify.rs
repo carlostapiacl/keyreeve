@@ -2,17 +2,19 @@
 //! anything that looks like a credential is dropped, so the rest of the answer never lands on disk.
 
 use crate::inventory::{kind_of, write_private};
-use crate::providers;
 use crate::recipe::{extract, Recipe};
 use crate::secret::Secret;
-use crate::transport::{HttpTransport, Request, Transport};
-use crate::verify::{inside_folder, load_key, now, Plan};
+use crate::ssh;
+use crate::transport::{exchange_token, HttpTransport, Request, Transport};
+use crate::verify::{inside_folder, load_key, now, resolve, Plan};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
 const MAX_FIELD_CHARS: usize = 200;
+/// Shorter than this, a part of a key is too common to say a value holds it.
+const MIN_KEY_PART: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Details {
@@ -31,27 +33,58 @@ pub fn identify(
     let Some(identify) = &recipe.identify else {
         return Err("this provider's file has no way to identify a key".into());
     };
-    let request = Request::for_step(recipe, &identify.request, &[], key);
+    let (credential, token_answer) = if recipe.auth.kind.as_deref() == Some("oauth_token") {
+        let answer = exchange_token(recipe, key, transport).map_err(|e| e.to_string())?;
+        if !(200..=299).contains(&answer.status) {
+            return Err(format!("HTTP {}", answer.status));
+        }
+        let json = serde_json::from_str::<serde_json::Value>(answer.body.expose())
+            .map_err(|_| "the answer could not be read".to_owned())?;
+        let token = extract(&json, "$.access_token").ok_or("the answer holds no token")?;
+        (Secret::new(token), Some(json))
+    } else {
+        (key.clone(), None)
+    };
+    let request = Request::for_step(recipe, &identify.request, &[], &credential);
     let response = transport.send(&request).map_err(|e| e.to_string())?;
-    if !identify.request.accepts(response.status) {
+    let accepted = identify.request.accepts(response.status);
+    if !accepted && token_answer.is_none() {
         return Err(format!("HTTP {}", response.status));
     }
     let body = response.body.expose();
     let json = match identify.format.as_deref() {
         Some("xml") => None,
+        _ if !accepted => None,
         _ => Some(
             serde_json::from_str::<serde_json::Value>(body)
                 .map_err(|_| "the answer could not be read".to_owned())?,
         ),
     };
-    let read = |path: &str| match &json {
-        Some(json) => extract(json, path),
-        None => xml_tag(body, path),
+    let read = |path: &str| {
+        if let Some(name) = path.strip_prefix("header:") {
+            return response
+                .headers
+                .iter()
+                .find(|(header, _)| header.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.clone());
+        }
+        if let Some(name) = path.strip_prefix("token:") {
+            return token_answer
+                .as_ref()
+                .and_then(|json| extract(json, &format!("$.{name}")));
+        }
+        if !accepted {
+            return None;
+        }
+        match &json {
+            Some(json) => extract(json, path),
+            None => xml_tag(body, path),
+        }
     };
     let mut fields = BTreeMap::new();
     for (name, path) in &identify.fields {
         if let Some(value) = read(path) {
-            if safe_value(&value, key) {
+            if safe_value(&value, &credential) && safe_value(&value, key) {
                 fields.insert(name.clone(), value);
             }
         }
@@ -70,7 +103,7 @@ fn safe_value(value: &str, key: &Secret) -> bool {
     let is_key_itself = key
         .expose()
         .split(':')
-        .any(|part| !part.is_empty() && value.contains(part));
+        .any(|part| part.len() >= MIN_KEY_PART && value.contains(part));
     !value.is_empty()
         && value.chars().count() <= MAX_FIELD_CHARS
         && !value.chars().any(char::is_control)
@@ -103,9 +136,17 @@ pub fn run_plan(plan: &Path, keys: &Path, details: &Path) -> Result<Vec<(String,
     for entry in &plan.keys {
         let label = format!("{} [{}]", entry.file, entry.recipe);
         let result = inside_folder(&entry.file)
-            .and_then(|()| providers::load(&entry.recipe))
+            .and_then(|()| resolve(&entry.recipe, entry.host.as_deref()))
             .and_then(|recipe| {
-                let key = load_key(&keys.join(&entry.file), entry.field.as_deref())?;
+                let file = keys.join(&entry.file);
+                if recipe.auth.kind.as_deref() == Some("ssh") {
+                    let mut fields = BTreeMap::new();
+                    if let ssh::Reply::Accepted(account) = ssh::greet(&recipe, &file)? {
+                        fields.insert("account".to_owned(), account);
+                    }
+                    return Ok((recipe, fields));
+                }
+                let key = load_key(&file, entry.field.as_deref(), &recipe)?;
                 let mut transport = HttpTransport::for_recipe(&recipe);
                 identify(&recipe, &key, &mut transport).map(|fields| (recipe, fields))
             });
@@ -152,6 +193,7 @@ mod tests {
     impl Transport for Answer {
         fn send(&mut self, _request: &Request) -> Result<Response, TransportError> {
             Ok(Response {
+                headers: Vec::new(),
                 status: self.0,
                 body: Secret::new(self.1),
             })
@@ -159,7 +201,7 @@ mod tests {
     }
 
     fn recipe(name: &str) -> Recipe {
-        providers::load(name).unwrap()
+        crate::providers::load(name).unwrap()
     }
 
     #[test]
@@ -182,6 +224,43 @@ mod tests {
         );
         let fields = identify(&recipe("github"), &Secret::new("CANARYkey"), &mut answer).unwrap();
         assert_eq!(fields.keys().collect::<Vec<_>>(), ["name"]);
+    }
+
+    #[test]
+    fn reads_scopes_from_a_header_and_a_token_answer() {
+        struct WithHeader;
+        impl Transport for WithHeader {
+            fn send(&mut self, _: &Request) -> Result<Response, TransportError> {
+                Ok(Response {
+                    headers: vec![("x-oauth-scopes".into(), "repo, read:org".into())],
+                    status: 200,
+                    body: Secret::new(r#"{"login":"me"}"#),
+                })
+            }
+        }
+        let fields = identify(&recipe("github"), &Secret::new("k"), &mut WithHeader).unwrap();
+        assert_eq!(fields["scopes"], "repo, read:org");
+
+        struct Oauth(u32);
+        impl Transport for Oauth {
+            fn send(&mut self, _: &Request) -> Result<Response, TransportError> {
+                self.0 += 1;
+                let body = if self.0 == 1 {
+                    r#"{"access_token":"CANARYtoken1234","scope":"email drive"}"#
+                } else {
+                    r#"{"email":"me@x.com","refresh_token":"CANARYother"}"#
+                };
+                Ok(Response {
+                    headers: Vec::new(),
+                    status: 200,
+                    body: Secret::new(body),
+                })
+            }
+        }
+        let fields = identify(&recipe("google"), &Secret::new("a:b:c"), &mut Oauth(0)).unwrap();
+        assert_eq!(fields["account"], "me@x.com");
+        assert_eq!(fields["scopes"], "email drive");
+        assert!(!format!("{fields:?}").contains("CANARY"));
     }
 
     #[test]

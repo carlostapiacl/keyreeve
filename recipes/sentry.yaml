@@ -1,0 +1,6 @@
+# Checks a key. It cannot rotate one yet.
+schema: 1
+provider: sentry
+hosts: [sentry.io]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /api/0/organizations/ }

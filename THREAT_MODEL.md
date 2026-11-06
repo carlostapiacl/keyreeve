@@ -25,6 +25,10 @@ wiped from memory on drop. Provider responses are kept out of errors, and client
 because they can quote the request. The simulator checks the journal, errors and outcomes for its
 test values.
 
+**A check that changes something.** `keyreeve verify` only sends a GET, and refuses a recipe whose check is another
+method. Provider answers are ignored apart from their status. A provider can still count or log the request, and
+a bad GET endpoint on its side could have effects.
+
 ## What it does not protect against
 
 - **A recipe that lists a malicious host.** It can send the credential to any host it declares.
@@ -39,6 +43,21 @@ test values.
 - **A key lost in the gap between the provider's answer and the journal write.** A crash there leaves
   a key at the provider that nobody holds. The journal then asks you to check the provider, because
   keyreeve cannot know.
+
+## The vault and the Mac app
+
+The vault is a file sealed for two keys: one inside the Secure Enclave, which asks for a fingerprint, and a recovery
+key held by you. Each value is bound to its name, so a value cannot be swapped under another name.
+
+- **Any program running as you can ask for your finger,** with text of its own in the prompt. Only touch the sensor
+  when you asked for something. The fingerprint is a check on you, and it does not identify the program asking.
+- **Any program running as you can replace `vault.json`** with one it can open. Later additions would then be sealed
+  for its keys, and a deleted file loses your keys. Keep backups, and watch for prompts you did not expect.
+- **A key in use is in memory,** in the variable `run` sets and in the command that receives it.
+- **The recovery key opens everything.** Whoever holds it does not need the Mac.
+- **The app's lock covers the window.** The catalog it shows is a plain file with names and results, and it never holds
+  a value.
+- **The format has had no outside review.** It uses standard CryptoKit parts (P-256, HKDF, AES-GCM), put together here.
 
 ## Known limits of the simulator
 

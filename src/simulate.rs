@@ -130,7 +130,7 @@ impl MockProvider {
         let sent = &request.rendered;
         let token = self.authorized(request);
 
-        if *sent == recipe.create.render(&recipe, &[("key_name", KEY)]) {
+        if *sent == recipe.create_step().render(&recipe, &[("key_name", KEY)]) {
             if token.is_none() {
                 return reply(401, String::new());
             }
@@ -151,19 +151,19 @@ impl MockProvider {
             let mut body = json!({});
             set_path(
                 &mut body,
-                recipe.create.id_from.as_deref().unwrap_or(""),
+                recipe.create_step().id_from.as_deref().unwrap_or(""),
                 &id,
             );
             set_path(
                 &mut body,
-                recipe.create.value_from.as_deref().unwrap_or(""),
+                recipe.create_step().value_from.as_deref().unwrap_or(""),
                 &value,
             );
-            let status = recipe.create.expect.unwrap_or(200);
+            let status = recipe.create_step().expect.unwrap_or(200);
             return reply(status, body.to_string());
         }
         for id in self.issued.clone() {
-            if *sent == recipe.revoke.render(&recipe, &[("id", id.as_str())]) {
+            if *sent == recipe.revoke_step().render(&recipe, &[("id", id.as_str())]) {
                 if self.revoke_failures > 0 {
                     self.revoke_failures -= 1;
                     return reply(500, String::new());
@@ -172,7 +172,7 @@ impl MockProvider {
                     return reply(401, String::new());
                 }
                 return match self.valid.remove(&id) {
-                    Some(_) => reply(recipe.revoke.expect.unwrap_or(200), String::new()),
+                    Some(_) => reply(recipe.revoke_step().expect.unwrap_or(200), String::new()),
                     None => reply(404, String::new()),
                 };
             }
@@ -585,6 +585,9 @@ fn scenarios() -> Vec<(&'static str, Fault)> {
 /// whether the real provider behaves as the recipe describes.
 pub fn run(recipe: &Recipe) -> Report {
     let mut report = Report::default();
+    if !recipe.can_rotate() {
+        return report;
+    }
     for overlap in [0_u64, 3_600] {
         for self_admin in [false, true] {
             let label = format!(

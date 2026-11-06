@@ -12,3 +12,4 @@ pub mod secret;
 pub mod simulate;
 pub mod store;
 pub mod transport;
+pub mod verify;

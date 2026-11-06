@@ -1,0 +1,6 @@
+# Checks a key. It cannot rotate one yet.
+schema: 1
+provider: openai
+hosts: [api.openai.com]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /v1/models }

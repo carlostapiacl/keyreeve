@@ -53,6 +53,8 @@ pub enum Outcome {
 
 #[derive(Debug)]
 pub enum Error {
+    /// The recipe has no `create` and `revoke`, so it can only check a key.
+    CannotRotate,
     /// A rotation of this key is unfinished. Run `resume`.
     Unfinished,
     KeyMissing(String),
@@ -63,6 +65,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CannotRotate => f.write_str("this recipe can only check a key"),
             Self::Unfinished => f.write_str("a rotation of this key is unfinished, resume it"),
             Self::KeyMissing(name) => write!(f, "{name} is not in the store"),
             Self::Store(error) => write!(f, "{error}"),
@@ -108,6 +111,9 @@ enum Create {
 
 impl Engine<'_> {
     pub fn rotate(&mut self) -> Result<Outcome, Error> {
+        if !self.recipe.can_rotate() {
+            return Err(Error::CannotRotate);
+        }
         let key = self.config.key.clone();
         if self.journal.phase(&key) != Phase::Idle {
             return Err(Error::Unfinished);
@@ -140,6 +146,9 @@ impl Engine<'_> {
 
     /// Finishes or undoes whatever the record says is open. Safe to call at any time.
     pub fn resume(&mut self) -> Result<Outcome, Error> {
+        if !self.recipe.can_rotate() {
+            return Err(Error::CannotRotate);
+        }
         let key = self.config.key.clone();
         match self.journal.phase(&key) {
             Phase::Idle => Ok(Outcome::NothingToDo),
@@ -281,11 +290,11 @@ impl Engine<'_> {
     fn create(&mut self, admin: &Secret) -> Create {
         let recipe = self.recipe;
         let vars = [("key_name", self.config.key.as_str())];
-        let response = match self.send(&recipe.create, &vars, admin) {
+        let response = match self.send(recipe.create_step(), &vars, admin) {
             Ok(response) => response,
             Err(_) => return Create::Unknown("create_failed".into()),
         };
-        if !recipe.create.accepts(response.status) {
+        if !recipe.create_step().accepts(response.status) {
             let reason = format!("create_status_{}", response.status);
             return if (400..500).contains(&response.status) {
                 Create::Refused(reason)
@@ -297,12 +306,12 @@ impl Engine<'_> {
             return Create::Unknown("create_unreadable".into());
         };
         let value = recipe
-            .create
+            .create_step()
             .value_from
             .as_deref()
             .and_then(|path| extract(&json, path));
         let id = recipe
-            .create
+            .create_step()
             .id_from
             .as_deref()
             .and_then(|path| extract(&json, path));
@@ -327,8 +336,8 @@ impl Engine<'_> {
     /// A 404 counts as revoked, so a retry after a crash does not get stuck.
     fn revoke(&mut self, admin: &Secret, id: &str) -> bool {
         let recipe = self.recipe;
-        match self.send(&recipe.revoke, &[("id", id)], admin) {
-            Ok(response) => recipe.revoke.accepts(response.status) || response.status == 404,
+        match self.send(recipe.revoke_step(), &[("id", id)], admin) {
+            Ok(response) => recipe.revoke_step().accepts(response.status) || response.status == 404,
             Err(_) => false,
         }
     }
@@ -339,17 +348,8 @@ impl Engine<'_> {
         vars: &[(&str, &str)],
         credential: &Secret,
     ) -> Result<Response, TransportError> {
-        let recipe = self.recipe;
-        let value = Secret::new(format!("{}{}", recipe.auth.prefix, credential.expose()));
-        self.transport.send(&Request {
-            rendered: step.render(recipe, vars),
-            headers: recipe
-                .headers
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect(),
-            auth: (recipe.auth.header.clone(), value),
-        })
+        self.transport
+            .send(&Request::for_step(self.recipe, step, vars, credential))
     }
 
     fn admin(&self) -> Result<Secret, Error> {

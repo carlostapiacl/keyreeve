@@ -29,8 +29,8 @@ mod http;
 use authority::{crypto, Authority};
 pub use control::{can_stand_in, serve_from_stdin};
 use http::{
-    answer, base64_decode, base64_encode, body_framing, copy_body, header, read_head, split_target,
-    status_of, Scrubber,
+    answer, base64_decode, base64_encode, body_framing, copy_body, header, read_head, relay_reply,
+    split_target, status_of, Scrubber,
 };
 
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
@@ -405,32 +405,28 @@ impl Proxy {
         let mut scrub = grant
             .as_ref()
             .map(|grant| Scrubber::new(grant.real.expose(), grant.stand_in.expose()));
-        let mut status = 0;
-        let mut buffer = vec![0u8; 16 * 1024];
-        loop {
-            let count = match upstream.read(&mut buffer) {
-                Ok(count) => count,
-                // Many servers close without a TLS goodbye, once they have said it all.
-                Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => 0,
-                Err(error) => return Err(error),
-            };
-            if count == 0 {
-                break;
-            }
-            if status == 0 {
-                status = status_of(&buffer[..count]);
-            }
-            match &mut scrub {
-                Some(scrub) => {
-                    let clean = scrub.push(&buffer[..count]);
-                    stream.get_mut().write_all(&clean)?;
+        let status = match &mut scrub {
+            Some(scrub) => relay_reply(&mut upstream, stream.get_mut(), scrub)?,
+            None => {
+                let mut status = 0;
+                let mut buffer = vec![0u8; 16 * 1024];
+                loop {
+                    let count = match upstream.read(&mut buffer) {
+                        Ok(count) => count,
+                        // Many servers close without a TLS goodbye, once they have said it all.
+                        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => 0,
+                        Err(error) => return Err(error),
+                    };
+                    if count == 0 {
+                        break status;
+                    }
+                    if status == 0 {
+                        status = status_of(&buffer[..count]);
+                    }
+                    stream.get_mut().write_all(&buffer[..count])?;
                 }
-                None => stream.get_mut().write_all(&buffer[..count])?,
             }
-        }
-        if let Some(scrub) = &mut scrub {
-            stream.get_mut().write_all(&scrub.finish())?;
-        }
+        };
         stream.get_mut().flush()?;
         stream.get_mut().conn.send_close_notify();
         let _ = stream.get_mut().flush();

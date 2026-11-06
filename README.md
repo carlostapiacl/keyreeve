@@ -289,8 +289,23 @@ keyreeve-vault use deploy-key -- git push
 The command gets `SSH_AUTH_SOCK`, pointing at a door in front of the system's own `ssh-agent`, which holds the key for as long as the permission
 lasts. The door passes listing and signing and nothing else, so the key cannot be read, replaced or used to sign a file or a commit. OpenSSH tells the
 agent which server each connection is for, so the permission covers the first server and every other one asks for your finger. Each signature goes in
-the log with the user and the server's fingerprint. A key with a passphrase is refused. If your `~/.ssh/config` sets `IdentityAgent`, or `ssh` finds a
-matching key on disk first, it uses that and never reaches keyreeve.
+the log with the user and the server's fingerprint. A key with a passphrase asks for it in a dialog when the permission opens.
+
+To allow only servers you name, list their fingerprints, as `ssh-keygen -lf` or the usage log shows them. With a list there is no free first server:
+
+```toml
+[[key]]
+id = "vps"
+source = "vps-key"
+provider = "ssh"
+servers = "SHA256:abc... SHA256:def..."
+```
+
+`ssh`, `scp` and `sftp` get options that win over your `~/.ssh/config` and offer this key first. `git` and `rsync` get the same through `GIT_SSH_COMMAND`
+and `RSYNC_RSH`, unless you set those yourself. Any other program uses `SSH_AUTH_SOCK` and your config.
+
+`keyreeve-vault grant vps --for 1h` opens a permission ahead of time, so an agent's work does not stop to ask. A key that is not SSH takes `--program`, since
+its permission is for one program. The app does the same from a key's page, shows what is in force and the key's recent use, and can end it.
 
 `--real` hands the command the real key, for what cannot use a stand-in, such as a provider that signs requests or a script of your own. It asks for
 your finger every time and is logged apart. A command that sends a stand-in past the proxy, or ignores its variables, simply fails to authenticate.

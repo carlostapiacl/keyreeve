@@ -109,6 +109,7 @@ final class FakeProxy: KeyProxy, @unchecked Sendable {
 
 final class FakeDoor: SSHDoorHandle {
     let socket = "/tmp/fake.sock"
+    let identity: String? = "/tmp/fake.pub"
     var closed = false
     func close() { closed = true }
 }
@@ -118,7 +119,7 @@ final class FakeAgents: SSHKeyAgents, @unchecked Sendable {
     var keys: [String] = []
     var check: SSHDoor.ServerCheck?
     func open(
-        grant: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
+        grant: String, name: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
         signed: @escaping SSHDoor.SignatureLog, refused: @escaping SSHDoor.RefusalLog
     ) throws -> SSHDoorHandle {
         keys.append(key)
@@ -141,7 +142,7 @@ final class Fixture: @unchecked Sendable {
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return KeyService(
-            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n\n[[key]]\nid = \"vps\"\nsource = \"vps-key\"\nprovider = \"ssh\"\naccount = \"root\"\n\n[[key]]\nid = \"not-ssh\"\nsource = \"n.txt\"\nprovider = \"ssh\"\n") },
+            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n\n[[key]]\nid = \"vps\"\nsource = \"vps-key\"\nprovider = \"ssh\"\naccount = \"root\"\n\n[[key]]\nid = \"not-ssh\"\nsource = \"n.txt\"\nprovider = \"ssh\"\n\n[[key]]\nid = \"pinned\"\nsource = \"vps-key\"\nprovider = \"ssh\"\nservers = \"SHA256:one SHA256:two\"\n") },
             open: { source, prompt in
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
@@ -182,6 +183,7 @@ struct KeyServiceTests {
         let f = Fixture()
         let answer = f.use("vps", "/usr/bin/ssh")
         #expect(answer.sshSocket == "/tmp/fake.sock")
+        #expect(answer.sshIdentity == "/tmp/fake.pub")
         #expect(answer.value == nil)
         #expect(answer.standIn == nil)
         #expect(f.agents.keys.first?.contains("CANARY") == true)
@@ -225,6 +227,27 @@ struct KeyServiceTests {
         #expect(!check("SHA256:three"))
         #expect(!check("SHA256:three"))
         #expect(f.confirmations.count == 3, "a no is not remembered as a yes")
+    }
+
+    @Test func testAKeyThatNamesItsServersGivesNoFreeFirstOne() throws {
+        let f = Fixture()
+        _ = f.use("pinned", "/usr/bin/ssh")
+        let check = try #require(f.agents.check)
+        f.confirmAnswer = false
+        #expect(!check("SHA256:invented"))
+        #expect(f.confirmations.count == 1)
+        #expect(check("SHA256:one"))
+        #expect(check("SHA256:two"))
+        #expect(f.confirmations.count == 1)
+    }
+
+    @Test func testServersMustBeFingerprintsAndSurviveSaving() throws {
+        #expect(throws: VaultError.self) {
+            try KeyIndex.parse("[[key]]\nid = \"a\"\nsource = \"s\"\nservers = \"my-server\"\n")
+        }
+        let index = try KeyIndex.parse("[[key]]\nid = \"a\"\nsource = \"s\"\nservers = \"SHA256:x SHA256:y\"\n")
+        #expect(index.key("a")?.servers == ["SHA256:x", "SHA256:y"])
+        #expect(try KeyIndex.parse(index.toml) == index)
     }
 
     @Test func testEndingAnSSHPermissionClosesItsDoor() throws {

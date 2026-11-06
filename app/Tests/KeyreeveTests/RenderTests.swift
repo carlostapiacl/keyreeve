@@ -1,9 +1,9 @@
 import AppKit
 import CryptoKit
 import KeyreeveCatalog
-import KeyreeveVault
+@testable import KeyreeveVault
 import Foundation
-import KeyreeveUI
+@testable import KeyreeveUI
 import SwiftUI
 import Testing
 
@@ -108,6 +108,21 @@ struct RenderTests {
             ready.items[0].vault = .sealed
             try render(MainView(model: ready, initial: .vault), named: "vault-sealed-\(code)", appearance: .aqua)
             try render(MainView(model: ready, initial: .all, chosen: "old-cloud.csv"), named: "rotate-\(code)", appearance: .aqua)
+            let log = AuditLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("usage-\(UUID().uuidString).jsonl"))
+            defer { try? FileManager.default.removeItem(at: log.url) }
+            let caller = AuditLog.Observed(pid: 1, program: "/usr/bin/ssh", chain: ["ssh", "zsh", "claude"])
+            try log.append(event: "granted", key: "vps", grant: "g-1", observed: caller, detail: "3600 seconds, ssh")
+            try log.append(event: "signed", key: "vps", grant: "g-1", observed: caller, detail: "root at SHA256:ab12cd34")
+            try log.append(event: "server", key: "vps", grant: "g-1", detail: "SHA256:ef56, asked")
+            try log.append(event: "copied", key: "vps", detail: "to the clipboard")
+            ready.keyIndex = KeyIndex(keys: [KeyIndex.Key(id: "vps", source: "old-cloud.csv", provider: KeyService.sshProvider)])
+            ready.usage.entries = try log.entries().reversed()
+            ready.usage.grants = [KeyService.GrantInfo(id: "g-1", key: "vps", program: "ssh", expires: Date().addingTimeInterval(1800))]
+            try render(
+                KeyUsagePanel(item: ready.items[0], model: ready).padding(24).frame(width: 420).background(Theme.background),
+                named: "usage-\(code)", appearance: .darkAqua)
+            ready.usage.brokenLine = 3
+            try render(UsageLogSheet(model: ready), named: "usage-log-\(code)", appearance: .aqua)
         }
     }
 }

@@ -34,6 +34,8 @@ public final class AppModel: ObservableObject {
     @Published public var places: [String: KeyPlaces] = [:]
     @Published public var agentPolicy = AgentPolicy()
     @Published public var keyIndex = KeyIndex()
+    /// The usage log, newest first, and what the key service has open now.
+    @Published public var usage = UsageSnapshot()
     public let files: KeyreeveFiles
     public let vaultStore: VaultStore
     let binary: URL?
@@ -83,6 +85,7 @@ public final class AppModel: ObservableObject {
         closeServicePermissions()
         agentPolicy = AgentPolicy()
         keyIndex = KeyIndex()
+        usage = UsageSnapshot()
         unlocked = false
         items = []
         activity = []
@@ -142,6 +145,7 @@ public final class AppModel: ObservableObject {
         places = snapshot.places
         agentPolicy = snapshot.agentPolicy
         keyIndex = snapshot.keyIndex
+        usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
     }
@@ -195,6 +199,25 @@ public final class AppModel: ObservableObject {
     }
 }
 
+/// What the usage log says and what is in force. Asking the service starts nothing: with no socket, nothing is open.
+public struct UsageSnapshot: Sendable, Equatable {
+    public var entries: [AuditLog.Entry] = []
+    public var grants: [KeyService.GrantInfo] = []
+    /// The first line that does not fit the chain, if something changed the log.
+    public var brokenLine: Int?
+
+    public init() {}
+
+    init(files: KeyreeveFiles) {
+        let log = AuditLog(url: files.audit)
+        entries = Array(((try? log.entries()) ?? []).suffix(500).reversed())
+        brokenLine = log.firstBrokenLine()
+        if FileManager.default.fileExists(atPath: files.keySocket.path) {
+            grants = (try? KeySocket.send(KeyService.Request(op: "grants"), path: files.keySocket.path, timeout: 1))?.grants ?? []
+        }
+    }
+}
+
 /// Everything the window shows, read together.
 struct Snapshot: Sendable {
     struct Source: Sendable {
@@ -211,6 +234,7 @@ struct Snapshot: Sendable {
     let places: [String: KeyPlaces]
     let agentPolicy: AgentPolicy
     let keyIndex: KeyIndex
+    let usage: UsageSnapshot
     let providers: ProviderDirectory?
     let rotations: [RotationStatus]?
 
@@ -244,6 +268,7 @@ struct Snapshot: Sendable {
         places = files.allPlaces()
         agentPolicy = AgentPolicy.load(from: files.agents)
         keyIndex = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
+        usage = UsageSnapshot(files: files)
         providers = source.binary.map { CheckRunner.providers(binary: $0) }
         rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }
     }

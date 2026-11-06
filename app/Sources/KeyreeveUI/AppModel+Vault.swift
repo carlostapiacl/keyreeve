@@ -48,6 +48,7 @@ extension AppModel {
                 for path in paths { try CheckRunner.forgetRotationID(of: path, binary: binary, files: files) }
             }
             let report = try VaultKeeper.sealAgain(paths: paths, folder: folder, store: store)
+            for path in report.sealed { note("sealed", path: path, detail: "again") }
             message = report.sealed.count == 1 ? T("1 key sealed") : T("%d keys sealed", report.sealed.count)
         } catch {
             message = T("The vault could not be saved")

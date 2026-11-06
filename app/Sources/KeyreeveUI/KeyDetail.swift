@@ -26,7 +26,10 @@ struct KeyDetail: View {
                 }
                 checkButton
                 if item.vault != .none { vaultNote }
-                if item.vault == .sealed || item.vault == .outdated { KeyAccessPanel(item: item, model: model) }
+                if item.vault == .sealed || item.vault == .outdated {
+                    KeyAccessPanel(item: item, model: model)
+                    KeyUsagePanel(item: item, model: model)
+                }
                 if model.hasVault, item.isSecret, !item.isArchived { RotationPanel(item: item, model: model) }
                 customActions
                 identity

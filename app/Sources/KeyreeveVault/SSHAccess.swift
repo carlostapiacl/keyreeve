@@ -20,6 +20,8 @@ public final class SSHDoor: @unchecked Sendable {
     public typealias RefusalLog = @Sendable (_ why: String, _ caller: AuditLog.Observed?) -> Void
 
     public let socket: String
+    /// The public half, for telling `ssh` which key to offer.
+    public let identity: String?
     private let upstream: String
     private let listener: Int32
     private let agent: Process?
@@ -39,7 +41,7 @@ public final class SSHDoor: @unchecked Sendable {
 
     /// Starts an agent for this one key, with the key added from memory, and opens the door.
     public static func open(
-        grant: String, key sealed: String, seconds: Int, folder: URL,
+        grant: String, name: String = "", key sealed: String, seconds: Int, folder: URL, askpass: String? = nil,
         check: @escaping ServerCheck, signed: @escaping SignatureLog, refused: @escaping RefusalLog
     ) throws -> SSHDoor {
         let private_ = folder.appendingPathComponent("a-\(grant).sock").path
@@ -75,7 +77,16 @@ public final class SSHDoor: @unchecked Sendable {
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETFD, FD_CLOEXEC)
         add.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
         add.arguments = ["-q", "-t", String(seconds), "-"]
-        add.environment = ["SSH_AUTH_SOCK": private_, "SSH_ASKPASS_REQUIRE": "never", "PATH": "/usr/bin:/bin"]
+        var environment = ["SSH_AUTH_SOCK": private_, "PATH": "/usr/bin:/bin"]
+        if let askpass {
+            // Only a key with a passphrase ever calls this.
+            environment["SSH_ASKPASS"] = askpass
+            environment["SSH_ASKPASS_REQUIRE"] = "force"
+            environment[SSHCommand.askpassVariable] = name
+        } else {
+            environment["SSH_ASKPASS_REQUIRE"] = "never"
+        }
+        add.environment = environment
         add.standardInput = input
         add.standardOutput = FileHandle.nullDevice
         add.standardError = FileHandle.nullDevice
@@ -89,19 +100,37 @@ public final class SSHDoor: @unchecked Sendable {
         try? input.fileHandleForWriting.close()
         add.waitUntilExit()
         guard add.terminationStatus == 0 else {
-            throw fail("this SSH key could not be loaded. A key with a passphrase cannot be used here yet")
+            throw fail("this SSH key could not be loaded, or its passphrase was not given")
         }
+        let identity = writePublicKey(agent: private_, to: folder.appendingPathComponent("s-\(grant).pub").path)
         return try SSHDoor(
-            socket: folder.appendingPathComponent("s-\(grant).sock").path, upstream: private_, agent: agent,
+            socket: folder.appendingPathComponent("s-\(grant).sock").path, identity: identity, upstream: private_, agent: agent,
             check: check, signed: signed, refused: refused)
+    }
+
+    private static func writePublicKey(agent: String, to path: String) -> String? {
+        let list = Process()
+        let output = Pipe()
+        list.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
+        list.arguments = ["-L"]
+        list.environment = ["SSH_AUTH_SOCK": agent, "PATH": "/usr/bin:/bin"]
+        list.standardInput = FileHandle.nullDevice
+        list.standardOutput = output
+        list.standardError = FileHandle.nullDevice
+        guard (try? list.run()) != nil else { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        list.waitUntilExit()
+        guard list.terminationStatus == 0, !data.isEmpty, FileManager.default.createFile(atPath: path, contents: data) else { return nil }
+        return path
     }
 
     /// Opens a door in front of an agent that is already running.
     public init(
-        socket: String, upstream: String, agent: Process?,
+        socket: String, identity: String? = nil, upstream: String, agent: Process?,
         check: @escaping ServerCheck, signed: @escaping SignatureLog, refused: @escaping RefusalLog
     ) throws {
         self.socket = socket
+        self.identity = identity
         self.upstream = upstream
         self.agent = agent
         self.check = check
@@ -121,6 +150,7 @@ public final class SSHDoor: @unchecked Sendable {
         Darwin.close(listener)
         agent?.terminate()
         unlink(socket)
+        if let identity { unlink(identity) }
         if agent != nil { unlink(upstream) }
     }
 
@@ -294,5 +324,36 @@ public final class SSHDoor: @unchecked Sendable {
 
     private static func relay(_ frame: Data, to up: Int32) -> Data? {
         writeFrame(up, frame) ? readFrame(up) : nil
+    }
+}
+
+/// Points `ssh` at the door whatever its config says, and stops it offering keys from disk first.
+public enum SSHCommand {
+    public static let askpassVariable = "KEYREEVE_ASKPASS"
+
+    public static func options(socket: String, identity: String) -> [String] {
+        ["-o", "IdentityAgent=\(socket)", "-o", "IdentitiesOnly=yes", "-o", "IdentityFile=\(identity)"]
+    }
+
+    /// For `ssh`, `scp` and `sftp` directly. Anything else reaches them through the variables below.
+    public static func arguments(for command: [String], socket: String, identity: String) -> [String] {
+        guard let program = command.first,
+            ["ssh", "scp", "sftp"].contains(URL(fileURLWithPath: program).lastPathComponent)
+        else { return command }
+        var out = [program]
+        out.append(contentsOf: options(socket: socket, identity: identity))
+        out.append(contentsOf: command.dropFirst())
+        return out
+    }
+
+    /// What `git` and `rsync` read to run `ssh`. A value of yours stays.
+    public static func variables(socket: String, identity: String) -> [String: String] {
+        let words = options(socket: socket, identity: identity).map(quoted)
+        let line = "ssh " + words.joined(separator: " ")
+        return ["GIT_SSH_COMMAND": line, "RSYNC_RSH": line]
+    }
+
+    private static func quoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

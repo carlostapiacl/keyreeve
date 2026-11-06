@@ -31,6 +31,8 @@ extension AppModel {
                     switch result {
                     case .success(let value):
                         self.clipboard.copy(value)
+                        self.note("copied", path: name, detail: "to the clipboard")
+                        self.reloadUsage()
                         self.message = T("Copied. It leaves the clipboard in %d seconds.", KeyClipboard.seconds)
                         let copied = self.clipboard.ours
                         Task {
@@ -49,6 +51,59 @@ extension AppModel {
     }
 
     func clearClipboardNow() { clipboard.clear() }
+
+    // MARK: Usage
+
+    /// Names a file by its identifier when it has one, so the log reads the same from every side.
+    func auditName(of path: String) -> String { keyIndex.keys(forSource: path).first?.id ?? path }
+
+    func note(_ event: String, path: String, detail: String? = nil) {
+        try? AuditLog(url: files.audit).append(event: event, key: auditName(of: path), detail: detail)
+    }
+
+    public func reloadUsage() {
+        guard unlocked else { return }
+        let files = self.files
+        let epoch = lockEpoch
+        Task.detached {
+            let usage = UsageSnapshot(files: files)
+            await MainActor.run {
+                guard epoch == self.lockEpoch else { return }
+                self.usage = usage
+            }
+        }
+    }
+
+    /// Opens a permission through the same command an agent would use, so the service asks for your finger.
+    public func grant(_ key: KeyIndex.Key, program: String?, duration: String) {
+        guard let tool = vaultTool else { return }
+        var arguments = ["grant", key.id, "--for", duration]
+        if let program { arguments += ["--program", URL(fileURLWithPath: program).lastPathComponent] }
+        message = T("Touch the sensor to give this permission.")
+        Task.detached {
+            let process = Process()
+            process.executableURL = tool
+            process.arguments = arguments
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            let started = (try? process.run()) != nil
+            if started { process.waitUntilExit() }
+            let done = started && process.terminationStatus == 0
+            await MainActor.run {
+                self.message = done ? T("Permission given.") : T("No permission was given.")
+                self.reloadUsage()
+            }
+        }
+    }
+
+    public func endPermissions(of key: String) {
+        let path = files.keySocket.path
+        Task.detached {
+            _ = try? KeySocket.send(KeyService.Request(op: "revoke", key: key), path: path, timeout: 2)
+            await MainActor.run { self.reloadUsage() }
+        }
+    }
 
     /// Locking the app ends what the key service holds too. If it is not running, nothing is lost.
     func closeServicePermissions() {

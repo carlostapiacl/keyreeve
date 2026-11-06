@@ -120,14 +120,15 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **The proxy reads that traffic.** It ends TLS for a key's hosts, with a CA made for each run whose key stays in memory. Only commands
   started by `use` are pointed at that CA. The system's own trust store is never touched.
 - **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a
-  stand-in, and a plain reply is scrubbed. A compressed reply or one split across chunks is not.
+  stand-in, and a reply is scrubbed, including across chunks. A provider that compresses a reply it was asked not to compress is not scrubbed.
 - **`--real` is the real key.** A fingerprint is asked each time, and from there it is in the command's hands. So is the MCP server's
   `run_with_key` and `env`, which give the real value to the program they run.
 - **An SSH permission lets anything running as you log in.** The key stays in `ssh-agent`, out of reach through the door, and no signature is made for
   anything but a login. While a permission lasts, any program of yours that finds the socket can use it to log in. The server check holds for a real
   `ssh`, which names its server truthfully. A program that speaks the protocol itself can name a server key of its own, and the agent accepts that as long as the
   signature matches, so it can take the free first server under an invented name, or trigger a prompt with the wrong fingerprint, while logging in somewhere else.
-  The log then shows that invented fingerprint.
+  The log then shows that invented fingerprint. Listing `servers` in `keys.toml` removes the free one, so only a prompt with a fingerprint you do not recognize is left.
+- **A passphrase passes through a dialog.** It goes from a system dialog to `ssh-add` over a pipe, and any program running as you could show a dialog that looks the same.
 - **An SSH key sits in a system process.** `ssh-agent` holds it opened until the permission ends, at the limit given to `ssh-add`. If the service is killed the agent stays with
   the key until that limit or until the service starts again. A login already open keeps working after the permission ends.
 - **The usage log shows who, not proof of who.** A process and its parents come from the system. An agent can start a command through

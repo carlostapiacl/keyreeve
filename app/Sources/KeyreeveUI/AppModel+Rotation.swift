@@ -148,7 +148,9 @@ extension AppModel {
                     self.busy = false
                     self.load()
                     switch result {
-                    case .success(let report): self.message = rotationMessage(report)
+                    case .success(let report):
+                        self.message = rotationMessage(report)
+                        self.note("rotated", path: key, detail: report.outcome)
                     case .failure(let error):
                         self.message = (error as? CheckError)?.description ?? T("The vault could not be opened")
                     }
@@ -171,6 +173,7 @@ extension AppModel {
                 self.load()
                 switch result {
                 case .success(let report):
+                    for path in report.sealed { self.note("sealed", path: path) }
                     self.message =
                         report.skipped.isEmpty
                         ? (report.sealed.count == 1 ? T("1 key sealed") : T("%d keys sealed", report.sealed.count))

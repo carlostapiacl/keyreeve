@@ -32,6 +32,7 @@ func addKey() throws {
     let value = readSecret(prompt: "Value for \(arguments[1])")
     guard !value.isEmpty else { fail("the value is empty") }
     try store.update { try $0.add(name: arguments[1], value: value) }
+    try? auditLog.append(event: "sealed", key: arguments[1])
     print("\(arguments[1]) added")
 }
 
@@ -45,6 +46,7 @@ func putKey() throws {
         if VaultFile.isTemporary(arguments[1]) { vault.entries[arguments[1]] = nil }
         try vault.replace(name: arguments[1], value: value)
     }
+    if !VaultFile.isTemporary(arguments[1]) { try? auditLog.append(event: "sealed", key: arguments[1], detail: "replaced") }
 }
 
 func dropTemporary() throws {

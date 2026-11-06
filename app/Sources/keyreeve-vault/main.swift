@@ -1,6 +1,8 @@
 import Foundation
 import KeyreeveVault
 
+if let name = ProcessInfo.processInfo.environment[SSHCommand.askpassVariable] { askPassphrase(for: name) }
+
 do {
     switch arguments.first {
     case "init": try createVault()
@@ -11,6 +13,7 @@ do {
     case "list": try listKeys()
     case "use": try useKey()
     case "serve": try serveKeys()
+    case "grant": try grantKey()
     case "grants": try showGrants()
     case "revoke": try revokeGrants()
     case "audit": try showAudit()

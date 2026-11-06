@@ -177,6 +177,72 @@ struct SSHDoorTests {
         #expect(!FileManager.default.fileExists(atPath: lab.door.socket))
     }
 
+    /// A config that points `ssh` elsewhere, as a person's may. The options win over it.
+    @Test func testTheCommandReachesTheDoorWhateverTheConfigSays() throws {
+        let lab = try SSHLab()
+        let server = try lab.server("a")
+        let identity = try #require(lab.door.identity)
+        #expect(try String(contentsOfFile: identity, encoding: .utf8).hasPrefix("ssh-ed25519 "))
+        try "IdentityAgent none\n".write(toFile: lab.path("config"), atomically: true, encoding: .utf8)
+        let base = [
+            "ssh", "-F", lab.path("config"), "-p", String(server.port), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=\(lab.path("known"))", "\(NSUserName())@127.0.0.1", "echo logged-in",
+        ]
+        let without = try lab.run("/usr/bin/ssh", Array(base.dropFirst()))
+        #expect(!without.output.contains("logged-in"), "this config alone cannot get in")
+        let command = SSHCommand.arguments(for: base, socket: lab.door.socket, identity: identity)
+        let with = try lab.run("/usr/bin/ssh", Array(command.dropFirst()))
+        #expect(with.output.contains("logged-in"), "\(with.output)")
+        #expect(lab.signatures.count == 1)
+        lab.door.close()
+        #expect(!FileManager.default.fileExists(atPath: identity))
+    }
+
+    @Test func testGitAndRsyncGetTheSameOptionsAndOtherProgramsAreLeftAlone() {
+        let variables = SSHCommand.variables(socket: "/run/it's.sock", identity: "/run/k.pub")
+        #expect(variables["GIT_SSH_COMMAND"]?.contains("'IdentityAgent=/run/it'\\''s.sock'") == true)
+        #expect(variables["RSYNC_RSH"] == variables["GIT_SSH_COMMAND"])
+        #expect(SSHCommand.arguments(for: ["git", "push"], socket: "s", identity: "i") == ["git", "push"])
+        #expect(SSHCommand.arguments(for: ["/usr/bin/scp", "a", "b"], socket: "s", identity: "i").count == 9)
+    }
+
+    private func passphraseLab(_ script: String) throws -> (folder: URL, key: String, askpass: String) {
+        let folder = URL(fileURLWithPath: "/tmp/kr-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let path = folder.appendingPathComponent("k").path
+        let make = Process()
+        make.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        make.arguments = ["-q", "-t", "ed25519", "-N", "secreto", "-f", path]
+        make.standardOutput = FileHandle.nullDevice
+        try make.run()
+        make.waitUntilExit()
+        let askpass = folder.appendingPathComponent("ask").path
+        try script.write(toFile: askpass, atomically: true, encoding: .utf8)
+        chmod(askpass, 0o700)
+        return (folder, try String(contentsOfFile: path, encoding: .utf8), askpass)
+    }
+
+    @Test func testAKeyWithAPassphraseOpensWhenItIsGiven() throws {
+        let lab = try passphraseLab("#!/bin/sh\nprintf '%s\\n' \"$KEYREEVE_ASKPASS\" > \"$0.name\"\necho secreto\n")
+        defer { try? FileManager.default.removeItem(at: lab.folder) }
+        let door = try SSHDoor.open(
+            grant: "p", name: "vps", key: lab.key, seconds: 60, folder: lab.folder, askpass: lab.askpass,
+            check: { _ in true }, signed: { _, _ in }, refused: { _, _ in })
+        defer { door.close() }
+        #expect(door.identity != nil)
+        #expect(try String(contentsOfFile: lab.askpass + ".name", encoding: .utf8) == "vps\n")
+    }
+
+    @Test func testAWrongPassphraseEndsWhenThePersonStops() throws {
+        let lab = try passphraseLab("#!/bin/sh\nif [ -e \"$0.seen\" ]; then exit 1; fi\ntouch \"$0.seen\"\necho equivocada\n")
+        defer { try? FileManager.default.removeItem(at: lab.folder) }
+        XCTAssertThrowsError(
+            try SSHDoor.open(
+                grant: "p", name: "vps", key: lab.key, seconds: 60, folder: lab.folder, askpass: lab.askpass,
+                check: { _ in true }, signed: { _, _ in }, refused: { _, _ in }))
+        #expect(FileManager.default.fileExists(atPath: lab.askpass + ".seen"))
+    }
+
     @Test func testAKeyWithAPassphraseIsRefusedPlainly() throws {
         let folder = URL(fileURLWithPath: "/tmp/kr-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -230,6 +296,9 @@ struct SSHDoorTests {
         _ = SystemSSHAgents(folder: run)
         #expect(try lab.run("/usr/bin/ssh-add", ["-l"], environment: ["SSH_AUTH_SOCK": agentSocket]).status != 0)
         #expect(!FileManager.default.fileExists(atPath: agentSocket))
+        // Removing the socket is not enough: the process holds the key, so it has to be gone.
+        usleep(300_000)
+        #expect(try lab.run("/usr/bin/pgrep", ["-f", agentSocket]).status != 0)
         withExtendedLifetime(left) {}
     }
 

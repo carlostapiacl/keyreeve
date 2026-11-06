@@ -23,11 +23,12 @@ let help = """
           Run a command with a key, by its identifier. The command holds a stand-in, and a local proxy
           puts the real key on requests to that provider's hosts. Asks for your finger once for this key
           and program, then not again until the permission ends. Each use goes in the usage log.
-          With an SSH key (provider = "ssh"), `ssh` and `git` sign through an agent and never hold it.
-          A permission covers the first server. Each other server asks for your finger.
+          With an SSH key (provider = "ssh"), `ssh`, `scp`, `sftp`, `git` and `rsync` sign through an agent and
+          never hold it. A permission covers the first server, or those in `servers` in keys.toml. Others ask.
           --real hands the command the real key, for what cannot use a stand-in. It asks every time.
       keyreeve-vault list
           Show the identifiers and what each one is. Needs no fingerprint.
+      keyreeve-vault grant <id> [--for 1h] [--program NAME]
       keyreeve-vault grants
           Show the permissions in force.
       keyreeve-vault revoke [id]

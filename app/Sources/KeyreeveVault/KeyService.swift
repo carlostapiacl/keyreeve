@@ -11,13 +11,14 @@ public protocol KeyProxy: AnyObject, Sendable {
 /// Starts a door for an SSH key. Tests can stand in for it.
 public protocol SSHKeyAgents: AnyObject, Sendable {
     func open(
-        grant: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
+        grant: String, name: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
         signed: @escaping SSHDoor.SignatureLog, refused: @escaping SSHDoor.RefusalLog
     ) throws -> SSHDoorHandle
 }
 
 public protocol SSHDoorHandle: AnyObject {
     var socket: String { get }
+    var identity: String? { get }
     func close()
 }
 
@@ -26,10 +27,12 @@ extension SSHDoor: SSHDoorHandle {}
 /// The real agents, one for each permission, with their sockets in the service's private folder.
 public final class SystemSSHAgents: SSHKeyAgents, @unchecked Sendable {
     let folder: URL
+    let askpass: String?
 
     /// An agent outlives a service that was killed, and its key stays until its limit. Starting clears those.
-    public init(folder: URL) {
+    public init(folder: URL, askpass: String? = nil) {
         self.folder = folder
+        self.askpass = askpass
         let sweep = Process()
         sweep.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
         sweep.arguments = ["-f", "^/usr/bin/ssh-agent -D -a \(NSRegularExpression.escapedPattern(for: folder.path))/a-"]
@@ -38,17 +41,18 @@ public final class SystemSSHAgents: SSHKeyAgents, @unchecked Sendable {
         try? sweep.run()
         sweep.waitUntilExit()
         let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        for name in files where name.hasSuffix(".sock") && (name.hasPrefix("a-") || name.hasPrefix("s-")) {
+        for name in files where (name.hasSuffix(".sock") || name.hasSuffix(".pub")) && (name.hasPrefix("a-") || name.hasPrefix("s-")) {
             unlink(folder.appendingPathComponent(name).path)
         }
     }
 
     public func open(
-        grant: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
+        grant: String, name: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
         signed: @escaping SSHDoor.SignatureLog, refused: @escaping SSHDoor.RefusalLog
     ) throws -> SSHDoorHandle {
         try SSHDoor.open(
-            grant: grant, key: key, seconds: seconds, folder: folder, check: check, signed: signed, refused: refused)
+            grant: grant, name: name, key: key, seconds: seconds, folder: folder, askpass: askpass,
+            check: check, signed: signed, refused: refused)
     }
 }
 
@@ -105,12 +109,14 @@ public final class KeyService: @unchecked Sendable {
         public var proxy: ProxyEndpoint?
         /// For an SSH key: the socket that signs with it. The key stays on the other side.
         public var sshSocket: String?
+        /// The public half of that key, so `ssh` offers this one and no other.
+        public var sshIdentity: String?
         public var variable: String?
         public var grants: [GrantInfo]?
 
         public init(
             ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil,
-            proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
+            proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, sshIdentity: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
         ) {
             self.ok = ok
             self.error = error
@@ -118,6 +124,7 @@ public final class KeyService: @unchecked Sendable {
             self.standIn = standIn
             self.proxy = proxy
             self.sshSocket = sshSocket
+            self.sshIdentity = sshIdentity
             self.variable = variable
             self.grants = grants
         }
@@ -256,7 +263,7 @@ public final class KeyService: @unchecked Sendable {
         }
         if let existing = grants.first(where: { $0.key == id && $0.door != nil }), let door = existing.door {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
-            return Response(ok: true, sshSocket: door.socket)
+            return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity)
         }
         // No finger is spent on a key that could not be used anyway.
         guard key.provider != nil else {
@@ -283,11 +290,12 @@ public final class KeyService: @unchecked Sendable {
             let text = String(decoding: sealed, as: UTF8.self)
             if text.contains("PRIVATE KEY-----") {
                 let door = try openDoor(
-                    grant: grantID, key: id, account: account, text: text, seconds: seconds, caller: caller, declared: declared)
+                    grant: grantID, key: id, account: account, pinned: key.servers ?? [], text: text, seconds: seconds)
                 grants.append(Grant(id: grantID, key: id, program: name, expires: expires, standIn: "", door: door))
                 try log.append(
                     event: "granted", key: id, grant: grantID, observed: caller, declared: declared, detail: "\(seconds) seconds, ssh")
-                return Response(ok: true, sshSocket: door.socket)
+                try log.append(event: "used", key: id, grant: grantID, observed: caller, declared: declared)
+                return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity)
             }
             guard let provider = key.provider, provider != Self.sshProvider else {
                 throw VaultError("\(id) says it is an SSH key, and what is sealed is not a private key")
@@ -309,17 +317,17 @@ public final class KeyService: @unchecked Sendable {
             ok: true, standIn: granted.standIn, proxy: try proxy.endpoint, variable: key.variable)
     }
 
-    /// The first server is the one you just approved with your finger. Each other asks again.
+    /// The first server is the one you just approved with your finger, unless the key names its servers.
+    /// Each other asks again.
     private func openDoor(
-        grant: String, key: String, account: String, text: String, seconds: Int,
-        caller: AuditLog.Observed?, declared: AuditLog.Declared
+        grant: String, key: String, account: String, pinned: [String], text: String, seconds: Int
     ) throws -> SSHDoorHandle {
         guard let agents else { throw VaultError("SSH keys are not available here") }
-        let servers = ServerList()
+        let servers = ServerList(pinned: pinned)
         let log = self.log
         let confirm = self.confirm
         return try agents.open(
-            grant: grant, key: text, seconds: seconds,
+            grant: grant, name: key, key: text, seconds: seconds,
             check: { fingerprint in
                 switch servers.note(fingerprint) {
                 case .known: return true
@@ -349,13 +357,20 @@ public final class KeyService: @unchecked Sendable {
 final class ServerList: @unchecked Sendable {
     enum Note { case first, known, new }
     private let lock = NSLock()
-    private var servers: Set<String> = []
+    private var servers: Set<String>
+    private var firstIsFree: Bool
+
+    init(pinned: [String] = []) {
+        servers = Set(pinned)
+        firstIsFree = pinned.isEmpty
+    }
 
     func note(_ fingerprint: String) -> Note {
         lock.lock()
         defer { lock.unlock() }
         if servers.contains(fingerprint) { return .known }
-        if servers.isEmpty {
+        if firstIsFree {
+            firstIsFree = false
             servers.insert(fingerprint)
             return .first
         }

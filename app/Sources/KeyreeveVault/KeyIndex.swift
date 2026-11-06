@@ -14,11 +14,14 @@ public struct KeyIndex: Equatable, Sendable {
         public var description: String?
         /// The variable a command gets the key in, when nothing else says.
         public var variable: String?
+        /// For an SSH key: the fingerprints of the servers it may sign in to with no question.
+        public var servers: [String]?
 
         public init(
             id: String, source: String, field: String? = nil, provider: String? = nil, project: String? = nil,
-            account: String? = nil, description: String? = nil, variable: String? = nil
+            account: String? = nil, description: String? = nil, variable: String? = nil, servers: [String]? = nil
         ) {
+            self.servers = servers
             self.id = id
             self.source = source
             self.field = field
@@ -99,10 +102,15 @@ public struct KeyIndex: Equatable, Sendable {
             guard let id = current["id"], let source = current["source"] else {
                 throw VaultError("each [[key]] in keys.toml needs an id and a source")
             }
+            let servers = current["servers"]?.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard servers?.allSatisfy({ $0.hasPrefix("SHA256:") }) ?? true else {
+                throw VaultError("servers in keys.toml are fingerprints like SHA256:abc, as `ssh-keygen -l` writes them")
+            }
             try index.add(
                 Key(
                     id: id, source: source, field: current["field"], provider: current["provider"],
-                    project: current["project"], account: current["account"], description: current["description"], variable: current["variable"]))
+                    project: current["project"], account: current["account"], description: current["description"], variable: current["variable"],
+                    servers: servers))
         }
         for (number, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -115,7 +123,7 @@ public struct KeyIndex: Equatable, Sendable {
             }
             guard current != nil, let equals = line.firstIndex(of: "=") else { throw bad }
             let name = line[..<equals].trimmingCharacters(in: .whitespaces)
-            guard ["id", "source", "field", "provider", "project", "account", "description", "variable"].contains(name),
+            guard ["id", "source", "field", "provider", "project", "account", "description", "variable", "servers"].contains(name),
                 current?[name] == nil
             else { throw bad }
             var scanner = TomlScanner(text: String(line[line.index(after: equals)...]))
@@ -137,6 +145,7 @@ public struct KeyIndex: Equatable, Sendable {
             out += "source = \(tomlQuoted(key.source))\n"
             if let field = key.field { out += "field = \(tomlQuoted(field))\n" }
             if let variable = key.variable { out += "variable = \(tomlQuoted(variable))\n" }
+            if let servers = key.servers { out += "servers = \(tomlQuoted(servers.joined(separator: " ")))\n" }
         }
         return out
     }

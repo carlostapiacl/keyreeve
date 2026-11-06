@@ -43,7 +43,12 @@ func useKey() throws {
     guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
     if let socket = answer.sshSocket {
         setenv("SSH_AUTH_SOCK", socket, 1)
-        var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
+        var running = command
+        if let identity = answer.sshIdentity {
+            running = SSHCommand.arguments(for: command, socket: socket, identity: identity)
+            for (name, value) in SSHCommand.variables(socket: socket, identity: identity) { setenv(name, value, 0) }
+        }
+        var pointers: [UnsafeMutablePointer<CChar>?] = running.map { strdup($0) } + [nil]
         execvp(command[0], &pointers)
         fail("could not run \(command[0])")
     }
@@ -75,6 +80,54 @@ func useKey() throws {
     fail("could not run \(command[0])")
 }
 
+/// Opens a permission ahead of time, so what runs later does not stop to ask.
+func grantKey() throws {
+    guard arguments.count >= 2 else { fail(help, code: 2) }
+    let id = arguments[1]
+    var options: [String: String] = [:]
+    var index = 2
+    while index < arguments.count {
+        guard ["--for", "--program"].contains(arguments[index]), index + 1 < arguments.count else { fail(help, code: 2) }
+        options[arguments[index]] = arguments[index + 1]
+        index += 2
+    }
+    var seconds: Int?
+    if let text = options["--for"] {
+        guard let parsed = parseDuration(text) else { fail("--for takes a time like 90s, 5m or 2h") }
+        seconds = parsed
+    }
+    let isSSH = try KeyIndex.load(from: keysFile).key(id)?.provider == KeyService.sshProvider
+    guard let program = options["--program"] ?? (isSSH ? "ssh" : nil) else {
+        fail("a permission is for one program, so say which with --program", code: 2)
+    }
+    let answer = try askService(
+        KeyService.Request(
+            op: "use", key: id, seconds: seconds, program: program,
+            prompt: isSSH ? "use the SSH key \(id)" : "let \(program) use the key \(id)",
+            agent: ProcessInfo.processInfo.environment["KEYREEVE_AGENT"], reason: "permission given ahead of time",
+            cwd: FileManager.default.currentDirectoryPath))
+    guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
+    print("Done. `keyreeve-vault grants` shows how long it lasts, and `revoke \(id)` ends it.")
+}
+
+/// `ssh-add` calls this program for a key with a passphrase. It speaks only through a dialog, and only
+/// the answer goes to stdout, which `ssh-add` reads.
+func askPassphrase(for name: String) -> Never {
+    let retry = CommandLine.arguments.dropFirst().first?.lowercased().contains("bad") == true
+    let text = (retry ? "Wrong passphrase. " : "") + "Passphrase for the SSH key \(name)"
+    let dialog = Process()
+    dialog.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    dialog.arguments = [
+        "-e", "on run argv",
+        "-e", "return text returned of (display dialog (item 1 of argv) default answer \"\" with hidden answer)",
+        "-e", "end run", text,
+    ]
+    dialog.standardError = FileHandle.nullDevice
+    do { try dialog.run() } catch { exit(1) }
+    dialog.waitUntilExit()
+    exit(dialog.terminationStatus)
+}
+
 func serveKeys() throws {
     let descriptor = try KeySocket.listen(path: socketPath)
     // Beside this program, in the app's bundle.
@@ -86,7 +139,7 @@ func serveKeys() throws {
             let recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), reason: prompt)
             return try store.load().open(name: source, with: recipient)
         },
-        proxy: proxy, agents: SystemSSHAgents(folder: home.appendingPathComponent("run")),
+        proxy: proxy, agents: SystemSSHAgents(folder: home.appendingPathComponent("run"), askpass: ownPath().path),
         confirm: { prompt in (try? EnclaveRecipient.confirm(reason: prompt)) != nil },
         log: auditLog)
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }

@@ -165,7 +165,11 @@ do {
                 return try store.load().open(name: key, with: recipient)
             },
             run: { try AgentRunner.run($0, variable: $1, value: $2) },
-            record: { store.recordUse(of: $0, by: "agent:\($1)", reason: $2) })
+            record: {
+                // Marked here, since a path's folders are dropped from the log.
+                let program = URL(fileURLWithPath: $1).lastPathComponent
+                store.recordUse(of: $0, by: "agent:\(program)", reason: $2)
+            })
         while let line = readLine() {
             if let answer = bridge.handle(line) {
                 FileHandle.standardOutput.write(Data((answer + "\n").utf8))

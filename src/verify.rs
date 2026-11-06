@@ -5,10 +5,12 @@ use crate::inventory::{split_label, strip_comment};
 use crate::recipe::{extract, Recipe};
 use crate::secret::Secret;
 use crate::transport::{HttpTransport, Request, Transport, TransportError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
 const MAX_KEY_FILE_BYTES: u64 = 1024 * 1024;
@@ -44,6 +46,58 @@ impl Verdict {
     pub fn works(&self) -> bool {
         matches!(self, Self::Works { .. })
     }
+
+    /// A short word for the history. The history never holds more than this.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Works { .. } => "works",
+            Self::Rejected => "rejected",
+            Self::Forbidden => "forbidden",
+            Self::NoResult(_) => "no_result",
+        }
+    }
+}
+
+/// One line of the history: which file, which recipe, when and the result.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub at: u64,
+    pub file: String,
+    pub recipe: String,
+    pub result: String,
+}
+
+/// Adds lines to a private file. A check that ran stays on record even if a later one fails.
+pub fn append_history(path: &Path, entries: &[HistoryEntry]) -> io::Result<()> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    for entry in entries {
+        let line = serde_json::to_string(entry).map_err(io::Error::other)?;
+        writeln!(file, "{line}")?;
+    }
+    file.sync_all()
+}
+
+/// Reads a history, ignoring a line torn by a crash.
+pub fn parse_history(text: &str) -> Vec<HistoryEntry> {
+    text.lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+pub fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 impl fmt::Display for Verdict {
@@ -180,11 +234,17 @@ pub fn run_one(name: &str, file: &Path, field: Option<&str>) -> Result<Verdict, 
 }
 
 /// A problem with one key is reported on its line, so it does not hide the others.
-pub fn run_plan(plan: &Path, keys: &Path) -> Result<Vec<(String, Verdict)>, String> {
+pub fn run_plan(
+    plan: &Path,
+    keys: &Path,
+    history: Option<&Path>,
+) -> Result<Vec<(String, Verdict)>, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
     let plan: Plan =
         serde_norway::from_str(&text).map_err(|e| format!("{}: {e}", plan.display()))?;
-    Ok(plan
+    let at = now();
+    let mut records = Vec::with_capacity(plan.keys.len());
+    let lines = plan
         .keys
         .iter()
         .map(|entry| {
@@ -195,9 +255,19 @@ pub fn run_plan(plan: &Path, keys: &Path) -> Result<Vec<(String, Verdict)>, Stri
                     .map_or(why.clone(), str::to_owned);
                 Verdict::NoResult(why)
             });
+            records.push(HistoryEntry {
+                at,
+                file: entry.file.clone(),
+                recipe: entry.recipe.clone(),
+                result: verdict.code().to_owned(),
+            });
             (label, verdict)
         })
-        .collect())
+        .collect();
+    if let Some(history) = history {
+        append_history(history, &records).map_err(|e| format!("{}: {e}", history.display()))?;
+    }
+    Ok(lines)
 }
 
 fn run_entry(entry: &PlanKey, keys: &Path) -> Result<Verdict, String> {
@@ -352,6 +422,29 @@ mod tests {
             field: None,
         };
         assert!(run_entry(&entry, Path::new("/tmp")).is_err());
+    }
+
+    #[test]
+    fn the_history_holds_only_the_result() {
+        let dir = std::env::temp_dir().join(format!("keyreeve-history-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("k.txt"), "CANARYhistory\n").unwrap();
+        fs::write(
+            dir.join("plan.yaml"),
+            "keys: [{ file: missing.txt, recipe: hetzner }]\n",
+        )
+        .unwrap();
+        let history = dir.join("private/history.jsonl");
+        let lines = run_plan(&dir.join("plan.yaml"), &dir, Some(&history)).unwrap();
+        assert_eq!(lines.len(), 1);
+        let text = fs::read_to_string(&history).unwrap();
+        let entries = parse_history(&format!("{text}{{\"torn"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].file, "missing.txt");
+        assert_eq!(entries[0].result, "no_result");
+        assert!(!text.contains("CANARY"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

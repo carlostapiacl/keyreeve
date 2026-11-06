@@ -18,12 +18,12 @@ Usage:
       Run recipes through failures and crashes, offline.
   keyreeve inventory <folder> --out <file.json> [--words <file>]
       Describe a folder of keys, without their values.
-  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>]
+  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>]
       Give each file tags and an access level, from your rules.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
       Check whether a key still works, with one read-only request.
-  keyreeve verify --plan <plan.yaml> --keys <folder>
-      Check several keys.
+  keyreeve verify --plan <plan.yaml> --keys <folder> [--history <file>]
+      Check several keys, and keep the results.
   keyreeve recipes
       List the recipes that come with keyreeve.
   keyreeve --version
@@ -78,7 +78,7 @@ fn run_inventory(args: &[String]) -> ExitCode {
 }
 
 fn run_catalog(args: &[String]) -> ExitCode {
-    let Some((input, found)) = options(args, &["--out", "--rules"]) else {
+    let Some((input, found)) = options(args, &["--out", "--rules", "--history"]) else {
         return usage();
     };
     let Some(out) = found.get("--out").copied() else {
@@ -94,7 +94,15 @@ fn run_catalog(args: &[String]) -> ExitCode {
             }
             None => catalog::Rules::default(),
         };
-        let rows = catalog::build(&items, &rules);
+        let history = match found.get("--history") {
+            Some(path) => match fs::read_to_string(path) {
+                Ok(text) => verify::parse_history(&text),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => return Err(format!("{path}: {e}")),
+            },
+            None => Vec::new(),
+        };
+        let rows = catalog::build(&items, &rules, &history);
         catalog::write_csv(&rows, Path::new(out)).map_err(|e| format!("{out}: {e}"))?;
         Ok(rows)
     })();
@@ -116,13 +124,27 @@ fn run_catalog(args: &[String]) -> ExitCode {
 
 fn run_verify(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("--plan") {
-        let [_, plan, flag, keys] = args else {
+        let Some(((_, plan), rest)) = args
+            .split_first_chunk::<2>()
+            .map(|(pair, rest)| ((&pair[0], &pair[1]), rest))
+        else {
             return usage();
         };
-        if flag != "--keys" {
-            return usage();
+        let mut found = HashMap::new();
+        for pair in rest.chunks(2) {
+            let [name, value] = pair else {
+                return usage();
+            };
+            if name != "--keys" && name != "--history" {
+                return usage();
+            }
+            found.insert(name.as_str(), value.as_str());
         }
-        return match verify::run_plan(Path::new(plan), Path::new(keys)) {
+        let Some(keys) = found.get("--keys") else {
+            return usage();
+        };
+        let history = found.get("--history").map(Path::new);
+        return match verify::run_plan(Path::new(plan), Path::new(keys), history) {
             Ok(lines) => {
                 let mut code = ExitCode::SUCCESS;
                 for (label, verdict) in lines {

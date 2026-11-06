@@ -46,6 +46,11 @@ Your pull request should say:
 Never paste a real key, a real id or a real response. If you used someone else's guide, write the recipe
 from the provider's documentation. A recipe must be under MIT, and some guides have other licenses.
 
+## Changing the app or the vault
+
+Run `swift test` in `app/`, which needs only the Command Line Tools. Set `KEYREEVE_RENDER_DIR` to a folder to keep
+images of each view, in light and dark. CI does not build the app, so say in your pull request that you ran these.
+
 ## Changing the engine
 
 `cargo test` must pass, and so must `cargo clippy --all-targets -- -D warnings`. If you change the order of

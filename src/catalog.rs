@@ -2,8 +2,13 @@
 //!
 //! The rules live in a file you own, because which project a key belongs to is your business.
 //! The catalog reads only the inventory, so it never opens a key file.
+//!
+//! A check sends a key to a provider, so a key gets a recipe only if your rules name one, or if
+//! its own prefix proves the provider. A tag is not enough: a wrong tag would send the key to
+//! the wrong company.
 
 use crate::inventory::write_private;
+use crate::verify::HistoryEntry;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -61,6 +66,11 @@ pub struct FileOverride {
     #[serde(default)]
     pub tags: Vec<String>,
     pub level: Option<Level>,
+    /// Recipes that may check this key. With several, a pass from any of them counts.
+    #[serde(default)]
+    pub recipes: Vec<String>,
+    /// The label or JSON path that holds the key, in a file with more than one value.
+    pub field: Option<String>,
 }
 
 /// The parts of an inventory that a catalog uses.
@@ -93,7 +103,14 @@ pub struct Row {
     pub mode: String,
     /// True if one of your rules or overrides covers this file.
     pub reviewed: bool,
+    pub last_result: String,
+    pub last_checked: String,
+    pub recipes: Vec<String>,
+    pub field: String,
 }
+
+/// Prefixes that belong to one provider, and whose recipe ships with keyreeve.
+const PROVEN_KINDS: &[&str] = &["anthropic", "github", "gitlab", "sentry", "supabase"];
 
 pub fn parse_inventory(text: &str) -> Result<Vec<InventoryItem>, String> {
     let inventory: Inventory = serde_json::from_str(text).map_err(|e| e.to_string())?;
@@ -120,8 +137,28 @@ pub fn parse_rules(text: &str) -> Result<Rules, String> {
     Ok(rules)
 }
 
-pub fn build(items: &[InventoryItem], rules: &Rules) -> Vec<Row> {
-    items.iter().map(|item| build_row(item, rules)).collect()
+pub fn build(items: &[InventoryItem], rules: &Rules, history: &[HistoryEntry]) -> Vec<Row> {
+    items
+        .iter()
+        .map(|item| {
+            let mut row = build_row(item, rules);
+            // With several recipes for one file, a pass from any of them counts, because a
+            // check against the wrong provider says nothing about the key.
+            let checks: Vec<&HistoryEntry> =
+                history.iter().filter(|h| h.file == item.path).collect();
+            if let Some(at) = checks.iter().map(|h| h.at).max() {
+                let latest = checks.iter().filter(|h| h.at == at);
+                row.last_result = latest
+                    .clone()
+                    .find(|h| h.result == "works")
+                    .or_else(|| latest.clone().next())
+                    .map(|h| h.result.clone())
+                    .unwrap_or_default();
+                row.last_checked = date_of(at);
+            }
+            row
+        })
+        .collect()
 }
 
 fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
@@ -157,6 +194,15 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
     } else {
         Level::Ask
     });
+    let file = rules.files.get(&item.path);
+    let mut recipes = file.map(|f| f.recipes.clone()).unwrap_or_default();
+    if recipes.is_empty() && item.format == "single-value" {
+        if let [kind] = item.kinds.as_slice() {
+            if PROVEN_KINDS.contains(&kind.as_str()) {
+                recipes.push(kind.clone());
+            }
+        }
+    }
     Row {
         path: item.path.clone(),
         level,
@@ -166,11 +212,17 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         modified: date_of(item.modified),
         mode: item.mode.clone().unwrap_or_default(),
         reviewed,
+        last_result: String::new(),
+        last_checked: String::new(),
+        recipes,
+        field: file.and_then(|f| f.field.clone()).unwrap_or_default(),
     }
 }
 
 pub fn to_csv(rows: &[Row]) -> String {
-    let mut out = String::from("path,level,tags,format,labels,modified,mode,reviewed\n");
+    let mut out = String::from(
+        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field\n",
+    );
     for row in rows {
         let cells = [
             csv_cell(&row.path),
@@ -181,6 +233,10 @@ pub fn to_csv(rows: &[Row]) -> String {
             row.modified.clone(),
             csv_cell(&row.mode),
             row.reviewed.to_string(),
+            csv_cell(&row.last_result),
+            row.last_checked.clone(),
+            csv_cell(&row.recipes.join(" ")),
+            csv_cell(&row.field),
         ];
         out.push_str(&cells.join(","));
         out.push('\n');
@@ -246,7 +302,7 @@ mod tests {
 
     #[test]
     fn with_no_rules_everything_asks_except_a_public_key() {
-        let rows = build(&[item("a.txt"), item("b.pub")], &Rules::default());
+        let rows = build(&[item("a.txt"), item("b.pub")], &Rules::default(), &[]);
         assert_eq!(rows[0].level, Level::Ask);
         assert_eq!(rows[1].level, Level::None);
         assert!(!rows[0].reviewed);
@@ -264,6 +320,7 @@ rules:
   - { match: [nothing-here], tags: [wrong] }
 "#,
             ),
+            &[],
         );
         assert_eq!(rows[0].tags, ["env:prod", "provider:stripe"]);
         assert_eq!(rows[0].level, Level::Never);
@@ -279,6 +336,7 @@ rules:
         let rows = build(
             &[by_label, by_kind],
             &rules("rules: [{ match: [stripe], tags: [billing] }]"),
+            &[],
         );
         assert_eq!(rows[0].tags, ["billing"]);
         assert_eq!(rows[1].tags, ["billing", "kind:stripe-live"]);
@@ -294,6 +352,7 @@ rules: [{ match: [deploy], tags: [ops], level: never }]
 files: { deploy.key: { tags: [shared], level: ask } }
 "#,
             ),
+            &[],
         );
         assert_eq!(rows[0].tags, ["ops", "shared"]);
         assert_eq!(rows[0].level, Level::Ask);
@@ -312,6 +371,7 @@ files: { deploy.key: { tags: [shared], level: ask } }
         let rows = build(
             &[item("=cmd,\"x\".txt"), item("@sum.txt")],
             &Rules::default(),
+            &[],
         );
         let csv = to_csv(&rows);
         assert!(csv.contains("\"'=cmd,\"\"x\"\".txt\",ask"), "{csv}");
@@ -328,10 +388,62 @@ files: { deploy.key: { tags: [shared], level: ask } }
         let report = crate::inventory::scan(&dir, &Default::default()).unwrap();
         let text = serde_json::to_string(&report).unwrap();
         let items = parse_inventory(&text).unwrap();
-        let csv = to_csv(&build(&items, &Rules::default()));
+        let csv = to_csv(&build(&items, &Rules::default(), &[]));
         assert!(csv.contains("k.env,ask,,env,API_KEY,"), "{csv}");
         assert!(!csv.contains("CANARY"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn shows_the_latest_check_and_a_pass_from_any_recipe() {
+        let check = |at, recipe: &str, result: &str| HistoryEntry {
+            at,
+            file: "a.txt".into(),
+            recipe: recipe.into(),
+            result: result.into(),
+        };
+        let history = [
+            check(0, "meta", "works"),
+            check(86_400, "meta", "rejected"),
+            check(86_400, "instagram", "works"),
+        ];
+        let rows = build(&[item("a.txt"), item("b.txt")], &Rules::default(), &history);
+        assert_eq!(rows[0].last_result, "works");
+        assert_eq!(rows[0].last_checked, "1970-01-02");
+        assert_eq!(rows[1].last_result, "");
+
+        let rows = build(&[item("a.txt")], &Rules::default(), &history[..2]);
+        assert_eq!(rows[0].last_result, "rejected");
+    }
+
+    #[test]
+    fn a_key_gets_a_recipe_only_if_you_name_one_or_its_prefix_proves_it() {
+        let mut proven = item("a.txt");
+        proven.kinds = vec!["github".into()];
+        let mut env = item("c.env");
+        env.format = "env".into();
+        env.kinds = vec!["github".into()];
+        let mut mixed = item("d.txt");
+        mixed.kinds = vec!["github".into(), "gitlab".into()];
+        let rows = build(
+            &[proven, item("b-stripe.txt"), env, mixed, item("e.env")],
+            &rules(
+                r#"
+rules: [{ match: [stripe], tags: [provider:stripe] }]
+files: { e.env: { recipes: [meta, instagram], field: TOKEN } }
+"#,
+            ),
+            &[],
+        );
+        assert_eq!(rows[0].recipes, ["github"]);
+        assert!(rows[1].recipes.is_empty(), "a tag is not proof");
+        assert!(
+            rows[2].recipes.is_empty(),
+            "which value in the file is unknown"
+        );
+        assert!(rows[3].recipes.is_empty(), "two providers in one file");
+        assert_eq!(rows[4].recipes, ["meta", "instagram"]);
+        assert_eq!(rows[4].field, "TOKEN");
     }
 
     #[test]

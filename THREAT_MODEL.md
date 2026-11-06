@@ -44,6 +44,21 @@ a bad GET endpoint on its side could have effects.
   a key at the provider that nobody holds. The journal then asks you to check the provider, because
   keyreeve cannot know.
 
+## The vault and the Mac app
+
+The vault is a file sealed for two keys: one inside the Secure Enclave, which asks for a fingerprint, and a recovery
+key held by you. Each value is bound to its name, so a value cannot be swapped under another name.
+
+- **Any program running as you can ask for your finger,** with text of its own in the prompt. Only touch the sensor
+  when you asked for something. The fingerprint is a check on you, and it does not identify the program asking.
+- **Any program running as you can replace `vault.json`** with one it can open. Later additions would then be sealed
+  for its keys, and a deleted file loses your keys. Keep backups, and watch for prompts you did not expect.
+- **A key in use is in memory,** in the variable `run` sets and in the command that receives it.
+- **The recovery key opens everything.** Whoever holds it does not need the Mac.
+- **The app's lock covers the window.** The catalog it shows is a plain file with names and results, and it never holds
+  a value.
+- **The format has had no outside review.** It uses standard CryptoKit parts (P-256, HKDF, AES-GCM), put together here.
+
 ## Known limits of the simulator
 
 It tests the engine against a fake built from the recipe, so it cannot catch a recipe that is wrong

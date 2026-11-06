@@ -36,6 +36,7 @@ extension AppModel {
             }
             self.confirmation.confirm()
             let store = self.vaultStore
+            let epoch = self.lockEpoch
             self.busy = true
             self.message = T("Opening the vault…")
             Task.detached {
@@ -44,6 +45,8 @@ extension AppModel {
                 }
                 await MainActor.run {
                     self.busy = false
+                    // Locked while the chip was working: the opened copies go no further.
+                    guard epoch == self.lockEpoch else { return }
                     switch result {
                     case .success(let sealed): run(sealed)
                     case .failure: self.message = T("The vault could not be opened")
@@ -61,9 +64,10 @@ extension AppModel {
             message = T("The fingerprint sensor is not available. Open the lid, or check your Mac's settings.")
             return
         }
+        let epoch = lockEpoch
         context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, _ in
             let unlocked = UnlockedVault(context: context)
-            Task { @MainActor in then(success ? unlocked : nil) }
+            Task { @MainActor in then(success && epoch == self.lockEpoch ? unlocked : nil) }
         }
     }
 

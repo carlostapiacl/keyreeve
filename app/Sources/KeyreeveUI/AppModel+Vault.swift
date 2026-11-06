@@ -57,9 +57,13 @@ extension AppModel {
     public func moveOriginals() {
         guard !busy, let folder = keysFolder, let report = vaultComparison, !report.same.isEmpty else { return }
         do {
-            let moved = try movedOriginals.move(report.same, from: folder, inventory: files.inventory)
+            let matching = VaultKeeper.stillMatching(report, folder: folder)
+            let moved = try movedOriginals.move(matching, from: folder, inventory: files.inventory)
             vaultComparison = nil
-            message = T("%d originals moved to %@", moved.count, files.originals.path)
+            message =
+                moved.count == report.same.count
+                ? T("%d originals moved to %@", moved.count, files.originals.path)
+                : T("%d moved. The rest changed since the comparison, so compare again.", moved.count)
             refresh()
         } catch {
             message = T("The files could not be moved")

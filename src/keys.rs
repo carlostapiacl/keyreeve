@@ -196,23 +196,23 @@ pub fn read_key_for(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<
 /// by accident.
 pub(crate) const MIN_SWAP_CHARS: usize = 16;
 
-fn part_of_a_word(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '_' | '-' | '+')
+fn continues_a_value(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '-' | '+' | '.' | '/')
 }
 
 /// Replaces `old` where it stands alone. Inside a longer value it is another value, and is left as it
-/// is, which also makes repeating this safe when the new key starts with the old one.
+/// is, which also makes repeating this safe when the new key starts with the old one. A `=` can
+/// come before a value, and after one it is base64 padding.
 pub(crate) fn swap_key(text: &str, old: &str, new: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(old) {
-        let before = rest[..at]
-            .chars()
-            .next_back()
-            .or_else(|| out.chars().next_back());
-        let after = rest[at + old.len()..].chars().next();
         out.push_str(&rest[..at]);
-        if before.is_some_and(part_of_a_word) || after.is_some_and(part_of_a_word) {
+        let before = out.chars().next_back();
+        let after = rest[at + old.len()..].chars().next();
+        if before.is_some_and(continues_a_value)
+            || after.is_some_and(|c| continues_a_value(c) || c == '=')
+        {
             out.push_str(old);
         } else {
             out.push_str(new);
@@ -246,6 +246,22 @@ mod swap_tests {
         let once = swap_key("T=abc\n", "abc", "abcXYZ");
         assert_eq!(once, "T=abcXYZ\n");
         assert_eq!(swap_key(&once, "abc", "abcXYZ"), once);
+    }
+
+    #[test]
+    fn dots_slashes_and_padding_make_it_another_value() {
+        assert_eq!(
+            swap_key("T=abc\nO=abc.extra\nU=x/abc\nB=abc=\n", "abc", "n"),
+            "T=n\nO=abc.extra\nU=x/abc\nB=abc=\n"
+        );
+        let once = swap_key("T=abc\n", "abc", "abc.extra");
+        assert_eq!(swap_key(&once, "abc", "abc.extra"), once);
+    }
+
+    #[test]
+    fn accents_around_a_key_do_not_break_it() {
+        assert_eq!(swap_key("ñ abc ñ", "abc", "n"), "ñ n ñ");
+        assert_eq!(swap_key("ñabc", "abc", "n"), "ñabc");
     }
 
     #[test]

@@ -34,6 +34,9 @@ pub struct KeyConfig {
     pub issued_name: String,
     /// The id of the current key, when it is known from outside this record.
     pub known_id: Option<String>,
+    /// False when the key was replaced by hand after the last rotation, so the id on record is
+    /// another key's, and revoking it could stop a service that still uses that one.
+    pub trust_recorded_id: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -127,10 +130,12 @@ impl Engine<'_> {
             .get(&key)?
             .ok_or_else(|| Error::KeyMissing(key.clone()))?;
         let admin = self.admin()?;
-        let old_id = self
-            .journal
-            .current_id(&key)
-            .or_else(|| self.config.known_id.clone());
+        let recorded = if self.config.trust_recorded_id {
+            self.journal.current_id(&key)
+        } else {
+            None
+        };
+        let old_id = recorded.or_else(|| self.config.known_id.clone());
 
         // Recorded first: a copy saved before the record exists could never be cleaned up.
         self.record(Event::Started { old_id })?;

@@ -41,6 +41,8 @@ struct RotationPanel: View {
             Button(T("Seal")) { model.seal([item]) }
                 .buttonStyle(KRButtonStyle())
                 .disabled(model.busy)
+        case .otherFolder:
+            EmptyView()
         case .outdated:
             Text(T("Seal the changed file again before rotating."))
                 .font(Theme.caption).foregroundStyle(Theme.warn)

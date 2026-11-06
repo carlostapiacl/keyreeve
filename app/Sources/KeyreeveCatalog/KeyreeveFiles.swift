@@ -42,6 +42,13 @@ public struct KeyreeveFiles: Sendable {
         return String(text[text.index(after: line)...])
     }
 
+    /// Closes this folder and the one with your own programs, which can name your servers.
+    public func tightenFolders() {
+        for folder in [directory, directory.appendingPathComponent("providers")] {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
+        }
+    }
+
     public func keysFolder() -> URL? {
         guard let data = try? Data(contentsOf: settings),
             let values = try? JSONDecoder().decode([String: String].self, from: data),

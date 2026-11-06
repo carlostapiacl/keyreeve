@@ -84,6 +84,8 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
 - **A moved original is still a key.** It stays in plain text in `~/.keyreeve/originals` until you delete it, and a rotation does
   not update it.
 - **Replacing keeps the old value.** Old copies stay sealed in the vault, including keys already revoked.
+- **A copy's folder is written in plain text.** Each copy notes the folder it came from, so the same path in another folder is
+  not mistaken for it. A program running as you could edit that note.
 - **Sealing is not moving.** Until you remove an original, the file is as readable as before, and anything that reads it
   gets the key with no fingerprint. The weekly check still reads files.
 - **The screen shows the recovery key.** Anything recording your screen can see it, and the app cannot tell.

@@ -11,7 +11,7 @@ import Testing
 @MainActor
 struct RenderTests {
     static let sample = [
-        CatalogItem(path: "old-cloud.csv", tags: ["revoke", "provider:aws", "infra"], modified: "2024-02-13", lastResult: "works", lastChecked: "2026-11-06", recipes: ["aws"], name: "AWS · gitlab-user", description: "Old deploy user", details: KeyDetails(provider: "aws", fields: ["account": "111122223333", "arn": "arn:aws:iam::111122223333:user/gitlab-user"], suggested_name: "AWS · 111122223333"), criticality: 4),
+        CatalogItem(path: "old-cloud.csv", tags: ["revoke", "provider:aws", "infra"], modified: "2024-02-13", lastResult: "works", lastChecked: "2026-11-06", recipes: ["aws"], name: "AWS · deploy-user", description: "Old deploy user", details: KeyDetails(provider: "aws", fields: ["account": "111122223333", "arn": "arn:aws:iam::111122223333:user/deploy-user"], suggested_name: "AWS · 111122223333"), criticality: 4),
         CatalogItem(path: "backups/billing-old.env", tags: ["shop", "status:backup"], modified: "2025-03-02", lastResult: "works", lastChecked: "2026-11-06", recipes: ["github"], labels: ["GITHUB_TOKEN", "OTHER"]),
         CatalogItem(path: "hosting-readonly.txt", level: "free", tags: ["infra", "read-only"], modified: "2026-04-19", lastResult: "works", lastChecked: "2026-11-06", criticality: 4, criticalitySuggested: true, rotateDays: 180),
         CatalogItem(path: "notes/legacy-mail.txt", tags: ["blog"], modified: "2024-02-13", mode: "644"),

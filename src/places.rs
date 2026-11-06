@@ -106,6 +106,7 @@ impl Sink for FileSink {
 /// A button of yours, from a provider file you approved, that receives the new key on stdin.
 pub struct ActionSink {
     label: String,
+    folder: PathBuf,
     run: crate::recipe::CustomRun,
     action: String,
 }
@@ -116,15 +117,24 @@ impl Sink for ActionSink {
     }
 
     fn update(&mut self, value: &Secret) -> Result<(), SinkError> {
-        script::run(
-            &providers::programs_folder(),
-            &self.run,
-            &self.action,
-            Some(value),
-        )
-        .map(|_| ())
-        .map_err(|_| SinkError)
+        script::run(&self.folder, &self.run, &self.action, Some(value))
+            .map_err(|_| SinkError)
+            .and_then(|answer| {
+                if says_it_failed(&answer) {
+                    Err(SinkError)
+                } else {
+                    Ok(())
+                }
+            })
     }
+}
+
+/// A program that says it failed failed, whatever its exit status.
+fn says_it_failed(answer: &script::Answer) -> bool {
+    matches!(
+        answer.result.as_str(),
+        "rejected" | "forbidden" | "no_result"
+    )
 }
 
 pub(crate) fn action_sink(place: &str) -> Result<ActionSink, String> {
@@ -143,6 +153,7 @@ pub(crate) fn action_sink(place: &str) -> Result<ActionSink, String> {
         .ok_or_else(|| format!("{place} runs no program"))?;
     Ok(ActionSink {
         label: format!("action:{place}"),
+        folder: providers::programs_folder(),
         run,
         action: action.to_owned(),
     })
@@ -276,6 +287,39 @@ mod tests {
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_button_that_says_it_failed_stops_the_rotation() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = folder("action");
+        let program = dir.join("button.sh");
+        for (answer, works) in [
+            (r#"{"result":"rejected"}"#, false),
+            (r#"{"result":"forbidden"}"#, false),
+            (r#"{"result":"no_result"}"#, false),
+            (r#"{"result":"works"}"#, true),
+            (r#"{"message":"Done"}"#, true),
+        ] {
+            fs::write(
+                &program,
+                format!("#!/bin/sh\ncat >/dev/null\necho '{answer}'\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+            let mut sink = ActionSink {
+                label: "action".into(),
+                folder: dir.clone(),
+                run: crate::recipe::CustomRun {
+                    program: "button.sh".into(),
+                    args: Vec::new(),
+                },
+                action: "update".into(),
+            };
+            assert_eq!(sink.update(&secret("new-value")).is_ok(), works, "{answer}");
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -13,7 +13,7 @@ struct KeyRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
                     Text(item.title).font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
-                    if item.vault != .none {
+                    if item.vault == .sealed || item.vault == .outdated {
                         Image(systemName: "lock.shield.fill")
                             .font(Theme.caption)
                             .foregroundStyle(item.vault == .sealed ? Theme.good : Theme.warn)

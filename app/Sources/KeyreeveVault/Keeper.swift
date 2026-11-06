@@ -21,9 +21,7 @@ public struct VaultDraft {
     }
 
     public func save(to store: VaultStore) throws {
-        guard !store.exists else { throw VaultError("there is already a vault") }
-        try store.saveBlob(blob)
-        try store.save(file)
+        try store.create(file, blob: blob)
     }
 }
 
@@ -44,6 +42,8 @@ public enum VaultKeeper {
         public var same: [String] = []
         public var different: [String] = []
         public var noFile: [String] = []
+        /// What each matching file held, as a hash in memory, so moving it later can tell if it changed.
+        public var digests: [String: Data] = [:]
         public init() {}
     }
 
@@ -68,7 +68,7 @@ public enum VaultKeeper {
                     report.skipped[path] = skip
                 case .success(let data):
                     do {
-                        try vault.add(name: path, value: data, now: now)
+                        try vault.add(name: path, value: data, now: now, source: folder.path)
                         report.sealed.append(path)
                     } catch {
                         report.skipped[path] = .outsideFolder
@@ -123,13 +123,32 @@ public enum VaultKeeper {
         for name in names {
             let value = try vault.open(name: name, with: recipient)
             switch read(name, in: folder) {
-            case .success(let data) where data == value: report.same.append(name)
+            case .success(let data) where data == value:
+                report.same.append(name)
+                report.digests[name] = Data(SHA256.hash(data: data))
             case .success: report.different.append(name)
             case .failure: report.noFile.append(name)
             }
             store.recordUse(of: name, by: "compare")
         }
         return report
+    }
+
+    /// True if this copy came from a different folder, where the same path can be another key.
+    public static func isFromAnotherFolder(_ entry: VaultFile.Entry, folder: URL) -> Bool {
+        guard let source = entry.source else { return false }
+        return source != folder.path
+    }
+
+    /// The paths in a comparison whose files still hold what was compared. A file that changed since
+    /// then is not what the vault holds, and moving it away could lose it.
+    public static func stillMatching(_ report: CompareReport, folder: URL) -> [String] {
+        report.same.filter { name in
+            guard case .success(let data) = read(name, in: folder), let digest = report.digests[name] else {
+                return false
+            }
+            return Data(SHA256.hash(data: data)) == digest
+        }
     }
 
     /// True if the file changed after its copy was sealed, so the copy may be an old key.
@@ -212,15 +231,33 @@ public struct MovedOriginals {
             guard manager.fileExists(atPath: source.path), !manager.fileExists(atPath: target.path) else { continue }
             let previous = umask(0o077)
             defer { umask(previous) }
-            try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let folderOfTarget = target.deletingLastPathComponent()
+            try manager.createDirectory(at: folderOfTarget, withIntermediateDirectories: true)
+            try makePrivate(folderOfTarget)
             item.moved_to = target.path
             ledgerValue.items.removeAll { $0.path == path }
             ledgerValue.items.append(item)
             try write(ledgerValue)
             try manager.moveItem(at: source, to: target)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
             moved.append(path)
         }
         return moved
+    }
+
+    /// Refuses a destination reached through a link, which could lead anywhere, and closes each
+    /// folder on the way, since one that already existed may be open to other users.
+    private func makePrivate(_ folder: URL) throws {
+        let home = ledger.deletingLastPathComponent().standardizedFileURL
+        var current = folder.standardizedFileURL
+        while current.path.hasPrefix(home.path + "/") {
+            let attributes = try FileManager.default.attributesOfItem(atPath: current.path)
+            guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                throw VaultError("the folder for originals is not a plain folder")
+            }
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: current.path)
+            current = current.deletingLastPathComponent()
+        }
     }
 
     /// Puts files back. One whose old place is taken stays moved, and stays in the ledger.

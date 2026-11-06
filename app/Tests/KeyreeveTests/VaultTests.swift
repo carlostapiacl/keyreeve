@@ -100,9 +100,9 @@ struct VaultTests {
         let store = VaultStore(directory: dir)
         XCTAssertFalse(store.exists)
         try store.save(try vault())
-        try store.saveBlob(Data([1]))
+        try store.saveBlob(Data([1]), for: chip.publicKey.rawRepresentation)
         XCTAssertEqual(try store.load(), try vault().withSameEntries(as: store.load()))
-        for (path, mode) in [(dir.path, 0o700), (store.vaultURL.path, 0o600), (store.blobURL.path, 0o600)] {
+        for (path, mode) in [(dir.path, 0o700), (store.vaultURL.path, 0o600), (store.blobURL(for: chip.publicKey.rawRepresentation).path, 0o600)] {
             let attributes = try FileManager.default.attributesOfItem(atPath: path)
             XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, mode, path)
         }
@@ -268,6 +268,87 @@ struct KeeperTests {
         try "real".write(to: keys.appendingPathComponent("foo#pending"), atomically: true, encoding: .utf8)
         let report = try VaultKeeper.seal(paths: ["foo#pending"], folder: keys, store: store)
         XCTAssertEqual(report.skipped["foo#pending"], .reservedName)
+    }
+
+    @Test func testAMovedFileThatChangedStaysPut() throws {
+        let (root, keys, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = keys.appendingPathComponent("a.txt")
+        try "same".write(to: file, atomically: true, encoding: .utf8)
+        _ = try VaultKeeper.seal(paths: ["a.txt"], folder: keys, store: store)
+        let report = try VaultKeeper.compare(names: ["a.txt"], folder: keys, recipient: chip, store: store)
+        XCTAssertEqual(VaultKeeper.stillMatching(report, folder: keys), ["a.txt"])
+        try "other".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(VaultKeeper.stillMatching(report, folder: keys), [])
+        XCTAssertNil(String(data: try JSONEncoder().encode(report.digests), encoding: .utf8)?.range(of: "same"))
+    }
+
+    @Test func testACopyKnowsItsFolder() throws {
+        let (root, keys, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "one".write(to: keys.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        _ = try VaultKeeper.seal(paths: ["a.txt"], folder: keys, store: store)
+        let entry = try XCTUnwrap(store.load().entries["a.txt"])
+        XCTAssertFalse(VaultKeeper.isFromAnotherFolder(entry, folder: keys))
+        #expect(VaultKeeper.isFromAnotherFolder(entry, folder: root))
+        // Sealing again keeps it, so a replaced copy does not lose its folder.
+        try "two".write(to: keys.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        _ = try VaultKeeper.sealAgain(paths: ["a.txt"], folder: keys, store: store)
+        #expect(VaultKeeper.isFromAnotherFolder(try XCTUnwrap(store.load().entries["a.txt"]), folder: root))
+    }
+
+    @Test func testOriginalsEndUpPrivateEvenInAnOpenFolder() throws {
+        let (root, keys, _) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = keys.appendingPathComponent("a.txt")
+        try "CANARY".write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        let inventory = root.appendingPathComponent("inventory.json")
+        try #"{"schema":1,"items":[{"path":"a.txt","modified":1,"mode":"644","format":"text","fields":[],"kinds":[]}]}"#
+            .write(to: inventory, atomically: true, encoding: .utf8)
+        let open = root.appendingPathComponent("originals/2026")
+        try FileManager.default.createDirectory(at: open, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        let moved = MovedOriginals(ledger: root.appendingPathComponent("moved.json"), destination: open)
+        XCTAssertEqual(try moved.move(["a.txt"], from: keys, inventory: inventory), ["a.txt"])
+        let mode = { (path: String) in
+            (try? FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?.intValue
+        }
+        XCTAssertEqual(mode(open.path), 0o700)
+        XCTAssertEqual(mode(open.appendingPathComponent("a.txt").path), 0o600)
+    }
+
+    @Test func testALinkedOriginalsFolderIsRefused() throws {
+        let (root, keys, _) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "CANARY".write(to: keys.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        let inventory = root.appendingPathComponent("inventory.json")
+        try #"{"schema":1,"items":[{"path":"a.txt","modified":1,"mode":"600","format":"text","fields":[],"kinds":[]}]}"#
+            .write(to: inventory, atomically: true, encoding: .utf8)
+        let shared = root.appendingPathComponent("shared")
+        try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("originals")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: shared)
+        let moved = MovedOriginals(ledger: root.appendingPathComponent("moved.json"), destination: link.appendingPathComponent("2026"))
+        XCTAssertThrowsError(try moved.move(["a.txt"], from: keys, inventory: inventory))
+        #expect(FileManager.default.fileExists(atPath: keys.appendingPathComponent("a.txt").path))
+    }
+
+    @Test func testCreatingNeverOverwritesAVault() throws {
+        let (root, _, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try store.update { try $0.add(name: "kept", value: Data("v".utf8)) }
+        XCTAssertThrowsError(try store.create(VaultFile(enclave: chip.publicKey, recovery: recovery.publicKey), blob: Data([1])))
+        XCTAssertEqual(try store.load().entries.count, 1)
+    }
+
+    @Test func testACrashDuringRecoveryLeavesTheOldPairWorking() throws {
+        let (root, _, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oldKey = chip.publicKey.rawRepresentation
+        try store.saveBlob(Data([1]), for: oldKey)
+        // The new blob lands, and the crash comes before the vault switches to it.
+        try store.saveBlob(Data([2]), for: SoftwareRecipient().publicKey.rawRepresentation)
+        XCTAssertEqual(try store.loadBlob(), Data([1]))
     }
 
     @Test func testNothingIsSavedUntilTheRecoveryKeyIsConfirmed() throws {

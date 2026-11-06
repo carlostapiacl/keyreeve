@@ -14,20 +14,32 @@ static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
 /// removed when this value is dropped. A crash in between leaves it, readable only by you.
 pub struct TempKey(PathBuf);
 
-/// Removes what a crash left. A copy lives for one call to `ssh`, so an hour old is nobody's.
+/// True only for a name this file writes: `.ssh-key-<process>-<count>`.
+fn is_our_copy(name: &str) -> bool {
+    name.strip_prefix(".ssh-key-")
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(process, count)| {
+            let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+            digits(process) && digits(count)
+        })
+}
+
+/// Removes what a crash left. A copy lives for one call to `ssh`, so an hour old is nobody's. Only
+/// plain files with this exact name count, and a link is never followed.
 fn sweep_old_copies(folder: &Path) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
     for entry in entries.flatten() {
-        let name = entry.file_name();
-        let stale = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
+        let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        let stale = meta
+            .modified()
             .ok()
             .and_then(|time| time.elapsed().ok())
             .is_some_and(|age| age.as_secs() > 3600);
-        if stale && name.to_string_lossy().starts_with(".ssh-key-") {
+        if stale && meta.is_file() && is_our_copy(&entry.file_name().to_string_lossy()) {
             drop(TempKey(entry.path()));
         }
     }
@@ -69,8 +81,11 @@ impl TempKey {
 
 impl Drop for TempKey {
     fn drop(&mut self) {
-        if let Ok(size) = fs::metadata(&self.0).map(|meta| meta.len()) {
-            let _ = fs::write(&self.0, vec![0u8; size as usize]);
+        // Overwriting through a link would destroy whatever it points to.
+        if let Ok(meta) = fs::symlink_metadata(&self.0) {
+            if meta.is_file() {
+                let _ = fs::write(&self.0, vec![0u8; meta.len() as usize]);
+            }
         }
         let _ = fs::remove_file(&self.0);
     }
@@ -152,6 +167,63 @@ mod tests {
             read_reply(text, &between()),
             Reply::Accepted("me/repo".into())
         );
+    }
+
+    #[test]
+    fn only_its_own_names_can_be_swept() {
+        assert!(is_our_copy(".ssh-key-123-0"));
+        for name in [
+            ".ssh-key-backup",
+            ".ssh-key-1",
+            ".ssh-key-1-a",
+            ".ssh-key--1",
+            "ssh-key-1-1",
+        ] {
+            assert!(!is_our_copy(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_sweep_takes_only_old_copies_of_its_own() {
+        let dir = std::env::temp_dir().join(format!("keyreeve-sweep-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        let write = |name: &str, aged: bool| {
+            let path = dir.join(name);
+            fs::write(&path, "x").unwrap();
+            if aged {
+                fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_modified(old)
+                    .unwrap();
+            }
+            path
+        };
+        let stale = write(".ssh-key-1-1", true);
+        let running = write(".ssh-key-1-2", false);
+        let backup = write(".ssh-key-backup", true);
+        sweep_old_copies(&dir);
+        assert!(!stale.exists());
+        assert!(running.exists());
+        assert!(backup.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_link_leaves_its_target_alone() {
+        let dir = std::env::temp_dir().join(format!("keyreeve-ssh-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        fs::write(&target, "keep").unwrap();
+        let link = dir.join(".ssh-key-1-1");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        drop(TempKey(link.clone()));
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

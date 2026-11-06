@@ -33,6 +33,8 @@ public struct VaultFile: Codable, Equatable {
 
     public struct Entry: Codable, Equatable {
         public var added: Date
+        /// The folder this file was sealed from, because a path means nothing without its folder.
+        public var source: String?
         public var sealedValue: Data
         public var enclaveWrap: Wrap
         public var recoveryWrap: Wrap
@@ -49,7 +51,7 @@ public struct VaultFile: Codable, Equatable {
     }
 
     /// Needs no fingerprint, because sealing uses only public keys.
-    public mutating func add(name: String, value: Data, now: Date = Date()) throws {
+    public mutating func add(name: String, value: Data, now: Date = Date(), source: String? = nil) throws {
         try Self.check(name: name)
         if entries[name] != nil { throw VaultError("\(name) already exists") }
         let valueKey = SymmetricKey(size: .bits256)
@@ -58,6 +60,7 @@ public struct VaultFile: Codable, Equatable {
         let keyBytes = valueKey.withUnsafeBytes { Data($0) }
         entries[name] = Entry(
             added: now,
+            source: source,
             sealedValue: sealedValue,
             enclaveWrap: try Self.wrap(keyBytes, for: enclavePublicKey, name: name),
             recoveryWrap: try Self.wrap(keyBytes, for: recoveryPublicKey, name: name)
@@ -68,7 +71,7 @@ public struct VaultFile: Codable, Equatable {
     public mutating func replace(name: String, value: Data, now: Date = Date()) throws {
         let old = entries.removeValue(forKey: name)
         do {
-            try add(name: name, value: value, now: now)
+            try add(name: name, value: value, now: now, source: old?.source)
         } catch {
             entries[name] = old
             throw error

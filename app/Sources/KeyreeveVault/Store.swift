@@ -45,6 +45,13 @@ public struct VaultStore: Sendable {
     var vaultURL: URL { directory.appendingPathComponent("vault.json") }
     var blobURL: URL { directory.appendingPathComponent("enclave.blob") }
 
+    /// The blob that belongs to this public key. The vault names its key, so moving to a new chip
+    /// switches blobs in the one atomic write of `vault.json`, and a crash cannot split the pair.
+    func blobURL(for publicKey: Data) -> URL {
+        let digest = SHA256.hash(data: publicKey).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent("enclave-\(digest).blob")
+    }
+
     public init(directory: URL) { self.directory = directory }
 
     public static var defaultDirectory: URL {
@@ -75,7 +82,16 @@ public struct VaultStore: Sendable {
         try write(try encoder.encode(vault), to: vaultURL)
     }
 
-    public func saveBlob(_ blob: Data) throws { try write(blob, to: blobURL) }
+    public func saveBlob(_ blob: Data, for publicKey: Data) throws { try write(blob, to: blobURL(for: publicKey)) }
+
+    /// Creates the vault, unless one appeared in the meantime. Nothing gets overwritten.
+    public func create(_ vault: VaultFile, blob: Data) throws {
+        try withLock {
+            guard !exists else { throw VaultError("there is already a vault") }
+            try saveBlob(blob, for: vault.enclavePublicKey)
+            try save(vault)
+        }
+    }
 
     /// Keeps which key was used and by which program, next to the vault. It never holds a value or
     /// the command's arguments, which can carry anything. A failure here stops nothing.
@@ -92,21 +108,30 @@ public struct VaultStore: Sendable {
         _ = (line + Data("\n".utf8)).withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
     }
 
-    public func loadBlob() throws -> Data { try Data(contentsOf: blobURL) }
+    public func loadBlob() throws -> Data {
+        let named = blobURL(for: try load().enclavePublicKey)
+        return try Data(contentsOf: FileManager.default.fileExists(atPath: named.path) ? named : blobURL)
+    }
 
     /// Changes the vault with no other process in the middle. Without this, two writers that loaded
     /// the same file would each save it, and the first one's key would vanish.
     @discardableResult
     public func update<T>(_ change: (inout VaultFile) throws -> T) throws -> T {
+        try withLock {
+            var vault = try load()
+            let result = try change(&vault)
+            try save(vault)
+            return result
+        }
+    }
+
+    private func withLock<T>(_ body: () throws -> T) throws -> T {
         try prepareDirectory()
         let descriptor = open(directory.appendingPathComponent(".lock").path, O_RDWR | O_CREAT, 0o600)
         guard descriptor >= 0 else { throw VaultError("the vault could not be locked") }
         defer { close(descriptor) }
         guard flock(descriptor, LOCK_EX) == 0 else { throw VaultError("the vault could not be locked") }
-        var vault = try load()
-        let result = try change(&vault)
-        try save(vault)
-        return result
+        return try body()
     }
 
     private func prepareDirectory() throws {

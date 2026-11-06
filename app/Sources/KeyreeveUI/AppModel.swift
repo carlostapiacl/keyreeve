@@ -38,6 +38,8 @@ public final class AppModel: ObservableObject {
     private var lockTask: Task<Void, Never>?
     var confirmation = ConfirmationWindow()
     private var generation = 0
+    /// Changes on each lock, so a confirmation that arrives afterwards counts for nothing.
+    var lockEpoch = 0
     private var rebuilding: Task<Void, Never>?
 
     public init(files: KeyreeveFiles = KeyreeveFiles(), binary: URL? = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli")) {
@@ -69,6 +71,7 @@ public final class AppModel: ObservableObject {
 
     public func lock() {
         generation += 1
+        lockEpoch += 1
         lockTask?.cancel()
         confirmation.close()
         vaultDraft = nil
@@ -98,8 +101,9 @@ public final class AppModel: ObservableObject {
             then(false)
             return
         }
+        let epoch = lockEpoch
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, _ in
-            Task { @MainActor in then(success) }
+            Task { @MainActor in then(success && epoch == self.lockEpoch) }
         }
     }
 
@@ -108,6 +112,8 @@ public final class AppModel: ObservableObject {
     /// Reads the private files away from the screen, then shows them. A newer load or a lock
     /// discards this one, so a load that ends after locking cannot put keys back on the window.
     public func load(then done: (@MainActor () -> Void)? = nil) {
+        // Work that ends after locking calls this too, and must not refill the window.
+        guard unlocked else { return }
         generation += 1
         let current = generation
         let source = Snapshot.Source(files: files, store: vaultStore, binary: binary, keysFolder: keysFolder)
@@ -199,6 +205,7 @@ struct Snapshot: Sendable {
 
     init(reading source: Source) {
         let files = source.files
+        files.tightenFolders()
         let ignored = files.ignoredKeys()
         let details = files.allDetails()
         let text = try? String(contentsOf: files.catalog, encoding: .utf8)
@@ -214,6 +221,10 @@ struct Snapshot: Sendable {
             parsed[index].details = details[path]
             parsed[index].originalMoved = moved.contains(path)
             guard let entry = vault?.entries[path] else { continue }
+            if let folder = source.keysFolder, VaultKeeper.isFromAnotherFolder(entry, folder: folder) {
+                parsed[index].vault = .otherFolder
+                continue
+            }
             let changed = source.keysFolder.map { VaultKeeper.isOutdated(entry, path: path, folder: $0) } ?? false
             parsed[index].vault = changed ? .outdated : .sealed
         }

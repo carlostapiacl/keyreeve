@@ -44,13 +44,21 @@ extension AppModel {
     }
 
     func runRotation(_ item: CatalogItem, resume: Bool) {
-        guard !busy, let binary, let vaultTool, item.vault != .none else { return }
+        guard !busy, let binary, let vaultTool, item.vault == .sealed || item.vault == .outdated else { return }
         let places = self.places[item.path] ?? KeyPlaces()
         let admin = places.admin.flatMap { name in items.first { $0.path == name } }
         let original = keysFolder?.appendingPathComponent(item.path).path
-        let plan = RotationPlan(
+        var plan = RotationPlan(
             item: item, places: places, admin: admin,
             original: original.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil })
+        // A copy sealed by hand after the last rotation is another key, with another id.
+        if let added = (try? vaultStore.load())?.entries[item.path]?.added,
+            let last = rotations.first(where: { $0.key == item.path })?.at,
+            added.timeIntervalSince1970 > last
+        {
+            plan.trust_recorded_id = false
+            plan.known_id = nil
+        }
         let reason = resume ? T("finish rotating a key") : T("rotate a key with its provider")
         openVault(reason: reason) { unlocked in
             guard let unlocked else {

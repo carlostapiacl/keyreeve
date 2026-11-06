@@ -68,8 +68,7 @@ do {
         guard !store.exists else { fail("there is already a vault in \(store.directory.path)") }
         let (enclave, blob) = try EnclaveRecipient.create()
         let recovery = P256.KeyAgreement.PrivateKey()
-        try store.saveBlob(blob)
-        try store.save(VaultFile(enclave: enclave.publicKey, recovery: recovery.publicKey))
+        try store.create(VaultFile(enclave: enclave.publicKey, recovery: recovery.publicKey), blob: blob)
         print("""
             Vault created in \(store.directory.path)
 
@@ -136,8 +135,9 @@ do {
         let (enclave, blob) = try EnclaveRecipient.create()
         try store.update { vault in
             try vault.moveToNewEnclave(enclave.publicKey, recovery: recovery)
-            // Saved inside the lock, and after the move worked, so a bad key changes nothing.
-            try store.saveBlob(blob)
+            // After the move worked, so a bad key changes nothing. The vault's own save then
+            // switches to this blob, and a crash before that leaves the old pair working.
+            try store.saveBlob(blob, for: vault.enclavePublicKey)
         }
         print("This vault now opens with this Mac's fingerprint")
     case "--help", "-h", "help":

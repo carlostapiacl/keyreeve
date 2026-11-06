@@ -61,10 +61,18 @@ struct KeyDetail: View {
         }
     }
 
+    private var vaultNoteText: String {
+        switch item.vault {
+        case .sealed: return "In the vault. Checks use the sealed copy."
+        case .otherFolder: return "Sealed from another folder. Checks use this folder's file."
+        default: return "The file changed after it was sealed. Checks use the file."
+        }
+    }
+
     private var vaultNote: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(
-                T(item.vault == .sealed ? "In the vault. Checks use the sealed copy." : "The file changed after it was sealed. Checks use the file."),
+                T(vaultNoteText),
                 systemImage: "lock.shield"
             )
             .font(Theme.caption)

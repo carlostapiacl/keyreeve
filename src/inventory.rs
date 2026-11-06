@@ -527,7 +527,50 @@ fn safe_field(name: &str) -> bool {
         .next()
         .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_');
     let digits = name.bytes().filter(u8::is_ascii_digit).count();
-    plain && starts_well && name.len() <= MAX_FIELD_LEN && digits <= 4 && kind_of(name).is_none()
+    plain
+        && starts_well
+        && name.len() <= MAX_FIELD_LEN
+        && digits <= 4
+        && kind_of(name).is_none()
+        && reads_like_a_name(name)
+}
+
+/// A key can stand where a name goes, as in a loose `AbCd_EfGh...=`. Names are made of words: a
+/// few capitals at most in mixed case, no very long run of letters, and vowels in the long ones.
+/// A real name this refuses is only counted as hidden, while a key it passes would be written out.
+fn reads_like_a_name(name: &str) -> bool {
+    let uppers = name.bytes().filter(u8::is_ascii_uppercase).count();
+    let lowers = name.bytes().filter(u8::is_ascii_lowercase).count();
+    if uppers >= 5 && lowers > 0 {
+        return false;
+    }
+    // Base32 and the like mix letters and digits inside one long word, while `S3` and `v2` are short.
+    let mixes_digits = name.split(['_', '-', '.']).any(|part| {
+        let first_digit = part.bytes().position(|b| b.is_ascii_digit());
+        part.len() >= 8
+            && first_digit
+                .is_some_and(|at| part.as_bytes()[at..].iter().any(u8::is_ascii_alphabetic))
+    });
+    if mixes_digits {
+        return false;
+    }
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let mut previous_lower = false;
+    for c in name.chars() {
+        if !c.is_ascii_alphabetic() || (c.is_ascii_uppercase() && previous_lower) {
+            words.push(std::mem::take(&mut word));
+        }
+        if c.is_ascii_alphabetic() {
+            word.push(c.to_ascii_lowercase());
+        }
+        previous_lower = c.is_ascii_lowercase();
+    }
+    words.push(word);
+    words.iter().all(|word| {
+        let vowels = word.chars().filter(|c| "aeiouy".contains(*c)).count();
+        word.len() < 17 && (word.len() < 10 || vowels * 5 >= word.len())
+    })
 }
 
 fn kinds_in(text: &str) -> Vec<String> {
@@ -825,5 +868,30 @@ password CANARYb7: valor
     #[test]
     fn a_short_token_with_a_known_prefix_is_not_a_kind() {
         assert!(kinds_in("re_view sk-short AKIA").is_empty());
+    }
+
+    #[test]
+    fn a_key_standing_where_a_name_goes_stays_out() {
+        for key in [
+            "AbCd_EfGhIjKlMnOpQrStUvWx",
+            "JBSWY3DPEHPK3PXP",
+            "QWRTYPLKJHGFDSZXCVBNM",
+            "abc_qwrtplkjhgfdszxcvbnm",
+        ] {
+            assert!(!safe_field(key), "{key}");
+        }
+        for name in [
+            "GITHUB_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+            "client_secret",
+            "accessToken",
+            "serviceAccountKeyFile",
+            "DEPLOYMENT_URL",
+            "CLOUDFLARE_API_TOKEN",
+            "S3_BUCKET",
+            "OAUTH2_TOKEN",
+        ] {
+            assert!(safe_field(name), "{name}");
+        }
     }
 }

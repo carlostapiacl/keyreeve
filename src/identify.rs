@@ -116,6 +116,11 @@ fn safe_value(value: &str, key: &Secret) -> bool {
             .all(|word| word.len() < 16 || kind_of(word).is_none())
 }
 
+/// A program can get the name wrong as easily as the value, and both are written to a file.
+fn safe_field(field: &(String, String), key: &Secret) -> bool {
+    safe_value(&field.1, key) && safe_value(&field.0, key)
+}
+
 /// Fills `{field}`. With a field missing there is nothing to suggest.
 pub fn suggest(template: &str, fields: &BTreeMap<String, String>) -> Option<String> {
     let mut out = template.to_owned();
@@ -165,7 +170,7 @@ pub fn run_plan_with(
                     let fields = answer
                         .fields
                         .into_iter()
-                        .filter(|(_, value)| safe_value(value, &key))
+                        .filter(|field| safe_field(field, &key))
                         .collect();
                     return Ok((recipe, fields));
                 }
@@ -342,5 +347,13 @@ mod tests {
         assert!(lines[0].1.contains("inside the keys folder"));
         assert!(fs::read_to_string(&details).unwrap().contains("old.txt"));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_key_used_as_a_field_name_is_dropped() {
+        let key = Secret::new("CANARYkey1234567890");
+        let named = ("CANARYkey1234567890".to_owned(), "account".to_owned());
+        assert!(!safe_field(&named, &key));
+        assert!(safe_field(&("account".to_owned(), "me".to_owned()), &key));
     }
 }

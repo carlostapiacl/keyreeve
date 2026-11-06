@@ -308,6 +308,8 @@ public let spanish: [String: String] = [
     "Rotate this key with %@?": "¿Rotar esta clave con %@?",
     "This makes a real key at the provider. If anything fails before the old key is revoked, it undoes itself.": "Esto crea una clave real en el proveedor. Si algo falla antes de revocar la antigua, se deshace sola.",
     "Remove": "Quitar",
+    "Sealed from another folder. Checks use this folder's file.": "Sellada desde otra carpeta. Las pruebas usan el archivo de esta carpeta.",
+    "%d moved. The rest changed since the comparison, so compare again.": "%d movidos. Los demás cambiaron desde la comparación, así que compara otra vez.",
     "Keep keys out of plain files": "Saca tus claves de los archivos de texto",
     "The vault seals each key with a key inside this Mac's chip. Your finger opens it, and nothing else on this Mac can read it without asking.": "La bóveda sella cada clave con una llave dentro del chip de este Mac. Se abre con tu huella, y nada más en este Mac puede leerla sin pedirla.",
     "You get a recovery key once. If this Mac dies, it is the only way back in, so have paper at hand.": "Recibes una clave de recuperación una sola vez. Si este Mac muere, es la única forma de volver a entrar, así que ten papel a mano.",

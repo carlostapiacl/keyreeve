@@ -13,6 +13,7 @@ public struct RotationPlan: Encodable, Sendable {
     public var original: String?
     public var place_files: [String]
     public var place_actions: [String]
+    public var trust_recorded_id = true
 
     public init(
         item: CatalogItem, places: KeyPlaces, admin: CatalogItem?, original: String?, now: Date = Date()

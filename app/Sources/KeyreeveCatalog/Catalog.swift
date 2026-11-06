@@ -3,7 +3,11 @@ import Foundation
 /// One row of `catalog.csv`. It has names and results, never a key's value.
 public struct CatalogItem: Identifiable, Hashable, Sendable {
     /// Whether the vault holds this file, which it knows with no fingerprint.
-    public enum VaultCopy: Hashable, Sendable { case none, sealed, outdated }
+    public enum VaultCopy: Hashable, Sendable {
+        case none, sealed, outdated
+        /// Sealed from a different folder, where this same path can be another key. It is left alone.
+        case otherFolder
+    }
 
     public var vault: VaultCopy = .none
     /// The file was moved out of the keys folder, so the vault's copy is the one in use.
@@ -245,7 +249,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .home, .all: return !item.isArchived
         case .attention: return item.attention != nil
         case .archive: return item.isArchived
-        case .vault: return item.vault != .none && !item.isArchived
+        case .vault: return item.vault != .none && item.vault != .otherFolder && !item.isArchived
         case .checkable: return item.canCheck && !item.isArchived
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()

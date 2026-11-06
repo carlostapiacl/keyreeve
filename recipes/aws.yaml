@@ -1,0 +1,13 @@
+schema: 1
+provider: aws
+name: AWS
+dashboard: https://console.aws.amazon.com/iam/home
+prefixes: [AKIA]
+hosts: [sts.amazonaws.com]
+auth: { type: aws_sigv4, service: sts, region: us-east-1 }
+verify: { method: GET, path: "/?Action=GetCallerIdentity&Version=2011-06-15", reject: [403] }
+identify:
+  request: { method: GET, path: "/?Action=GetCallerIdentity&Version=2011-06-15" }
+  format: xml
+  fields: { account: Account, arn: Arn }
+suggested_name: "AWS · {account}"

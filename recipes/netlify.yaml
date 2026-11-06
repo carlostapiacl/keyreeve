@@ -1,6 +1,12 @@
-# Checks a key. It cannot rotate one yet.
 schema: 1
 provider: netlify
+name: Netlify
+dashboard: https://app.netlify.com/user/applications
+prefixes: [nfp_]
 hosts: [api.netlify.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /api/v1/user }
+identify:
+  request: { method: GET, path: /api/v1/user }
+  fields: { account: $.email, name: $.full_name }
+suggested_name: "Netlify · {account}"

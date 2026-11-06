@@ -12,117 +12,120 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                summary
-                doFirst
-                HStack(alignment: .top, spacing: 36) {
-                    bars(T("Secrets by project"), stats.projects).frame(maxWidth: .infinity, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 28) {
-                        checks
-                        bars(T("Age of the files"), stats.ages)
+            VStack(alignment: .leading, spacing: 24) {
+                header
+                if !stats.needLook.isEmpty { doFirst }
+                HStack(alignment: .top, spacing: 16) {
+                    Card { bars(T("Secrets by project"), stats.projects).padding(16) }
+                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 16) {
+                        Card { checks.padding(16) }
+                        Card { bars(T("Age of the files"), stats.ages).padding(16) }
                     }
-                    .frame(width: 260, alignment: .leading)
+                    .frame(width: 290)
                 }
                 recent
             }
-            .padding(24)
-            .frame(maxWidth: 980, alignment: .leading)
+            .padding(Theme.pagePadding)
+            .frame(maxWidth: 1040, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.background)
     }
 
-    private var summary: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 36) {
-            figure("\(stats.secrets)", T("secrets"), .all)
-            figure("\(stats.needLook.count)", T("need a look"), .attention)
-            figure(T("%d of %d", stats.checked, stats.secrets), T("checked"), .all)
-            figure("\(stats.canCheck)", T("can be checked"), .checkable)
-        }
-    }
-
-    private func figure(_ value: String, _ caption: String, _ target: Sidebar) -> some View {
+    private var header: some View {
         Button {
-            open(target, nil)
+            open(stats.needLook.isEmpty ? .all : .attention, nil)
         } label: {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(value).font(.system(size: 26, weight: .semibold)).monospacedDigit()
-                Text(caption).font(.callout).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(headline).font(Theme.title).foregroundStyle(Theme.text)
+                Text(T("Secrets: %d · Critical: %d · Checked: %d · Identified: %d", stats.secrets, stats.critical, stats.checked, stats.identified))
+                    .font(Theme.body)
+                    .foregroundStyle(Theme.muted)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
+    private var headline: String {
+        switch stats.needLook.count {
+        case 0: return T("Everything looks fine.")
+        case 1: return T("1 key needs you")
+        default: return T("%d keys need you", stats.needLook.count)
+        }
+    }
+
     private var doFirst: some View {
         VStack(alignment: .leading, spacing: 10) {
-            heading(T("Do first"))
-            if stats.needLook.isEmpty {
-                Label(T("Everything looks fine."), systemImage: "checkmark.seal.fill").foregroundStyle(.secondary)
-            }
-            VStack(spacing: 0) {
-                ForEach(Array(stats.needLook.prefix(shownFirst).enumerated()), id: \.element.id) { index, item in
-                    if index > 0 { Divider() }
-                    row(item)
+            SectionTitle(T("Do first"))
+            Card {
+                VStack(spacing: 0) {
+                    ForEach(Array(stats.needLook.prefix(shownFirst).enumerated()), id: \.element.id) { index, item in
+                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        row(item)
+                    }
                 }
             }
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
-            .opacity(stats.needLook.isEmpty ? 0 : 1)
             if stats.needLook.count > shownFirst {
                 Button(T("All %d", stats.needLook.count)) { open(.attention, nil) }
-                    .buttonStyle(.link)
-                    .font(.callout)
+                    .buttonStyle(KRButtonStyle())
             }
         }
     }
 
     private func row(_ item: CatalogItem) -> some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: urgent(item) ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(urgent(item) ? .red : .orange)
+                .foregroundStyle(urgent(item) ? Theme.bad : Theme.warn)
             Button {
                 open(.attention, item.path)
             } label: {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(item.path).lineLimit(1).truncationMode(.middle)
-                    Text(item.attention ?? "").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title).font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                    Text(item.attention ?? "").font(Theme.caption).foregroundStyle(Theme.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            if item.criticality > 0 { CriticalityMeter(value: item.criticality) }
             ActionButtons(item: item, model: model).fixedSize()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
     }
 
     private func urgent(_ item: CatalogItem) -> Bool { (item.attentionRanked?.rank ?? 9) <= 2 }
 
     private var checks: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            heading(T("Last checks"))
-            status(T("Works"), stats.works, "checkmark.circle.fill", .green)
-            status(T("Rejected"), stats.rejected, "xmark.circle.fill", .red)
-            status(T("No answer"), stats.noAnswer, "questionmark.circle", .secondary)
-            status(T("Never checked"), stats.neverChecked, "circle.dashed", .secondary)
+        VStack(alignment: .leading, spacing: 9) {
+            SectionTitle(T("Last checks"))
+            status(T("Works"), stats.works, "checkmark.circle.fill", Theme.good)
+            status(T("Rejected"), stats.rejected, "xmark.circle.fill", Theme.bad)
+            status(T("No answer"), stats.noAnswer, "questionmark.circle", Theme.muted)
+            status(T("Never checked"), stats.neverChecked, "circle.dashed", Theme.faint)
+            Button(T("Can be checked") + ": \(stats.canCheck)") { open(.checkable, nil) }
+                .buttonStyle(KRButtonStyle())
+                .padding(.top, 2)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func status(_ title: String, _ count: Int, _ icon: String, _ color: Color) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon).foregroundStyle(color).imageScale(.small).frame(width: 16)
-            Text(title)
+            Text(title).font(Theme.body).foregroundStyle(Theme.text)
             Spacer()
-            Text("\(count)").monospacedDigit().foregroundStyle(.secondary)
+            Text("\(count)").font(Theme.body).monospacedDigit().foregroundStyle(Theme.muted)
         }
     }
 
     /// One series in one hue, with each value written beside its bar.
     private func bars(_ title: String, _ buckets: [CatalogStats.Bucket]) -> some View {
         let largest = max(buckets.map(\.count).max() ?? 1, 1)
-        return VStack(alignment: .leading, spacing: 8) {
-            heading(title)
+        return VStack(alignment: .leading, spacing: 9) {
+            SectionTitle(title)
             ForEach(buckets) { bucket in
                 if let target = bucket.target {
                     Button {
@@ -136,44 +139,55 @@ struct HomeView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func barRow(_ bucket: CatalogStats.Bucket, largest: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(bucket.label).lineLimit(1)
+                Text(bucket.label).font(Theme.body).foregroundStyle(Theme.text).lineLimit(1)
                 Spacer()
-                Text("\(bucket.count)").monospacedDigit().foregroundStyle(.secondary)
+                Text("\(bucket.count)").font(Theme.body).monospacedDigit().foregroundStyle(Theme.muted)
             }
             GeometryReader { geometry in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.accentColor)
-                    .frame(
-                        width: bucket.count == 0
-                            ? 0
-                            : max(4, geometry.size.width * CGFloat(bucket.count) / CGFloat(largest)))
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2).fill(Theme.raised)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Theme.bar)
+                        .frame(
+                            width: bucket.count == 0
+                                ? 0
+                                : max(4, geometry.size.width * CGFloat(bucket.count) / CGFloat(largest)))
+                }
             }
-            .frame(height: 5)
+            .frame(height: 4)
         }
         .help("\(bucket.label): \(bucket.count)")
     }
 
     private var recent: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            heading(T("Lately"))
-            if activity.isEmpty {
-                Text(T("No checks yet, and no key used through the vault.")).foregroundStyle(.secondary)
-            }
-            ForEach(activity) { entry in
-                HStack(spacing: 8) {
-                    Text(entry.at, format: .dateTime.day().month(.abbreviated).hour().minute())
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .frame(width: 130, alignment: .leading)
-                    Text(entry.key).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Text(describe(entry.kind)).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(T("Lately"))
+            Card {
+                VStack(alignment: .leading, spacing: 8) {
+                    if activity.isEmpty {
+                        Text(T("No checks yet, and no key used through the vault.")).font(Theme.body).foregroundStyle(Theme.muted)
+                    }
+                    ForEach(activity) { entry in
+                        HStack(spacing: 10) {
+                            Text(entry.at, format: .dateTime.day().month(.abbreviated).hour().minute())
+                                .font(Theme.caption)
+                                .monospacedDigit()
+                                .foregroundStyle(Theme.faint)
+                                .frame(width: 120, alignment: .leading)
+                            Text(entry.key).font(Theme.code).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Text(describe(entry.kind)).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                        }
+                    }
                 }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -188,9 +202,5 @@ struct HomeView: View {
             }
         case .used(let program): return T("Used by %@", program)
         }
-    }
-
-    private func heading(_ text: String) -> some View {
-        Text(text).font(.headline)
     }
 }

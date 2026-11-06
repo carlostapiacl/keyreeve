@@ -1,6 +1,12 @@
-# Checks a key. It cannot rotate one yet.
 schema: 1
 provider: cloudflare
+name: Cloudflare
+dashboard: https://dash.cloudflare.com/profile/api-tokens
+prefixes: []
 hosts: [api.cloudflare.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /client/v4/user/tokens/verify }
+identify:
+  request: { method: GET, path: /client/v4/user }
+  fields: { account: $.result.email, id: $.result.id }
+suggested_name: "Cloudflare · {account}"

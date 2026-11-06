@@ -9,9 +9,11 @@ keywords = ["secrets", "rotation", "api-keys", "security", "cli"]
 categories = ["command-line-utilities"]
 
 [dependencies]
+hmac = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9.42"
+sha2 = "0.10"
 ureq = "3.5"
 zeroize = "1.9"
 

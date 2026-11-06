@@ -3,6 +3,7 @@ use keyreeve::inventory::{self, parse_words, ExtraWords};
 use keyreeve::recipe::Recipe;
 use keyreeve::simulate;
 use keyreeve::verify;
+use keyreeve::{identify, providers};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::ExitCode;
@@ -24,8 +25,12 @@ Usage:
       Check whether a key still works, with one read-only request.
   keyreeve verify --plan <plan.yaml> --keys <folder> [--history <file>]
       Check several keys, and keep the results.
-  keyreeve recipes
-      List the recipes that come with keyreeve.
+  keyreeve identify --plan <plan.yaml> --keys <folder> --details <file>
+      Ask each provider whose key this is, and keep only the fields its file declares.
+  keyreeve recipes [--json]
+      List the providers keyreeve knows, from what ships and from ~/.keyreeve/providers.
+  keyreeve recipes approve <provider>
+      Allow a provider file of yours to receive keys at the hosts it lists.
   keyreeve --version
 ";
 
@@ -193,6 +198,53 @@ fn run_verify(args: &[String]) -> ExitCode {
     }
 }
 
+fn run_identify(args: &[String]) -> ExitCode {
+    let [flag_plan, plan, flag_keys, keys, flag_details, details] = args else {
+        return usage();
+    };
+    if flag_plan != "--plan" || flag_keys != "--keys" || flag_details != "--details" {
+        return usage();
+    }
+    match identify::run_plan(Path::new(plan), Path::new(keys), Path::new(details)) {
+        Ok(lines) => {
+            for (label, line) in lines {
+                println!("{label}: {line}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("identify: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_recipes(args: &[String]) -> ExitCode {
+    match args {
+        [] => {
+            for entry in providers::list() {
+                println!("{}", entry.line());
+            }
+            ExitCode::SUCCESS
+        }
+        [flag] if flag == "--json" => {
+            println!("{}", providers::list_json());
+            ExitCode::SUCCESS
+        }
+        [approve, name] if approve == "approve" => match providers::approve(name) {
+            Ok(hosts) => {
+                println!("{name} may now receive keys at {}", hosts.join(", "));
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("recipes: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        _ => usage(),
+    }
+}
+
 const MAX_VIOLATIONS_SHOWN: usize = 20;
 
 fn load(path: &str) -> Result<Recipe, String> {
@@ -221,17 +273,8 @@ fn main() -> ExitCode {
         "inventory" => return run_inventory(paths),
         "catalog" => return run_catalog(paths),
         "verify" => return run_verify(paths),
-        "recipes" => {
-            for (name, recipe) in verify::builtin_recipes() {
-                let what = if recipe.can_rotate() {
-                    "rotate"
-                } else {
-                    "check"
-                };
-                println!("{name}: {what}, talks only to {}", recipe.hosts.join(", "));
-            }
-            return ExitCode::SUCCESS;
-        }
+        "identify" => return run_identify(paths),
+        "recipes" => return run_recipes(paths),
         "check" | "simulate" if !paths.is_empty() => {}
         _ => {
             return usage();

@@ -3,6 +3,7 @@
 
 use crate::recipe::{Recipe, Rendered, Step};
 use crate::secret::Secret;
+use crate::sigv4;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::time::Duration;
@@ -16,24 +17,50 @@ pub struct Request {
 }
 
 impl Request {
-    /// Builds a request for a step. The credential goes only in the recipe's auth header.
+    /// Builds a request for a step. The credential goes only in the recipe's auth header, or is
+    /// used to sign the request and is not sent at all.
     pub fn for_step(
         recipe: &Recipe,
         step: &Step,
         vars: &[(&str, &str)],
         credential: &Secret,
     ) -> Self {
-        Self {
-            rendered: step.render(recipe, vars),
-            headers: recipe
-                .headers
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect(),
-            auth: (
+        let rendered = step.render(recipe, vars);
+        let mut headers: Vec<(String, String)> = recipe
+            .headers
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        let auth = match recipe.auth.kind.as_deref() {
+            Some("aws_sigv4") => {
+                let stamp = sigv4::stamp_now();
+                let (access, secret) = credential.expose().split_once(':').unwrap_or(("", ""));
+                let signed = sigv4::authorization(
+                    &sigv4::Signing {
+                        service: recipe.auth.service.as_deref().unwrap_or_default(),
+                        region: recipe.auth.region.as_deref().unwrap_or_default(),
+                        method: &rendered.method,
+                        host: &rendered.host,
+                        path: &rendered.path,
+                        content_type: None,
+                        body: rendered.body.as_deref().unwrap_or_default(),
+                        stamp: &stamp,
+                    },
+                    access,
+                    &Secret::new(secret),
+                );
+                headers.push(("x-amz-date".into(), stamp));
+                ("authorization".to_owned(), Secret::new(signed))
+            }
+            _ => (
                 recipe.auth.header.clone(),
                 Secret::new(format!("{}{}", recipe.auth.prefix, credential.expose())),
             ),
+        };
+        Self {
+            rendered,
+            headers,
+            auth,
         }
     }
 }

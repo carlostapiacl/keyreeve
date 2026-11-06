@@ -5,10 +5,13 @@
 
 pub mod catalog;
 pub mod engine;
+pub mod identify;
 pub mod inventory;
 pub mod journal;
+pub mod providers;
 pub mod recipe;
 pub mod secret;
+pub mod sigv4;
 pub mod simulate;
 pub mod store;
 pub mod transport;

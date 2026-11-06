@@ -16,13 +16,23 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var labels: [String]
     /// When "ignore" ends. Until then the key asks for no attention.
     public var ignoredUntil: Date?
+    public var name: String
+    public var description: String
+    public var details: KeyDetails?
+    /// 1 to 5, or 0 if nobody rated it.
+    public var criticality: Int
     public var id: String { path }
+
+    /// What a person calls this key: their name for it, or else the file's.
+    public var title: String { name.isEmpty ? path : name }
+    public var isArchived: Bool { tags.contains("status:archived") }
 
     public init(
         path: String, level: String = "ask", tags: [String] = [], format: String = "",
         modified: String = "", mode: String = "600", reviewed: Bool = true,
         lastResult: String = "", lastChecked: String = "", recipes: [String] = [], field: String = "",
-        labels: [String] = [], ignoredUntil: Date? = nil
+        labels: [String] = [], ignoredUntil: Date? = nil, name: String = "", description: String = "",
+        details: KeyDetails? = nil, criticality: Int = 0
     ) {
         self.path = path
         self.level = level
@@ -37,6 +47,10 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         self.field = field
         self.labels = labels
         self.ignoredUntil = ignoredUntil
+        self.name = name
+        self.description = description
+        self.details = details
+        self.criticality = criticality
     }
 
     /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
@@ -57,6 +71,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
 
     public func attentionRanked(at now: Date) -> (rank: Int, text: String)? {
         if let until = ignoredUntil, until > now { return nil }
+        // Archiving hides a key from view, and it does not stop a key that still works.
+        if isArchived { return lastResult == "works" ? (6, T("Archived, but it still works")) : nil }
         let isBackup = tags.contains("status:backup")
         let revoke = tags.contains("revoke")
         if revoke && lastResult == "works" { return (0, T("Still works: revoke it")) }
@@ -99,6 +115,9 @@ public enum CatalogParser {
         let recipes = header.firstIndex(of: "recipes")
         let field = header.firstIndex(of: "field")
         let labels = header.firstIndex(of: "labels")
+        let name = header.firstIndex(of: "name")
+        let description = header.firstIndex(of: "description")
+        let criticality = header.firstIndex(of: "criticality")
         return rows.dropFirst().compactMap { row in
             guard row.count == header.count else { return nil }
             return CatalogItem(
@@ -113,7 +132,10 @@ public enum CatalogParser {
                 lastChecked: checked.map { row[$0] } ?? "",
                 recipes: recipes.map { row[$0].split(separator: " ").map(String.init) } ?? [],
                 field: field.map { row[$0] } ?? "",
-                labels: labels.map { row[$0].split(separator: "|").map(String.init) } ?? [])
+                labels: labels.map { row[$0].split(separator: "|").map(String.init) } ?? [],
+                name: name.map { row[$0] } ?? "",
+                description: description.map { row[$0] } ?? "",
+                criticality: criticality.flatMap { Int(row[$0]) } ?? 0)
         }
     }
 
@@ -169,7 +191,9 @@ public enum Sidebar: Hashable, Sendable {
     case home
     case all
     case attention
+    case archive
     case checkable
+    case critical
     case level(String)
     case tag(String)
 }
@@ -177,19 +201,27 @@ public enum Sidebar: Hashable, Sendable {
 public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String) -> [CatalogItem] {
     let chosen = items.filter { item in
         switch selection {
-        case .home, .all: return true
+        case .home, .all: return !item.isArchived
         case .attention: return item.attention != nil
-        case .checkable: return item.canCheck
-        case .level(let level): return item.level == level
-        case .tag(let tag): return item.tags.contains(tag)
+        case .archive: return item.isArchived
+        case .checkable: return item.canCheck && !item.isArchived
+        case .critical: return item.criticality >= 4 && !item.isArchived
+        case .level(let level): return item.level == level && !item.isArchived
+        case .tag(let tag): return item.tags.contains(tag) && !item.isArchived
         }
     }
     let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
-    guard !needle.isEmpty else { return chosen }
-    return chosen.filter { item in
+    let found = needle.isEmpty ? chosen : chosen.filter { item in
         item.path.lowercased().contains(needle)
+            || item.name.lowercased().contains(needle)
+            || item.description.lowercased().contains(needle)
+            || (item.details?.fields.values.contains { $0.lowercased().contains(needle) } ?? false)
             || item.tags.contains { $0.lowercased().contains(needle) }
     }
+    // The most critical keys come first, and the sort keeps the rest in their order.
+    return found.enumerated()
+        .sorted { ($1.element.criticality, $0.offset) < ($0.element.criticality, $1.offset) }
+        .map(\.element)
 }
 
 /// Project-style tags: those without a `type:` prefix, most used first.
@@ -220,18 +252,26 @@ public struct CatalogStats: Sendable {
     public let noAnswer: Int
     public let neverChecked: Int
     public let canCheck: Int
+    public let archived: Int
+    public let critical: Int
+    public let identified: Int
     public let projects: [Bucket]
     public let ages: [Bucket]
 
     public var checked: Int { works + rejected + noAnswer }
 
-    public init(items: [CatalogItem], now: Date = Date(), maxProjects: Int = 8) {
+    public init(items all: [CatalogItem], now: Date = Date(), maxProjects: Int = 8) {
+        let items = all.filter { !$0.isArchived }
         let secretItems = items.filter(\.isSecret)
+        archived = all.count - items.count
+        identified = secretItems.filter { $0.details != nil }.count
         total = items.count
         secrets = secretItems.count
-        needLook = items.filter { $0.attention != nil }.sorted {
-            ($0.attentionRanked?.rank ?? 9, $0.path) < ($1.attentionRanked?.rank ?? 9, $1.path)
+        needLook = all.filter { $0.attention != nil }.sorted {
+            ($0.attentionRanked?.rank ?? 9, -$0.criticality, $0.path)
+                < ($1.attentionRanked?.rank ?? 9, -$1.criticality, $1.path)
         }
+        critical = items.filter { $0.criticality >= 4 }.count
         works = secretItems.filter { $0.lastResult == "works" }.count
         rejected = secretItems.filter { $0.lastResult == "rejected" }.count
         noAnswer = secretItems.filter { $0.lastResult == "forbidden" || $0.lastResult == "no_result" }.count

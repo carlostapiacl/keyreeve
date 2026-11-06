@@ -1,6 +1,8 @@
-# Checks a key. It cannot rotate one yet.
 schema: 1
 provider: langsmith
+name: LangSmith
+dashboard: https://smith.langchain.com/settings
+prefixes: []
 hosts: [api.smith.langchain.com]
 auth: { header: x-api-key, prefix: "" }
 verify: { method: GET, path: "/api/v1/sessions?limit=1", reject: [403] }

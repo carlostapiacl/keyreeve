@@ -18,6 +18,7 @@ public final class AppModel: ObservableObject {
     @Published public var busy = false
     @Published public var message: String?
     @Published public var activity: [ActivityItem] = []
+    @Published public var providers = ProviderDirectory()
     public let files: KeyreeveFiles
     private let binary: URL?
     private var lockTask: Task<Void, Never>?
@@ -82,12 +83,17 @@ public final class AppModel: ObservableObject {
 
     public func load() {
         let ignored = files.ignoredKeys()
+        let details = files.allDetails()
         let text = try? String(contentsOf: files.catalog, encoding: .utf8)
         hasCatalog = text != nil
         var parsed = (try? CatalogParser.parse(text ?? "")) ?? []
-        for index in parsed.indices { parsed[index].ignoredUntil = ignored[parsed[index].path] }
+        for index in parsed.indices {
+            parsed[index].ignoredUntil = ignored[parsed[index].path]
+            parsed[index].details = details[parsed[index].path]
+        }
         items = parsed
         activity = files.activity()
+        if let binary { providers = CheckRunner.providers(binary: binary) }
     }
 
     public func chooseFolder() {
@@ -123,12 +129,25 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: Checks
+    // MARK: Checks and identification
+
+    private func gated(_ list: [CatalogItem], reason: String, run: @escaping @MainActor () -> Void) {
+        guard list.contains(where: { $0.level == "ask" }) else {
+            run()
+            return
+        }
+        confirm(reason: reason) { success in
+            if success { run() } else { self.message = T("Not checked: it was not confirmed") }
+        }
+    }
 
     public func check(_ chosen: [CatalogItem], then done: (@MainActor () -> Void)? = nil) {
         let list = chosen.filter(\.canCheck)
         guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
-        let run = {
+        let reason =
+            list.count == 1
+            ? T("check 1 key with its provider") : T("check %d keys with their providers", list.count)
+        gated(list, reason: reason) {
             self.busy = true
             self.message = T("Checking…")
             let files = self.files
@@ -149,19 +168,45 @@ public final class AppModel: ObservableObject {
                 }
             }
         }
-        guard list.contains(where: { $0.level == "ask" }) else {
-            run()
-            return
-        }
-        let reason =
-            list.count == 1
-            ? T("check 1 key with its provider") : T("check %d keys with their providers", list.count)
-        confirm(reason: reason) { success in
-            if success { run() } else { self.message = T("Not checked: it was not confirmed") }
+    }
+
+    public func identify(_ chosen: [CatalogItem]) {
+        let list = chosen.filter(providers.canIdentify)
+        guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
+        gated(list, reason: T("identify %d keys with their providers", list.count)) {
+            self.busy = true
+            self.message = T("Identifying…")
+            let files = self.files
+            let providers = self.providers
+            Task.detached {
+                let result = Result {
+                    try CheckRunner.identify(list, providers: providers, binary: binary, keysFolder: folder, files: files)
+                }
+                await MainActor.run {
+                    self.busy = false
+                    self.load()
+                    switch result {
+                    case .success:
+                        let paths = Set(list.map(\.path))
+                        let found = self.items.filter { paths.contains($0.path) && $0.details != nil }.count
+                        self.message = T("Identified %d", found)
+                    case .failure(let error):
+                        self.message = (error as? CheckError)?.description ?? T("The check did not finish")
+                    }
+                }
+            }
         }
     }
 
+    public func approve(_ provider: ProviderInfo) {
+        guard let binary else { return }
+        try? CheckRunner.approve(provider.id, binary: binary)
+        load()
+    }
+
     // MARK: Actions and edits
+
+    public func actionsFor(_ item: CatalogItem) -> [KeyAction] { actions(for: item, providers: providers) }
 
     public func perform(_ action: KeyAction, on item: CatalogItem) {
         switch action {
@@ -189,6 +234,14 @@ public final class AppModel: ObservableObject {
             try? files.ignore(item.path, until: Date().addingTimeInterval(30 * 86_400))
             load()
         }
+    }
+
+    public func archive(_ item: CatalogItem) {
+        save(KeyEdit(tags: item.tags + ["status:archived"]), for: item)
+    }
+
+    public func restore(_ item: CatalogItem) {
+        save(KeyEdit(tags: item.tags.filter { $0 != "status:archived" }), for: item)
     }
 
     private func finishRevocation(of item: CatalogItem) {

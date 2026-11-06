@@ -9,11 +9,11 @@ import Testing
 @MainActor
 struct RenderTests {
     static let sample = [
-        CatalogItem(path: "old-cloud.csv", tags: ["revoke", "provider:aws"], modified: "2024-02-13", lastResult: "works", lastChecked: "2026-11-06"),
+        CatalogItem(path: "old-cloud.csv", tags: ["revoke", "provider:aws", "infra"], modified: "2024-02-13", lastResult: "works", lastChecked: "2026-11-06", recipes: ["aws"], name: "AWS · gitlab-user", description: "Old deploy user", details: KeyDetails(provider: "aws", fields: ["account": "111122223333", "arn": "arn:aws:iam::111122223333:user/gitlab-user"], suggested_name: "AWS · 111122223333"), criticality: 4),
         CatalogItem(path: "backups/billing-old.env", tags: ["shop", "status:backup"], modified: "2025-03-02", lastResult: "works", lastChecked: "2026-11-06", recipes: ["github"], labels: ["GITHUB_TOKEN", "OTHER"]),
         CatalogItem(path: "hosting-readonly.txt", level: "free", tags: ["infra", "read-only"], modified: "2026-04-19", lastResult: "works", lastChecked: "2026-11-06"),
         CatalogItem(path: "notes/legacy-mail.txt", tags: ["blog"], modified: "2024-02-13", mode: "644"),
-        CatalogItem(path: "payments.json", level: "never", tags: ["shop", "money"], modified: "2026-05-30"),
+        CatalogItem(path: "payments.json", level: "never", tags: ["shop", "money"], modified: "2026-05-30", criticality: 5),
         CatalogItem(path: "deploy.pub", level: "none", tags: ["infra"], modified: "2026-07-03", mode: "644"),
         CatalogItem(path: "mail-token.txt", tags: ["blog", "provider:mail"], modified: "2026-01-11", lastResult: "rejected", lastChecked: "2026-11-06"),
     ]
@@ -42,6 +42,11 @@ struct RenderTests {
             files: KeyreeveFiles(directory: FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-render")),
             binary: nil)
         model.items = Self.sample
+        model.providers = ProviderDirectory([
+            ProviderInfo(id: "aws", name: "AWS", dashboard: "https://console.aws.amazon.com/iam/home", hosts: ["sts.amazonaws.com"], can_identify: true),
+            ProviderInfo(id: "github", name: "GitHub", dashboard: "https://github.com/settings/tokens", hosts: ["api.github.com"], can_identify: true),
+            ProviderInfo(id: "acme", name: "Acme", hosts: ["api.acme.com"], source: "local", approved: false),
+        ])
         model.hasCatalog = true
         model.unlocked = true
         let at = Date(timeIntervalSince1970: 1_793_900_000)
@@ -62,7 +67,7 @@ struct RenderTests {
             let model = self.model()
             try render(MainView(model: model), named: "home-\(code)-light", appearance: .aqua)
             try render(MainView(model: model), named: "home-\(code)-dark", appearance: .darkAqua)
-            let detail = MainView(model: model, initial: .attention, chosen: "backups/billing-old.env")
+            let detail = MainView(model: model, initial: .attention, chosen: "old-cloud.csv")
             try render(detail, named: "detail-\(code)", appearance: .aqua)
             try render(MainView(model: model, initial: .all), named: "list-\(code)", appearance: .darkAqua)
             try render(WelcomeView(choose: {}), named: "welcome-\(code)", appearance: .aqua)

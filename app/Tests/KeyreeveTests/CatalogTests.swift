@@ -50,10 +50,73 @@ struct CatalogTests {
 
 struct ActionTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let directory = ProviderDirectory([
+        ProviderInfo(id: "langsmith", name: "LangSmith", dashboard: "https://smith.langchain.com/settings"),
+        ProviderInfo(id: "aws", name: "AWS", dashboard: "https://console.aws.amazon.com/iam/home", can_identify: true),
+        ProviderInfo(id: "acme", name: "Acme", hosts: ["a.co"], source: "local", approved: false, can_identify: true),
+    ])
+
+    @Test func testProvidersComeFromTheirFiles() {
+        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"suggested_name":null,"problem":null}]"#.utf8)
+        XCTAssertEqual(ProviderDirectory.parse(data).name(of: "x"), "X")
+        XCTAssertEqual(ProviderDirectory.parse(Data("nope".utf8)).all.count, 0)
+        XCTAssertEqual(directory.usable.map(\.id), ["langsmith", "aws"])
+        XCTAssertEqual(directory.all[2].needsApproval, true)
+    }
+
+    @Test func testOnlyAKeyWithAnApprovedProviderCanBeIdentified() {
+        XCTAssertEqual(directory.canIdentify(CatalogItem(path: "a", recipes: ["aws"])), true)
+        XCTAssertEqual(directory.canIdentify(CatalogItem(path: "a", recipes: ["acme"])), false)
+        XCTAssertEqual(directory.canIdentify(CatalogItem(path: "a", recipes: ["langsmith"])), false)
+        XCTAssertEqual(directory.canIdentify(CatalogItem(path: "a", level: "never", recipes: ["aws"])), false)
+    }
+
+    @Test func testAnArchivedKeyLeavesTheListsUnlessItStillWorks() {
+        let dead = CatalogItem(path: "dead", tags: ["status:archived"], lastResult: "rejected")
+        let alive = CatalogItem(path: "alive", tags: ["status:archived"], lastResult: "works", name: "Old cloud")
+        let open = CatalogItem(path: "open")
+        XCTAssertNil(dead.attentionRanked(at: now))
+        XCTAssertEqual(alive.attentionRanked(at: now)?.rank, 6)
+        let items = [dead, alive, open]
+        XCTAssertEqual(filter(items, by: .all, search: "").map(\.path), ["open"])
+        XCTAssertEqual(filter(items, by: .archive, search: "").map(\.path), ["dead", "alive"])
+        XCTAssertEqual(filter(items, by: .attention, search: "").map(\.path), ["alive"])
+        let stats = CatalogStats(items: items, now: now)
+        XCTAssertEqual(stats.archived, 2)
+        XCTAssertEqual(stats.secrets, 1)
+        XCTAssertEqual(stats.needLook.map(\.path), ["alive"])
+        XCTAssertEqual(alive.title, "Old cloud")
+        XCTAssertEqual(dead.title, "dead")
+    }
+
+    @Test func testMostCriticalComesFirst() {
+        let items = [
+            CatalogItem(path: "low", criticality: 1), CatalogItem(path: "none"),
+            CatalogItem(path: "top", criticality: 5), CatalogItem(path: "high", criticality: 4),
+        ]
+        XCTAssertEqual(filter(items, by: .all, search: "").map(\.path), ["top", "high", "low", "none"])
+        XCTAssertEqual(filter(items, by: .critical, search: "").map(\.path), ["top", "high"])
+        XCTAssertEqual(CatalogStats(items: items, now: now).critical, 2)
+        let same = [
+            CatalogItem(path: "b", tags: ["revoke"], lastResult: "works", criticality: 2),
+            CatalogItem(path: "a", tags: ["revoke"], lastResult: "works", criticality: 5),
+        ]
+        XCTAssertEqual(CatalogStats(items: same, now: now).needLook.map(\.path), ["a", "b"])
+    }
+
+    @Test func testSearchFindsNamesAndAccounts() {
+        let item = CatalogItem(
+            path: "x.csv", name: "Old cloud", description: "billing test",
+            details: KeyDetails(provider: "aws", fields: ["account": "211"]))
+        XCTAssertEqual(filter([item], by: .all, search: "old").count, 1)
+        XCTAssertEqual(filter([item], by: .all, search: "billing").count, 1)
+        XCTAssertEqual(filter([item], by: .all, search: "211").count, 1)
+        XCTAssertEqual(filter([item], by: .all, search: "nope").count, 0)
+    }
 
     @Test func testALiveKeyToRevokeOffersTheProviderThenAConfirmedRevocation() {
         let item = CatalogItem(path: "a", tags: ["revoke"], lastResult: "works", recipes: ["langsmith"])
-        let list = actions(for: item, at: now)
+        let list = actions(for: item, providers: directory, at: now)
         XCTAssertEqual(list.first, .openProvider(URL(string: "https://smith.langchain.com/settings")!))
         XCTAssertEqual(list.contains(.confirmRevoked), true)
         XCTAssertEqual(list.contains(.markRevoked), false)
@@ -62,17 +125,17 @@ struct ActionTests {
 
     @Test func testAKeyThatCannotBeCheckedIsMarkedByHand() {
         let item = CatalogItem(path: "a", tags: ["revoke", "provider:aws"], lastResult: "works")
-        let list = actions(for: item, at: now)
+        let list = actions(for: item, providers: directory, at: now)
         XCTAssertEqual(list.contains(.markRevoked), true)
         XCTAssertEqual(list.contains(.confirmRevoked), false)
     }
 
     @Test func testEachProblemGetsItsOwnActions() {
-        XCTAssertEqual(actions(for: CatalogItem(path: "a", mode: "644"), at: now), [.fixPermissions, .ignore])
+        XCTAssertEqual(actions(for: CatalogItem(path: "a", mode: "644"), providers: directory, at: now), [.fixPermissions, .ignore])
         XCTAssertEqual(
-            actions(for: CatalogItem(path: "a", lastResult: "rejected"), at: now), [.checkAgain, .notInUse, .ignore])
-        XCTAssertEqual(actions(for: CatalogItem(path: "a", reviewed: false), at: now), [.ignore])
-        XCTAssertEqual(actions(for: CatalogItem(path: "a"), at: now), [])
+            actions(for: CatalogItem(path: "a", lastResult: "rejected"), providers: directory, at: now), [.checkAgain, .notInUse, .ignore])
+        XCTAssertEqual(actions(for: CatalogItem(path: "a", reviewed: false), providers: directory, at: now), [.ignore])
+        XCTAssertEqual(actions(for: CatalogItem(path: "a"), providers: directory, at: now), [])
     }
 
     @Test func testIgnoringLastsUntilItsDate() {
@@ -96,6 +159,10 @@ struct ActionTests {
         try files.saveEdit(KeyEdit(tags: ["x"]), for: "a")
         let saved = try JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: files.edits))
         XCTAssertEqual(saved["a"], KeyEdit(tags: ["x"], level: "free"))
+        try files.saveEdit(KeyEdit(name: "N", description: "D"), for: "a")
+        let named = try JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: files.edits))
+        XCTAssertEqual(named["a"]?.name, "N")
+        XCTAssertEqual(named["a"]?.level, "free")
         let mode = try manager.attributesOfItem(atPath: files.edits.path)[.posixPermissions] as? NSNumber
         XCTAssertEqual(mode?.intValue, 0o600)
 
@@ -139,7 +206,7 @@ struct LanguageTests {
             }
         }
         XCTAssertGreaterThan(count, 60)
-        XCTAssertEqual(missing, [])
+        XCTAssertEqual(missing.sorted(), [])
     }
 
     @Test func testTranslationsKeepTheirPlaceholders() {

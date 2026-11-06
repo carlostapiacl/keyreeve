@@ -11,6 +11,7 @@ rules:
   - match: [stripe, paypal]
     tags: [money]
     level: never
+    criticality: 5   # from 1 to 5: how bad it would be if this key leaked
 
   - match: [readonly, -ro-]
     tags: [read-only]

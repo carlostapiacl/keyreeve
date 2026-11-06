@@ -32,6 +32,13 @@ impl std::error::Error for RecipeError {}
 pub struct Recipe {
     pub schema: u32,
     pub provider: String,
+    /// How people write the provider's name.
+    pub name: Option<String>,
+    /// Where a person manages this provider's keys.
+    pub dashboard: Option<String>,
+    /// Starts of keys that belong to this provider and no other.
+    #[serde(default)]
+    pub prefixes: Vec<String>,
     pub hosts: Vec<String>,
     pub auth: Auth,
     #[serde(default)]
@@ -40,14 +47,34 @@ pub struct Recipe {
     pub create: Option<Step>,
     pub verify: Step,
     pub revoke: Option<Step>,
+    /// A read-only request that says whose key this is.
+    pub identify: Option<Identify>,
+    /// A name to offer, such as `GitHub · {account}`, using the fields of `identify`.
+    pub suggested_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Identify {
+    pub request: Step,
+    /// `json`, the default, or `xml`.
+    pub format: Option<String>,
+    /// What to keep from the answer. Nothing else in it is stored.
+    pub fields: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Auth {
+    /// Empty for the usual header. `aws_sigv4` signs each request instead of sending the key.
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    #[serde(default)]
     pub header: String,
     #[serde(default)]
     pub prefix: String,
+    pub service: Option<String>,
+    pub region: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,13 +135,66 @@ impl Recipe {
                 "host {host:?} must be a bare domain, with no scheme, port, path or wildcard"
             ));
         }
-        if !valid_header_name(&self.auth.header)
-            || FORBIDDEN_AUTH_HEADERS.contains(&self.auth.header.to_ascii_lowercase().as_str())
-        {
-            return fail(format!(
-                "auth.header {:?} cannot carry a credential",
-                self.auth.header
-            ));
+        match self.auth.kind.as_deref() {
+            None if !valid_header_name(&self.auth.header)
+                || FORBIDDEN_AUTH_HEADERS
+                    .contains(&self.auth.header.to_ascii_lowercase().as_str()) =>
+            {
+                return fail(format!(
+                    "auth.header {:?} cannot carry a credential",
+                    self.auth.header
+                ));
+            }
+            None => {}
+            Some("aws_sigv4") => {
+                if self.auth.service.is_none() || self.auth.region.is_none() {
+                    return fail("aws_sigv4 needs auth.service and auth.region".into());
+                }
+                if self.create.is_some() {
+                    return fail("a recipe with aws_sigv4 cannot rotate yet".into());
+                }
+            }
+            Some(other) => return fail(format!("unknown auth type {other:?}")),
+        }
+        if let Some(url) = &self.dashboard {
+            if !url.starts_with("https://") || has_control(url) || url.contains(' ') {
+                return fail("dashboard must be an https address".into());
+            }
+        }
+        if self.prefixes.iter().any(|p| p.len() < 3 || has_control(p)) {
+            return fail("a prefix needs at least 3 characters".into());
+        }
+        if let Some(identify) = &self.identify {
+            self.validate_step("identify", &identify.request, &["GET"], &[], false)?;
+            match identify.format.as_deref() {
+                None | Some("json") => {
+                    if let Some((_, path)) = identify
+                        .fields
+                        .iter()
+                        .find(|(_, path)| !valid_json_path(path))
+                    {
+                        return fail(format!("identify field {path:?} must look like $.a.b"));
+                    }
+                }
+                Some("xml") => {
+                    let plain = |tag: &String| tag.bytes().all(|b| b.is_ascii_alphanumeric());
+                    if !identify.fields.values().all(plain) {
+                        return fail("an xml field is one tag name".into());
+                    }
+                }
+                Some(other) => return fail(format!("unknown identify format {other:?}")),
+            }
+            if identify.fields.is_empty() {
+                return fail("identify needs at least one field".into());
+            }
+        }
+        if let Some(template) = &self.suggested_name {
+            let available: Vec<&str> = self
+                .identify
+                .iter()
+                .flat_map(|identify| identify.fields.keys().map(String::as_str))
+                .collect();
+            check_placeholders(template, &available).map_err(RecipeError)?;
         }
         if has_control(&self.auth.prefix) {
             return fail("auth.prefix contains a control character".into());
@@ -173,6 +253,10 @@ impl Recipe {
             return fail("revoke must use {id}, or it cannot say which key to revoke".into());
         }
         Ok(())
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.provider)
     }
 
     pub fn can_rotate(&self) -> bool {
@@ -526,6 +610,31 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
         assert!(Recipe::parse(&text.replace("[400]", "[500]")).is_err());
         let half = format!("{text}revoke: {{ method: DELETE, path: \"/k/{{id}}\" }}\n");
         assert!(Recipe::parse(&half).unwrap_err().0.contains("go together"));
+    }
+
+    #[test]
+    fn a_provider_file_is_checked_too() {
+        let base = "schema: 1\nprovider: x\nhosts: [api.x.com]\nauth: { header: A }\nverify: { method: GET, path: /me }\n";
+        let with = |extra: &str| Recipe::parse(&format!("{base}{extra}"));
+        assert!(with("dashboard: http://x.com\n").is_err());
+        assert!(with("prefixes: [x]\n").is_err());
+        assert!(
+            with("identify: { request: { method: POST, path: /me }, fields: { a: $.a } }\n")
+                .is_err()
+        );
+        assert!(with("identify: { request: { method: GET, path: /me }, fields: {} }\n").is_err());
+        assert!(with(
+            "identify: { request: { method: GET, path: /me }, fields: { a: not-a-path } }\n"
+        )
+        .is_err());
+        assert!(with("suggested_name: \"X {account}\"\n").is_err());
+        let good = with(
+            "name: X\ndashboard: https://x.com/keys\nprefixes: [xk_]\nidentify: { request: { method: GET, path: /me }, fields: { account: $.a } }\nsuggested_name: \"X · {account}\"\n",
+        )
+        .unwrap();
+        assert_eq!(good.display_name(), "X");
+        assert!(Recipe::parse(&base.replace("{ header: A }", "{ type: magic }")).is_err());
+        assert!(Recipe::parse(&base.replace("{ header: A }", "{ type: aws_sigv4 }")).is_err());
     }
 
     #[test]

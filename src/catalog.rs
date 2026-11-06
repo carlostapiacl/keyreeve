@@ -60,6 +60,9 @@ pub struct Edit {
     pub level: Option<Level>,
     pub recipes: Option<Vec<String>>,
     pub field: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub criticality: Option<u8>,
 }
 
 pub fn parse_edits(text: &str) -> Result<BTreeMap<String, Edit>, String> {
@@ -75,11 +78,14 @@ pub struct Rule {
     #[serde(default)]
     pub tags: Vec<String>,
     pub level: Option<Level>,
+    /// How bad it would be if this key leaked, from 1 to 5. The highest rule wins.
+    pub criticality: Option<u8>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileOverride {
+    pub criticality: Option<u8>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub level: Option<Level>,
@@ -124,10 +130,11 @@ pub struct Row {
     pub last_checked: String,
     pub recipes: Vec<String>,
     pub field: String,
+    pub name: String,
+    pub description: String,
+    /// 1 to 5, or 0 if nobody rated it.
+    pub criticality: u8,
 }
-
-/// Prefixes that belong to one provider, and whose recipe ships with keyreeve.
-const PROVEN_KINDS: &[&str] = &["anthropic", "github", "gitlab", "sentry", "supabase"];
 
 pub fn parse_inventory(text: &str) -> Result<Vec<InventoryItem>, String> {
     let inventory: Inventory = serde_json::from_str(text).map_err(|e| e.to_string())?;
@@ -183,6 +190,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
     let is_public_key = item.path.ends_with(".pub");
     let mut level = None::<Level>;
     let mut reviewed = false;
+    let mut criticality = 0_u8;
 
     let haystack: Vec<String> = std::iter::once(&item.path)
         .chain(&item.fields)
@@ -199,6 +207,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
             tags.extend(rule.tags.iter().cloned());
             // The most restrictive rule wins, so a broad rule cannot loosen a narrow one.
             level = level.max(rule.level);
+            criticality = criticality.max(rule.criticality.unwrap_or(0));
         }
     }
     if let Some(file) = rules.files.get(&item.path) {
@@ -215,12 +224,16 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
     let mut recipes = file.map(|f| f.recipes.clone()).unwrap_or_default();
     if recipes.is_empty() && item.format == "single-value" {
         if let [kind] = item.kinds.as_slice() {
-            if PROVEN_KINDS.contains(&kind.as_str()) {
+            if crate::providers::proven(kind) {
                 recipes.push(kind.clone());
             }
         }
     }
+    if let Some(rated) = file.and_then(|f| f.criticality) {
+        criticality = rated;
+    }
     let mut field = file.and_then(|f| f.field.clone()).unwrap_or_default();
+    let (mut name, mut description) = (String::new(), String::new());
     let mut level = level;
     let mut tags: Vec<String> = tags.into_iter().collect();
     if let Some(edit) = rules.edits.get(&item.path) {
@@ -235,6 +248,9 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         if let Some(edited) = &edit.field {
             field = edited.clone();
         }
+        name = edit.name.clone().unwrap_or_default();
+        description = edit.description.clone().unwrap_or_default();
+        criticality = edit.criticality.unwrap_or(criticality);
     }
     Row {
         path: item.path.clone(),
@@ -249,12 +265,15 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         last_checked: String::new(),
         recipes,
         field,
+        name,
+        description,
+        criticality: criticality.min(5),
     }
 }
 
 pub fn to_csv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field\n",
+        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field,name,description,criticality\n",
     );
     for row in rows {
         let cells = [
@@ -270,6 +289,9 @@ pub fn to_csv(rows: &[Row]) -> String {
             row.last_checked.clone(),
             csv_cell(&row.recipes.join(" ")),
             csv_cell(&row.field),
+            csv_cell(&row.name),
+            csv_cell(&row.description),
+            row.criticality.to_string(),
         ];
         out.push_str(&cells.join(","));
         out.push('\n');
@@ -503,6 +525,32 @@ files: { deploy.key: { recipes: [github] } }
         assert_eq!(rows[1].level, Level::Never);
         assert_eq!(rows[1].tags, ["ops"]);
         assert!(parse_edits(r#"{"a":{"level":"sometimes"}}"#).is_err());
+    }
+
+    #[test]
+    fn criticality_takes_the_highest_rule_and_an_edit_has_the_last_word() {
+        let mut with_rules = rules(
+            r#"
+rules:
+  - { match: [prod], criticality: 3 }
+  - { match: [pay], criticality: 5 }
+files: { fixed.txt: { criticality: 2 } }
+"#,
+        );
+        with_rules.edits = parse_edits(r#"{"edited-pay.txt":{"criticality":1}}"#).unwrap();
+        let rows = build(
+            &[
+                item("prod-pay.txt"),
+                item("prod.txt"),
+                item("fixed.txt"),
+                item("edited-pay.txt"),
+                item("other.txt"),
+            ],
+            &with_rules,
+            &[],
+        );
+        let levels: Vec<u8> = rows.iter().map(|row| row.criticality).collect();
+        assert_eq!(levels, [5, 3, 2, 1, 0]);
     }
 
     #[test]

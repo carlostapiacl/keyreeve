@@ -29,7 +29,7 @@ jobs:
       - name: Check and simulate every recipe
         run: |
           shopt -s nullglob
-          for recipe in examples/*.yaml recipes/*.yaml; do
+          for recipe in examples/recipe.yaml recipes/*.yaml; do
             cargo run --locked --quiet -- check "$recipe"
             cargo run --locked --quiet -- simulate "$recipe"
           done

@@ -95,8 +95,8 @@ struct ActionTests {
         window.confirm(at: now)
         XCTAssertEqual(window.isOpen(minutes: 5, at: now.addingTimeInterval(299)), true)
         XCTAssertFalse(window.isOpen(minutes: 5, at: now.addingTimeInterval(300)))
-        XCTAssertFalse(window.isOpen(minutes: 0, at: now), "zero means every time")
-        XCTAssertFalse(window.isOpen(minutes: 5, at: now.addingTimeInterval(-10)), "a clock moved back ends it")
+        XCTAssertFalse(window.isOpen(minutes: 0, at: now))  // zero means every time
+        XCTAssertFalse(window.isOpen(minutes: 5, at: now.addingTimeInterval(-10)))  // a clock moved back ends it
         window.close()
         XCTAssertFalse(window.isOpen(minutes: 5, at: now))
     }

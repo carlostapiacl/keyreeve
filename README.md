@@ -127,8 +127,8 @@ open app/dist/Keyreeve.app
 ```
 
 It reads `~/.keyreeve/catalog.csv`. The overview shows what to do first, such as an old copy that still works or a key
-that was rejected, along with how many keys were checked, how old the files are and what happened lately. Refresh
-scans the folder again. Each use through the vault is recorded with the key's name and the program's name, and no value. The Check button sends one read-only request for each key, and keys set
+that was rejected, along with how many keys were checked, how old the files are and what happened lately. It scans
+the folder each time it opens, and Refresh scans it again. Each use through the vault is recorded with the key's name and the program's name, and no value. The Check button sends one read-only request for each key, and keys set
 to `ask` need your fingerprint first. Keys set to `never` are not offered. The build is not notarized, so macOS warns
 you the first time.
 

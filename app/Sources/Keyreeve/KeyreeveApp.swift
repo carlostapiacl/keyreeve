@@ -46,6 +46,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Keeps what opens on screen true to the disk, without asking anything on the way in.
+    private func refreshIfFolderKnown() {
+        if files.keysFolder() != nil { refresh() }
+    }
+
     /// Scans the folder again, so what the window says matches the disk.
     func refresh() {
         guard !checking else { return }
@@ -122,6 +127,7 @@ final class AppModel: ObservableObject {
                     self.lockMessage = nil
                     self.unlocked = true
                     self.load()
+                    self.refreshIfFolderKnown()
                 } else {
                     self.lockMessage = "Not unlocked. Try again."
                 }

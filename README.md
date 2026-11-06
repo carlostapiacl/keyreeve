@@ -47,14 +47,17 @@ crash. The journal holds key ids and step names, never values.
 
 ## Try it
 
-You need [Rust](https://rustup.rs). This runs offline and uses no real keys.
+You need [Rust](https://rustup.rs). There are no prebuilt binaries yet. This runs offline and uses no real keys.
 
 ```bash
+cargo install --git https://github.com/carlostapiacl/keyreeve
 git clone https://github.com/carlostapiacl/keyreeve
 cd keyreeve
-cargo run -- check examples/recipe.yaml
-cargo run -- simulate examples/recipe.yaml
+keyreeve check examples/recipe.yaml
+keyreeve simulate examples/recipe.yaml
 ```
+
+Tested on macOS and, in CI, on Linux. Windows has not been tried.
 
 `simulate` builds a fake provider from the recipe, injects failures and stops the process at
 every operation, then again at every operation of the recovery. After each stop it checks that:
@@ -69,18 +72,25 @@ real provider behaves as the recipe describes.
 
 ## See what you have
 
+If your keys live in a folder of text files, start here. Neither command changes a file.
+
 ```bash
-cargo run -- inventory ~/my-keys --out ~/.keyreeve/inventory.json
+keyreeve inventory ~/my-keys --out ~/.keyreeve/inventory.json
+keyreeve catalog ~/.keyreeve/inventory.json --rules ~/.keyreeve/rules.yaml --out ~/.keyreeve/catalog.csv
 ```
 
-This describes a folder of keys: file names, dates, permissions, formats, labels and the kind of key,
-recognized by its prefix. It reads `.env` files, JSON and loose notes with `=`, `:`, `=>`, `|` or tabs, in
-any mix. Whatever follows a separator is ignored. From comments and notes it keeps only words on a closed
-list, such as `token` or a provider's name. A label with any other word is counted but not shown.
+`inventory` describes each file: name, date, permissions, format, labels and the kind of key, recognized
+by its prefix. It reads `.env` files, JSON and loose notes with `=`, `:`, `=>`, `|` or tabs, in any mix.
+Whatever follows a separator is ignored. From comments and notes it keeps only words on a closed list,
+such as `token` or a provider's name, and a label with any other word is counted but not shown. To allow
+your own words, such as project names, pass `--words` with a file of one word per line.
 
-Values stay out, so you can hand the report to an agent that must not see them. File names and labels do
-go in, so keep the report private. A password in capitals placed before a separator would read as a
-variable name, and a file named after a secret would show that name. It is written with mode 600.
+`catalog` gives each file tags and an access level from [your rules](examples/rules.yaml), and tells you
+which files they do not cover. It reads only the inventory, so it never opens a key file.
+
+Values stay out of both, so you can hand them to an agent that must not see your keys. File names and
+labels do go in, so keep them private. They are written with mode 600. A password in capitals placed before a
+separator would read as a variable name, and a file named after a secret would show that name.
 
 ## What is missing
 

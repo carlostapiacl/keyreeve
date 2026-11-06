@@ -92,12 +92,36 @@ Values stay out of both, so you can hand them to an agent that must not see your
 labels do go in, so keep them private. They are written with mode 600. A password in capitals placed before a
 separator would read as a variable name, and a file named after a secret would show that name.
 
+## Check whether a key still works
+
+```bash
+keyreeve recipes
+keyreeve verify hetzner --key-file ~/my-keys/hetzner.txt
+keyreeve verify github --key-file ~/my-keys/app.env --field GITHUB_TOKEN
+keyreeve verify --plan ~/.keyreeve/plan.yaml --keys ~/my-keys
+```
+
+Each check is one GET request, so it cannot change anything. It prints the result and never the key. A plan
+lists many keys at once:
+
+```yaml
+keys:
+  - { file: hetzner.txt, recipe: hetzner }
+  - { file: app.env, recipe: github, field: GITHUB_TOKEN }
+```
+
+A recipe with only `verify` is enough to check a key, and it is the easiest way to contribute. A rejected key may
+still be alive for other uses: a restricted token can fail a check it has no permission for. Cloudflare's check
+only covers user tokens, so an account token reads as rejected. A pass says the key works, and not what it may do.
+Only the `hetzner` recipe has been run against a real key. The others have only seen fake keys, which each provider
+rejected.
+
 ## What is missing
 
 - `keyreeve rotate` and `resume` as commands, and a test against a real provider
 - Keychain storage (macOS and Linux first)
 - Places to update: `.env`, GitHub, Netlify
-- Recipes for real providers
+- Recipes that can rotate a real provider
 - A local panel to see each key, its age and its history
 - Approvals that expire
 - Integration with [seisin](https://github.com/carlostapiacl/seisin), which gives each agent its own keys

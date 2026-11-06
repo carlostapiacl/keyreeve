@@ -36,9 +36,10 @@ pub struct Recipe {
     pub auth: Auth,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    pub create: Step,
+    /// With `revoke`, lets the recipe rotate. A recipe without them only checks a key.
+    pub create: Option<Step>,
     pub verify: Step,
-    pub revoke: Step,
+    pub revoke: Option<Step>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,6 +60,9 @@ pub struct Step {
     pub expect: Option<u16>,
     pub value_from: Option<String>,
     pub id_from: Option<String>,
+    /// Statuses a provider uses for a bad key, besides 401. Only in `verify`.
+    #[serde(default)]
+    pub reject: Vec<u16>,
 }
 
 /// A request ready to send, with its placeholders filled in.
@@ -128,29 +132,40 @@ impl Recipe {
             }
         }
 
-        self.validate_step(
-            "create",
-            &self.create,
-            &["POST", "PUT"],
-            &["key_name"],
-            true,
-        )?;
         self.validate_step("verify", &self.verify, &["GET", "POST"], &["id"], false)?;
+        if let Some(status) = self
+            .verify
+            .reject
+            .iter()
+            .find(|s| !(400..=499).contains(*s))
+        {
+            return fail(format!("verify: reject {status} must be a 4xx status"));
+        }
+        if self.create.is_some() != self.revoke.is_some() {
+            return fail("create and revoke go together, or a key could never be removed".into());
+        }
+        let (Some(create), Some(revoke)) = (&self.create, &self.revoke) else {
+            if self.verify.path.contains("{id}") {
+                return fail("verify cannot use {id} in a recipe without create".into());
+            }
+            return Ok(());
+        };
+        self.validate_step("create", create, &["POST", "PUT"], &["key_name"], true)?;
         self.validate_step(
             "revoke",
-            &self.revoke,
+            revoke,
             &["DELETE", "POST", "PUT", "PATCH"],
             &["id"],
             false,
         )?;
-
-        let value_from = self.create.value_from.as_deref();
-        if value_from == self.create.id_from.as_deref() {
+        if !create.reject.is_empty() || !revoke.reject.is_empty() {
+            return fail("reject only belongs in verify".into());
+        }
+        if create.value_from.as_deref() == create.id_from.as_deref() {
             return fail("create.value_from and create.id_from must differ".into());
         }
-        let revoke_names_id = self.revoke.path.contains("{id}")
-            || self
-                .revoke
+        let revoke_names_id = revoke.path.contains("{id}")
+            || revoke
                 .body
                 .as_ref()
                 .is_some_and(|body| body.to_string().contains("{id}"));
@@ -158,6 +173,20 @@ impl Recipe {
             return fail("revoke must use {id}, or it cannot say which key to revoke".into());
         }
         Ok(())
+    }
+
+    pub fn can_rotate(&self) -> bool {
+        self.create.is_some() && self.revoke.is_some()
+    }
+
+    /// Only for recipes where `can_rotate` is true, which the engine checks first.
+    pub fn create_step(&self) -> &Step {
+        self.create.as_ref().expect("the recipe can rotate")
+    }
+
+    /// Only for recipes where `can_rotate` is true, which the engine checks first.
+    pub fn revoke_step(&self) -> &Step {
+        self.revoke.as_ref().expect("the recipe can rotate")
     }
 
     fn validate_step(
@@ -482,10 +511,21 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
     fn a_returned_id_cannot_escape_the_path() {
         let recipe = Recipe::parse(GOOD).unwrap();
         let rendered = recipe
-            .revoke
+            .revoke_step()
             .render(&recipe, &[("id", "../../admin?x=@evil.org")]);
         assert_eq!(rendered.path, "/v1/keys/..%2F..%2Fadmin%3Fx%3D%40evil.org");
         assert_eq!(rendered.host, "api.example.com");
+    }
+
+    #[test]
+    fn a_recipe_can_only_check_a_key() {
+        let text = "schema: 1\nprovider: x\nhosts: [api.x.com]\nauth: { header: Authorization }\nverify: { method: GET, path: /me, reject: [400] }\n";
+        let recipe = Recipe::parse(text).unwrap();
+        assert!(!recipe.can_rotate());
+        assert!(Recipe::parse(&text.replace("/me", "/k/{id}")).is_err());
+        assert!(Recipe::parse(&text.replace("[400]", "[500]")).is_err());
+        let half = format!("{text}revoke: {{ method: DELETE, path: \"/k/{{id}}\" }}\n");
+        assert!(Recipe::parse(&half).unwrap_err().0.contains("go together"));
     }
 
     #[test]

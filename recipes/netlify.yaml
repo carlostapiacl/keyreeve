@@ -1,0 +1,6 @@
+# Checks a key. It cannot rotate one yet.
+schema: 1
+provider: netlify
+hosts: [api.netlify.com]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /api/v1/user }

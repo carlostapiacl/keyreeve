@@ -1,0 +1,6 @@
+# Checks a key. It cannot rotate one yet.
+schema: 1
+provider: hetzner
+hosts: [api.hetzner.cloud]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: "/v1/servers?per_page=1" }

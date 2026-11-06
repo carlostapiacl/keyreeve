@@ -1,7 +1,7 @@
 //! Sends a recipe's requests. Only here does a credential reach the network, and only over
 //! HTTPS, to a host the recipe declared, with redirects off.
 
-use crate::recipe::{Recipe, Rendered};
+use crate::recipe::{Recipe, Rendered, Step};
 use crate::secret::Secret;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -13,6 +13,29 @@ pub struct Request {
     pub rendered: Rendered,
     pub headers: Vec<(String, String)>,
     pub auth: (String, Secret),
+}
+
+impl Request {
+    /// Builds a request for a step. The credential goes only in the recipe's auth header.
+    pub fn for_step(
+        recipe: &Recipe,
+        step: &Step,
+        vars: &[(&str, &str)],
+        credential: &Secret,
+    ) -> Self {
+        Self {
+            rendered: step.render(recipe, vars),
+            headers: recipe
+                .headers
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+            auth: (
+                recipe.auth.header.clone(),
+                Secret::new(format!("{}{}", recipe.auth.prefix, credential.expose())),
+            ),
+        }
+    }
 }
 
 pub struct Response {

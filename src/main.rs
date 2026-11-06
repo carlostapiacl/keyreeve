@@ -2,6 +2,7 @@ use keyreeve::catalog;
 use keyreeve::inventory::{self, parse_words, ExtraWords};
 use keyreeve::recipe::Recipe;
 use keyreeve::simulate;
+use keyreeve::verify;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::ExitCode;
@@ -19,6 +20,12 @@ Usage:
       Describe a folder of keys, without their values.
   keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>]
       Give each file tags and an access level, from your rules.
+  keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
+      Check whether a key still works, with one read-only request.
+  keyreeve verify --plan <plan.yaml> --keys <folder>
+      Check several keys.
+  keyreeve recipes
+      List the recipes that come with keyreeve.
   keyreeve --version
 ";
 
@@ -107,6 +114,53 @@ fn run_catalog(args: &[String]) -> ExitCode {
     }
 }
 
+fn run_verify(args: &[String]) -> ExitCode {
+    if args.first().map(String::as_str) == Some("--plan") {
+        let [_, plan, flag, keys] = args else {
+            return usage();
+        };
+        if flag != "--keys" {
+            return usage();
+        }
+        return match verify::run_plan(Path::new(plan), Path::new(keys)) {
+            Ok(lines) => {
+                let mut code = ExitCode::SUCCESS;
+                for (label, verdict) in lines {
+                    println!("{label}: {verdict}");
+                    if !verdict.works() {
+                        code = ExitCode::FAILURE;
+                    }
+                }
+                code
+            }
+            Err(error) => {
+                eprintln!("verify: {error}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    let Some((name, found)) = options(args, &["--key-file", "--field"]) else {
+        return usage();
+    };
+    let Some(file) = found.get("--key-file").copied() else {
+        return usage();
+    };
+    match verify::run_one(name, Path::new(file), found.get("--field").copied()) {
+        Ok(verdict) => {
+            println!("{file}: {verdict}");
+            if verdict.works() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("verify: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 const MAX_VIOLATIONS_SHOWN: usize = 20;
 
 fn load(path: &str) -> Result<Recipe, String> {
@@ -134,6 +188,18 @@ fn main() -> ExitCode {
         }
         "inventory" => return run_inventory(paths),
         "catalog" => return run_catalog(paths),
+        "verify" => return run_verify(paths),
+        "recipes" => {
+            for (name, recipe) in verify::builtin_recipes() {
+                let what = if recipe.can_rotate() {
+                    "rotate"
+                } else {
+                    "check"
+                };
+                println!("{name}: {what}, talks only to {}", recipe.hosts.join(", "));
+            }
+            return ExitCode::SUCCESS;
+        }
         "check" | "simulate" if !paths.is_empty() => {}
         _ => {
             return usage();
@@ -152,10 +218,19 @@ fn main() -> ExitCode {
         };
         if command == "check" {
             println!(
-                "{path}: ok, {} talks only to {}",
+                "{path}: ok, {} talks only to {}{}",
                 recipe.provider,
-                recipe.hosts.join(", ")
+                recipe.hosts.join(", "),
+                if recipe.can_rotate() {
+                    ""
+                } else {
+                    ", check only"
+                }
             );
+            continue;
+        }
+        if !recipe.can_rotate() {
+            println!("{path}: this recipe only checks a key, so there is nothing to simulate");
             continue;
         }
         let report = simulate::run(&recipe);

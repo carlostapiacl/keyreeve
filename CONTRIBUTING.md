@@ -6,8 +6,11 @@ where the provider documents the prefix. A label word must be common enough that
 
 ## Writing a recipe
 
-Copy `examples/recipe.yaml` to `recipes/<provider>.yaml`. The `recipes/` folder does not exist yet, so
-yours may be the first.
+A recipe that only checks a key needs `verify` and no `create` or `revoke`. See `recipes/hetzner.yaml`. Add it to
+`BUILTIN` in `src/verify.rs` so it ships with the tool. The check must be a GET. Run it with a made-up key first: if
+the provider answers something other than 401, list that status in `reject`.
+
+To rotate too, copy `examples/recipe.yaml` to `recipes/<provider>.yaml`.
 
 | field | what it is |
 |---|---|
@@ -17,9 +20,9 @@ yours may be the first.
 | `auth.header` | the header that carries the credential |
 | `auth.prefix` | text before the credential, such as `"Bearer "` |
 | `headers` | optional fixed headers, such as an API version |
-| `create` | creates a key. Needs `value_from` and `id_from`, the paths to each in the answer |
-| `verify` | a request that only succeeds with a working key. It runs with the new key |
-| `revoke` | revokes a key by `{id}`. A 404 counts as already revoked |
+| `create` | optional, creates a key. Needs `value_from` and `id_from`, the paths to each in the answer |
+| `verify` | a request that only succeeds with a working key. `reject` lists 4xx statuses that mean a bad key, besides 401 |
+| `revoke` | optional, goes with `create`. Revokes a key by `{id}`. A 404 counts as already revoked |
 
 Each step takes `method`, `path` and, when needed, `host`, `body` and `expect` (a 2xx status).
 

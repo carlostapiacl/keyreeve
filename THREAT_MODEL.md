@@ -25,6 +25,10 @@ wiped from memory on drop. Provider responses are kept out of errors, and client
 because they can quote the request. The simulator checks the journal, errors and outcomes for its
 test values.
 
+**A check that changes something.** `keyreeve verify` only sends a GET, and refuses a recipe whose check is another
+method. Provider answers are ignored apart from their status. A provider can still count or log the request, and
+a bad GET endpoint on its side could have effects.
+
 ## What it does not protect against
 
 - **A recipe that lists a malicious host.** It can send the credential to any host it declares.

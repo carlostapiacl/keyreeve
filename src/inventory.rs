@@ -432,7 +432,7 @@ fn read_lines(text: &str, extra: &ExtraWords, item: &mut Item) {
     }
 }
 
-fn strip_comment(line: &str) -> Option<&str> {
+pub(crate) fn strip_comment(line: &str) -> Option<&str> {
     COMMENT_MARKS
         .iter()
         .find_map(|mark| line.strip_prefix(mark))
@@ -447,7 +447,7 @@ fn separator_at(line: &str) -> Option<(usize, usize)> {
 }
 
 /// Splits a line into its label and whatever follows. The second part is never kept.
-fn split_label(line: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_label(line: &str) -> Option<(&str, &str)> {
     let (at, len) = separator_at(line)?;
     let rest = &line[at + len..];
     if rest.starts_with("//") {

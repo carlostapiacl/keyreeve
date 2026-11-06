@@ -339,13 +339,15 @@ fn decode(bytes: &[u8]) -> Option<Zeroizing<String>> {
         .or_else(|| bytes.strip_prefix(&[0xFE, 0xFF]))
     {
         let big_endian = bytes[0] == 0xFE;
+        let (pairs, _odd_byte) = rest.as_chunks::<2>();
         let units: Zeroizing<Vec<u16>> = Zeroizing::new(
-            rest.chunks_exact(2)
-                .map(|pair| {
+            pairs
+                .iter()
+                .map(|&pair| {
                     if big_endian {
-                        u16::from_be_bytes([pair[0], pair[1]])
+                        u16::from_be_bytes(pair)
                     } else {
-                        u16::from_le_bytes([pair[0], pair[1]])
+                        u16::from_le_bytes(pair)
                     }
                 })
                 .collect(),

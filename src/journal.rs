@@ -1,0 +1,255 @@
+//! An append-only record of each rotation. It holds key ids and step names, never values.
+//! A rotation resumes from this record after a crash.
+
+use serde::{Deserialize, Serialize};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Event {
+    Started { old_id: Option<String> },
+    Created { new_id: String },
+    PendingStored,
+    Verified,
+    SinkUpdated { sink: String },
+    Promoted { revoke_after: u64 },
+    OldRevoked,
+    Completed,
+    RollbackStarted { reason: String },
+    RolledBack { reason: String },
+    ManualAction { what: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entry {
+    pub rotation: u64,
+    pub key: String,
+    pub at: u64,
+    #[serde(flatten)]
+    pub event: Event,
+}
+
+/// Where a rotation stands, derived from the record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Idle,
+    Started,
+    Created,
+    PendingStored,
+    Verified,
+    Promoted,
+    OldRevoked,
+    RollingBack,
+}
+
+pub trait Backend {
+    fn read_lines(&self) -> io::Result<Vec<String>>;
+    /// Returns only once the line is durable.
+    fn append(&mut self, line: &str) -> io::Result<()>;
+}
+
+pub struct Journal {
+    backend: Box<dyn Backend>,
+    entries: Vec<Entry>,
+}
+
+impl Journal {
+    pub fn open(backend: Box<dyn Backend>) -> io::Result<Self> {
+        let lines = backend.read_lines()?;
+        let mut entries = Vec::with_capacity(lines.len());
+        for (index, line) in lines.iter().enumerate() {
+            match serde_json::from_str(line) {
+                Ok(entry) => entries.push(entry),
+                // A crash can tear the last line, and only the last one.
+                Err(_) if index + 1 == lines.len() => {}
+                Err(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("journal line {} is damaged", index + 1),
+                    ))
+                }
+            }
+        }
+        Ok(Self { backend, entries })
+    }
+
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    pub fn append(&mut self, key: &str, at: u64, event: Event) -> io::Result<()> {
+        let rotation = self
+            .entries
+            .iter()
+            .filter(|entry| entry.key == key && matches!(entry.event, Event::Started { .. }))
+            .count() as u64;
+        let rotation = if matches!(event, Event::Started { .. }) {
+            rotation + 1
+        } else {
+            rotation
+        };
+        let entry = Entry {
+            rotation,
+            key: key.to_owned(),
+            at,
+            event,
+        };
+        let line = serde_json::to_string(&entry).map_err(io::Error::other)?;
+        self.backend.append(&line)?;
+        self.entries.push(entry);
+        Ok(())
+    }
+
+    /// The events of the latest rotation of this key.
+    pub fn latest(&self, key: &str) -> Vec<&Event> {
+        let Some(rotation) = self
+            .entries
+            .iter()
+            .filter(|entry| entry.key == key)
+            .map(|entry| entry.rotation)
+            .max()
+        else {
+            return Vec::new();
+        };
+        self.entries
+            .iter()
+            .filter(|entry| entry.key == key && entry.rotation == rotation)
+            .map(|entry| &entry.event)
+            .collect()
+    }
+
+    pub fn phase(&self, key: &str) -> Phase {
+        let mut phase = Phase::Idle;
+        for event in self.latest(key) {
+            phase = match event {
+                Event::Started { .. } => Phase::Started,
+                Event::Created { .. } => Phase::Created,
+                Event::PendingStored => Phase::PendingStored,
+                Event::Verified => Phase::Verified,
+                Event::Promoted { .. } => Phase::Promoted,
+                Event::OldRevoked => Phase::OldRevoked,
+                Event::RollbackStarted { .. } => Phase::RollingBack,
+                Event::Completed | Event::RolledBack { .. } => Phase::Idle,
+                Event::SinkUpdated { .. } | Event::ManualAction { .. } => phase,
+            };
+        }
+        phase
+    }
+
+    /// The id of the key that the last completed rotation left in place.
+    pub fn current_id(&self, key: &str) -> Option<String> {
+        let mut current = None;
+        let mut candidate = None;
+        for entry in self.entries.iter().filter(|entry| entry.key == key) {
+            match &entry.event {
+                Event::Created { new_id } => candidate = Some(new_id.clone()),
+                Event::Promoted { .. } => current = candidate.clone(),
+                _ => {}
+            }
+        }
+        current
+    }
+}
+
+/// A journal in a file with mode 0600, synced to disk on each append.
+pub struct FileBackend {
+    path: PathBuf,
+}
+
+impl FileBackend {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_owned(),
+        }
+    }
+}
+
+impl Backend for FileBackend {
+    fn read_lines(&self) -> io::Result<Vec<String>> {
+        let mut text = String::new();
+        match File::open(&self.path) {
+            Ok(mut file) => {
+                file.read_to_string(&mut text)?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        }
+        Ok(text.lines().map(str::to_owned).collect())
+    }
+
+    fn append(&mut self, line: &str) -> io::Result<()> {
+        let created = !self.path.exists();
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&self.path)?;
+        file.write_all(format!("{line}\n").as_bytes())?;
+        file.sync_all()?;
+        if created {
+            if let Some(parent) = self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                fs::File::open(parent)?.sync_all()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "keyreeve-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_file(&path);
+        path
+    }
+
+    #[test]
+    fn survives_reopening_and_a_torn_last_line() {
+        let path = temp_path("torn");
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal
+            .append("k", 1, Event::Started { old_id: None })
+            .unwrap();
+        journal.append("k", 2, Event::PendingStored).unwrap();
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b"{\"rotation\":1,\"ke").unwrap();
+
+        let journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        assert_eq!(journal.entries().len(), 2);
+        assert_eq!(journal.phase("k"), Phase::PendingStored);
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn refuses_damage_in_the_middle() {
+        let path = temp_path("damaged");
+        fs::write(&path, "not json\n{}\n").unwrap();
+        assert!(Journal::open(Box::new(FileBackend::new(&path))).is_err());
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_path("mode");
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal
+            .append("k", 1, Event::Started { old_id: None })
+            .unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        fs::remove_file(&path).unwrap();
+    }
+}

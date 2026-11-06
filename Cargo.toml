@@ -1,0 +1,19 @@
+[package]
+name = "keyreeve"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rotate API keys on your own machine, with recipes the community writes for each provider."
+repository = "https://github.com/carlostapiacl/keyreeve"
+keywords = ["secrets", "rotation", "api-keys", "security", "cli"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_norway = "0.9.42"
+ureq = "3.5"
+zeroize = "1.9"
+
+[lints.rust]
+unsafe_code = "forbid"

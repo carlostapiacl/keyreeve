@@ -1,0 +1,13 @@
+# Fictional provider. Copy this file to write a recipe for a real one.
+schema: 1
+provider: example
+hosts: [api.example.com]
+auth: { header: Authorization, prefix: "Bearer " }
+create:
+  method: POST
+  path: /v1/keys
+  body: { name: "{key_name}" }
+  value_from: $.secret
+  id_from: $.id
+verify: { method: GET, path: /v1/me }
+revoke: { method: DELETE, path: "/v1/keys/{id}" }

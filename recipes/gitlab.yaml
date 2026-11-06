@@ -12,3 +12,11 @@ identify:
   request: { method: GET, path: /api/v4/user }
   fields: { account: $.username, email: $.email, name: $.name }
 suggested_name: "GitLab · {account}"
+# Rotating ends the old token at once. Reusing a replaced token makes GitLab revoke the whole family, so a
+# lost answer means making a new one at the page above. Needs the self_rotate or api scope.
+rotation: single
+create:
+  method: POST
+  path: /api/v4/personal_access_tokens/self/rotate
+  value_from: $.token
+  id_from: $.id

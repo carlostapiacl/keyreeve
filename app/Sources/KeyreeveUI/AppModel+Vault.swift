@@ -10,7 +10,7 @@ extension AppModel {
         guard !vaultStore.exists else { return }
         do {
             let (enclave, blob) = try EnclaveRecipient.create()
-            vaultDraft = VaultDraft(enclave: enclave, blob: blob, recovery: P256.KeyAgreement.PrivateKey())
+            vaultDraft = VaultDraft(enclave: enclave, blob: blob)
         } catch {
             message = T("This Mac could not create a key in its chip")
         }

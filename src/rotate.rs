@@ -5,6 +5,8 @@
 //! it on stdin. Writing needs no fingerprint, so each write goes straight to the vault's own tool
 //! and is durable before the engine records the step.
 
+#[cfg(test)]
+use crate::engine::SinkError;
 use crate::engine::{Engine, KeyConfig, Outcome, Sink};
 use crate::journal::{Event, FileBackend, Journal, Phase};
 use crate::keys::{holds_key, swap_key, MIN_SWAP_CHARS};
@@ -82,6 +84,11 @@ fn frozen_plan(journal: &Path, key: &str) -> Option<Plan> {
     fs::read(frozen_path(journal, key))
         .ok()
         .and_then(|text| serde_json::from_slice(&text).ok())
+}
+
+/// A key a person made by hand, sent once on stdin and never saved under this name.
+fn incoming_name(key: &str) -> String {
+    format!("{key}#incoming")
 }
 
 fn pending_name(key: &str) -> String {
@@ -272,7 +279,10 @@ pub fn run(
 ) -> Result<Report, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
     let mut plan: Plan = serde_json::from_str(&text).map_err(|e| format!("the plan: {e}"))?;
-    if plan.key.ends_with("#pending") || plan.key.ends_with("#previous") {
+    if plan.key.ends_with("#pending")
+        || plan.key.ends_with("#previous")
+        || plan.key.ends_with("#incoming")
+    {
         return Err("that name is kept for a rotation's temporary copies".into());
     }
     // Two rotations at once would each trust a journal the other is changing.
@@ -310,11 +320,19 @@ pub fn run(
         }
     }
     let recipe = resolve(&plan.recipe, plan.host.as_deref())?;
-    if !recipe.can_rotate() {
-        return Err(format!(
-            "keyreeve does not know how to rotate {}",
-            plan.recipe
-        ));
+    let handed_over = sealed.text(&incoming_name(&plan.key)).map(Secret::new);
+    if !open {
+        let by_hand = recipe.can_rotate_by_hand() && handed_over.is_some();
+        if !recipe.can_rotate() && !by_hand {
+            return Err(format!(
+                "keyreeve does not know how to rotate {}",
+                plan.recipe
+            ));
+        }
+        // Checked here too, since a person pasting a key should hear about a bad one at once.
+        if let Some(value) = &handed_over {
+            check_new_key(value.expose())?;
+        }
     }
     // After promotion only the revocation is left, so a retired service cannot block it.
     let places_needed = !matches!(phase, Phase::Promoted | Phase::OldRevoked);
@@ -328,6 +346,7 @@ pub fn run(
         overlap_secs: plan.overlap_secs,
         issued_name: plan.issued_name.clone(),
         known_id: plan.known_id.clone(),
+        handed_over,
     };
     let mut transport = HttpTransport::for_recipe(&recipe);
     let outcome = {
@@ -588,6 +607,7 @@ mod tests {
             overlap_secs: 50,
             issued_name: "n".into(),
             known_id: Some("old-id".into()),
+            handed_over: None,
         };
         let mut first = Scripted {
             verify: [200].into(),
@@ -715,6 +735,7 @@ mod tests {
             overlap_secs: 0,
             issued_name: plan.issued_name.clone(),
             known_id: plan.known_id.clone(),
+            handed_over: None,
         };
         let mut fake = Fake {
             verify_status,
@@ -864,6 +885,7 @@ mod tests {
                 overlap_secs: 0,
                 issued_name: "n".into(),
                 known_id: None,
+                handed_over: None,
             };
             let mut fake = Fake {
                 verify_status: 200,
@@ -963,6 +985,125 @@ mod tests {
         let (_, sinks) = prepare(&plan, &recipe, &dir.join("t"), &sealed, false, false).unwrap();
         assert!(sinks.is_empty());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    const CHECK_ONLY: &str = "schema: 1\nprovider: fake\nhosts: [api.example.com]\nauth: { header: Authorization, prefix: \"Bearer \" }\nverify: { method: GET, path: /me }\n";
+    const SINGLE: &str = "schema: 1\nprovider: fake\nhosts: [api.example.com]\nrotation: single\nauth: { header: Authorization, prefix: \"Bearer \" }\ncreate: { method: POST, path: /rotate, value_from: $.secret, id_from: $.id }\nverify: { method: GET, path: /me }\n";
+
+    type Calls = Vec<(String, String, String)>;
+
+    /// Runs one rotation with these provider answers. Returns what was asked and how it ended.
+    fn rotate_kind(
+        name: &str,
+        text: &str,
+        handed_over: Option<&str>,
+        verify: u16,
+        place: Option<Box<dyn Sink>>,
+    ) -> (Outcome, Calls, Vec<String>, String) {
+        let dir = folder(name);
+        let recipe = Recipe::parse(text).unwrap();
+        let mut record = Journal::open(Box::new(FileBackend::new(dir.join("j")))).unwrap();
+        let mut store = store_with(&dir);
+        let config = KeyConfig {
+            key: "k".into(),
+            admin: "k".into(),
+            overlap_secs: 0,
+            issued_name: "n".into(),
+            known_id: None,
+            handed_over: handed_over.map(Secret::new),
+        };
+        let mut fake = Fake {
+            verify_status: verify,
+            calls: Vec::new(),
+        };
+        let mut place = place;
+        let sinks: Vec<&mut dyn Sink> = match place.as_mut() {
+            Some(sink) => vec![sink.as_mut()],
+            None => Vec::new(),
+        };
+        let outcome = Engine {
+            recipe: &recipe,
+            config: &config,
+            transport: &mut fake,
+            store: &mut store,
+            journal: &mut record,
+            sinks,
+            now: &|| 100,
+        }
+        .rotate()
+        .unwrap();
+        let manual = manual_of(&record, "k");
+        let current = store.current.expose().to_owned();
+        fs::remove_dir_all(dir).unwrap();
+        (outcome, fake.calls, manual, current)
+    }
+
+    #[test]
+    fn a_key_made_by_hand_is_tested_and_the_old_one_is_left_to_a_person() {
+        let new = "made-by-hand-0123456789";
+        let (outcome, calls, manual, current) =
+            rotate_kind("hand", CHECK_ONLY, Some(new), 200, None);
+        assert_eq!(outcome, Outcome::Completed);
+        assert_eq!(current, new);
+        assert!(
+            calls.iter().all(|call| call.0 == "GET"),
+            "nothing but the check"
+        );
+        assert_eq!(calls[0].2, format!("Bearer {new}"));
+        assert_eq!(manual, ["revoke the old key at the provider"]);
+    }
+
+    #[test]
+    fn a_key_made_by_hand_that_fails_changes_nothing() {
+        let (outcome, calls, manual, current) = rotate_kind(
+            "hand-bad",
+            CHECK_ONLY,
+            Some("made-by-hand-0123456789"),
+            401,
+            None,
+        );
+        assert!(matches!(outcome, Outcome::RolledBack { .. }));
+        assert_eq!(current, "old-value-0123456789");
+        assert!(calls.iter().all(|call| call.0 == "GET"));
+        assert_eq!(manual, ["delete the new key you made at the provider"]);
+    }
+
+    #[test]
+    fn a_single_rotation_keeps_going_since_it_cannot_go_back() {
+        let (outcome, calls, manual, current) = rotate_kind("single-ok", SINGLE, None, 200, None);
+        assert_eq!(outcome, Outcome::Completed);
+        assert_eq!(current, "CANARY-new-0123456789");
+        assert!(!calls.iter().any(|call| call.0 == "DELETE"));
+        assert!(manual.is_empty());
+
+        let (outcome, _, manual, current) = rotate_kind("single-bad", SINGLE, None, 401, None);
+        assert_eq!(outcome, Outcome::Completed);
+        assert_eq!(current, "CANARY-new-0123456789");
+        assert_eq!(
+            manual,
+            ["the new key did not pass its check: look at the provider"]
+        );
+    }
+
+    #[test]
+    fn a_place_that_fails_in_a_single_rotation_is_reported_and_the_rest_goes_on() {
+        struct Failing;
+        impl Sink for Failing {
+            fn name(&self) -> &str {
+                "broken"
+            }
+            fn update(&mut self, _: &Secret) -> Result<(), SinkError> {
+                Err(SinkError)
+            }
+        }
+        let (outcome, _, manual, current) =
+            rotate_kind("single-place", SINGLE, None, 200, Some(Box::new(Failing)));
+        assert_eq!(outcome, Outcome::Completed);
+        assert_eq!(current, "CANARY-new-0123456789");
+        assert_eq!(
+            manual,
+            ["broken still holds the old key: update it by hand"]
+        );
     }
 
     #[test]

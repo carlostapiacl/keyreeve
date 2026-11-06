@@ -34,6 +34,8 @@ pub struct KeyConfig {
     pub issued_name: String,
     /// The id of the current key, when it is known from outside this record.
     pub known_id: Option<String>,
+    /// A key a person made at the provider's page, for a provider with no way to make one here.
+    pub handed_over: Option<Secret>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -104,6 +106,9 @@ pub struct Engine<'a> {
     pub now: &'a dyn Fn() -> u64,
 }
 
+/// The id on record for a key this engine did not create, which has no id it knows.
+const HANDED_OVER_ID: &str = "handed-over";
+
 enum Create {
     Issued {
         id: String,
@@ -116,8 +121,13 @@ enum Create {
 }
 
 impl Engine<'_> {
+    /// True if a person, and not this engine, makes and revokes keys at the provider.
+    fn by_hand(&self) -> bool {
+        !self.recipe.can_rotate()
+    }
+
     pub fn rotate(&mut self) -> Result<Outcome, Error> {
-        if !self.recipe.can_rotate() {
+        if self.by_hand() && self.config.handed_over.is_none() {
             return Err(Error::CannotRotate);
         }
         let key = self.config.key.clone();
@@ -132,13 +142,21 @@ impl Engine<'_> {
         let old_id = self
             .journal
             .current_id(&key)
+            .filter(|id| id != HANDED_OVER_ID)
             .or_else(|| self.config.known_id.clone());
 
         // Recorded first: a copy saved before the record exists could never be cleaned up.
         self.record(Event::Started { old_id })?;
         self.store.put(&self.previous_name(), &current)?;
 
-        match self.create(&admin) {
+        let created = match self.config.handed_over.clone() {
+            Some(value) => Create::Issued {
+                id: HANDED_OVER_ID.to_owned(),
+                value,
+            },
+            None => self.create(&admin),
+        };
+        match created {
             Create::Issued { id, value } => {
                 self.record(Event::Created { new_id: id })?;
                 self.store.put(&self.pending_name(), &value)?;
@@ -147,7 +165,12 @@ impl Engine<'_> {
             }
             Create::Refused(reason) => self.close_without_key(reason),
             Create::Unknown(reason) => {
-                self.manual("a key may have been created: check the provider")?;
+                let what = if self.recipe.is_single() {
+                    "the old key may have ended: check it, and the provider"
+                } else {
+                    "a key may have been created: check the provider"
+                };
+                self.manual(what)?;
                 self.close_without_key(reason)
             }
         }
@@ -155,12 +178,12 @@ impl Engine<'_> {
 
     /// Finishes or undoes whatever the record says is open. Safe to call at any time.
     pub fn resume(&mut self) -> Result<Outcome, Error> {
-        if !self.recipe.can_rotate() {
-            return Err(Error::CannotRotate);
-        }
         let key = self.config.key.clone();
         match self.journal.phase(&key) {
             Phase::Idle => Ok(Outcome::NothingToDo),
+            Phase::Started if self.by_hand() => {
+                self.close_without_key("stopped_before_saving".into())
+            }
             Phase::Started => {
                 self.manual("a key may have been created: check the provider")?;
                 self.close_without_key("stopped_during_create".into())
@@ -169,6 +192,10 @@ impl Engine<'_> {
                 if self.store.get(&self.pending_name())?.is_some() {
                     self.record(Event::PendingStored)?;
                     self.drive()
+                } else if self.recipe.is_single() {
+                    // The old key is gone and the new one was refused or lost, so a person decides.
+                    self.manual("the new key was not saved and the old one is gone: make another at the provider")?;
+                    self.close_without_key("new_key_not_saved".into())
                 } else {
                     self.begin_rollback("new_key_not_saved")
                 }
@@ -186,7 +213,12 @@ impl Engine<'_> {
                         return self.begin_rollback("new_key_not_saved");
                     };
                     if !self.verify(&pending) {
-                        return self.begin_rollback("verify_failed");
+                        // A single rotation already ended the old key, so there is nothing to go
+                        // back to. The new key is kept, since it is the only one left.
+                        if !self.recipe.is_single() {
+                            return self.begin_rollback("verify_failed");
+                        }
+                        self.manual("the new key did not pass its check: look at the provider")?;
                     }
                     self.record(Event::Verified)?;
                 }
@@ -201,7 +233,14 @@ impl Engine<'_> {
                             continue;
                         }
                         if self.sinks[index].update(&pending).is_err() {
-                            return self.begin_rollback(&format!("sink_failed:{name}"));
+                            if !self.recipe.is_single() {
+                                return self.begin_rollback(&format!("sink_failed:{name}"));
+                            }
+                            // Going on is the only way to reach the other places.
+                            self.manual(&format!(
+                                "{name} still holds the old key: update it by hand"
+                            ))?;
+                            continue;
                         }
                         self.record(Event::SinkUpdated { sink: name })?;
                     }
@@ -211,6 +250,10 @@ impl Engine<'_> {
                 }
                 Phase::Promoted => {
                     self.store.delete(&self.pending_name())?;
+                    if self.recipe.is_single() {
+                        self.record(Event::OldRevoked)?;
+                        continue;
+                    }
                     let revoke_after = self.revoke_after();
                     if (self.now)() < revoke_after {
                         return Ok(Outcome::AwaitingOverlap { revoke_after });
@@ -222,6 +265,11 @@ impl Engine<'_> {
                         .ok_or_else(|| Error::KeyMissing(key.clone()))?;
                     if !self.verify(&current) {
                         return Ok(Outcome::NewKeyFailing);
+                    }
+                    if self.by_hand() {
+                        self.manual("revoke the old key at the provider")?;
+                        self.record(Event::OldRevoked)?;
+                        continue;
                     }
                     match self.old_id() {
                         Some(old_id) => {
@@ -282,7 +330,9 @@ impl Engine<'_> {
             }
             self.store.put(&key, &old)?;
         }
-        if let Some(new_id) = new_id {
+        if self.by_hand() {
+            self.manual("delete the new key you made at the provider")?;
+        } else if let Some(new_id) = new_id {
             let admin = self.admin()?;
             if !self.revoke(&admin, &new_id) {
                 self.manual(&format!("revoke the unused key {new_id} by hand"))?;
@@ -332,6 +382,7 @@ impl Engine<'_> {
             .id_from
             .as_deref()
             .and_then(|path| extract(&json, path));
+        let id = id.or_else(|| recipe.is_single().then(|| HANDED_OVER_ID.to_owned()));
         match (id, value) {
             // The id goes in the journal in plain text, so it must not hold the key.
             (Some(id), Some(value)) if id.contains(&value) || value.contains(&id) => {

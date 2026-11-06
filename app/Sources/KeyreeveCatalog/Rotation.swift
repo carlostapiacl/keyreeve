@@ -55,6 +55,9 @@ public struct RotationStatus: Decodable, Equatable, Identifiable, Sendable {
     public let manual: [String]
     public var id: String { key }
 
+    /// A person still has to revoke the old key, which the app can then confirm.
+    public var waitsForManualRevoke: Bool { manual.contains("revoke the old key at the provider") }
+
     public init(key: String, events: Int = 0, admin: String? = nil, phase: String, at: Double = 0, revoke_after: Double? = nil, reason: String? = nil, manual: [String] = []) {
         self.key = key
         self.events = events

@@ -5,6 +5,7 @@ dashboard: https://resend.com/api-keys
 prefixes: [re_]
 rotate_every_days: 180
 criticality_hint: 3
+tested: { check: 2026-11 }
 hosts: [api.resend.com]
 auth: { header: Authorization, prefix: "Bearer " }
 # A send-only key is alive but may not list domains, and the answer says so.

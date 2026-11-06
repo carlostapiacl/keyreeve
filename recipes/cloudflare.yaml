@@ -5,6 +5,7 @@ dashboard: https://dash.cloudflare.com/profile/api-tokens
 prefixes: []
 rotate_every_days: 180
 criticality_hint: 4
+tested: { check: 2026-11 }
 hosts: [api.cloudflare.com]
 auth: { header: Authorization, prefix: "Bearer " }
 # This works for tokens of a user and of an account, unlike /user/tokens/verify.

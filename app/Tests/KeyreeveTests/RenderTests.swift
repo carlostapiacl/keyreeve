@@ -87,7 +87,7 @@ struct RenderTests {
 
             try render(MainView(model: model, initial: .vault), named: "vault-intro-\(code)", appearance: .aqua)
             let setup = self.model()
-            setup.vaultDraft = VaultDraft(enclave: SoftwareRecipient(), blob: Data(), recovery: P256.KeyAgreement.PrivateKey())
+            setup.vaultDraft = VaultDraft(enclave: SoftwareRecipient(), blob: Data())
             try render(MainView(model: setup, initial: .vault), named: "vault-recovery-\(code)", appearance: .aqua)
             let ready = self.model()
             ready.hasVault = true

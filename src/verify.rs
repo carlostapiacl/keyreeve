@@ -198,7 +198,7 @@ pub fn run_one(name: &str, file: &Path, field: Option<&str>) -> Result<Verdict, 
     run_at(name, &source, field, None)
 }
 
-pub(crate) fn run_at(
+pub fn run_at(
     name: &str,
     source: &KeySource,
     field: Option<&str>,

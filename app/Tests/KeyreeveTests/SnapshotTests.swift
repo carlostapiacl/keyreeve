@@ -17,7 +17,7 @@ struct SnapshotTests {
             .write(to: files.catalog, atomically: true, encoding: .utf8)
         let store = VaultStore(directory: root.appendingPathComponent("vault"))
         let chip = SoftwareRecipient()
-        try store.save(VaultFile(enclave: chip.publicKey, recovery: SoftwareRecipient().publicKey))
+        try store.save(VaultFile(enclave: chip.publicKey, recovery: Age.X25519Identity().recipient))
         return (root, files, store)
     }
 

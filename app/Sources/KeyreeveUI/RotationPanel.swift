@@ -1,3 +1,4 @@
+import AppKit
 import KeyreeveCatalog
 import SwiftUI
 
@@ -6,6 +7,7 @@ struct RotationPanel: View {
     let item: CatalogItem
     @ObservedObject var model: AppModel
     @State private var confirming = false
+    @State private var newKey = ""
 
     private var places: KeyPlaces { model.places[item.path] ?? KeyPlaces() }
     private var provider: ProviderInfo? { model.providers.rotator(of: item) }
@@ -59,6 +61,27 @@ struct RotationPanel: View {
     }
 
     @ViewBuilder private func setup(_ provider: ProviderInfo) -> some View {
+        if provider.can_rotate && provider.tested.rotate == nil {
+            Text(T("This file has never rotated a real key. Try one you can afford to lose first."))
+                .font(Theme.caption).foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if provider.single_rotation {
+            Text(T("This provider ends the old key the moment the new one exists, so this cannot be undone. If the answer is lost, you make a new key at its page."))
+                .font(Theme.caption).foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !provider.can_rotate {
+            Text(T("This provider has no way to make keys from here, so you make it at its page and paste it below. It is tested before anything changes."))
+                .font(Theme.caption).foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if let page = provider.dashboard.flatMap(URL.init(string:)) {
+                Button(T("Open its page")) { NSWorkspace.shared.open(page) }.buttonStyle(KRButtonStyle())
+            }
+            SecureField(T("New key"), text: $newKey)
+                .textFieldStyle(.roundedBorder)
+                .font(Theme.caption)
+        }
         Text(T("Where else is this key used? Each place gets the new key before the old one is revoked."))
             .font(Theme.caption).foregroundStyle(Theme.muted)
             .fixedSize(horizontal: false, vertical: true)
@@ -101,6 +124,7 @@ struct RotationPanel: View {
                 .toggleStyle(.checkbox)
                 .font(Theme.caption)
         }
+        if provider.can_rotate && !provider.single_rotation {
         Picker(T("Old key lasts"), selection: Binding(get: { places.overlapMinutes }, set: { minutes in change { $0.overlapMinutes = minutes } })) {
             Text(T("Revoke right away")).tag(0)
             Text(T("1 hour")).tag(60)
@@ -108,15 +132,19 @@ struct RotationPanel: View {
             Text(T("7 days")).tag(10080)
         }
         .font(Theme.caption)
+        }
         Button {
             confirming = true
         } label: {
             Label(T("Rotate this key"), systemImage: "arrow.triangle.2.circlepath")
         }
         .buttonStyle(KRButtonStyle(primary: true))
-        .disabled(model.busy || !places.isDecided)
+        .disabled(model.busy || !places.isDecided || (!provider.can_rotate && newKey.isEmpty))
         .confirmationDialog(T("Rotate this key with %@?", provider.name), isPresented: $confirming, titleVisibility: .visible) {
-            Button(T("Rotate this key")) { model.rotate(item) }
+            Button(T("Rotate this key")) {
+                model.rotate(item, handedOver: provider.can_rotate ? nil : newKey)
+                newKey = ""
+            }
             Button(T("Cancel"), role: .cancel) {}
         } message: {
             Text(T("This makes a real key at the provider. If anything fails before the old key is revoked, it undoes itself."))

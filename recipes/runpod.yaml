@@ -5,6 +5,7 @@ dashboard: https://www.runpod.io/console/user/settings
 prefixes: [rpa_]
 rotate_every_days: 365
 criticality_hint: 3
+tested: { check: 2026-11 }
 hosts: [rest.runpod.io]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /v1/pods }

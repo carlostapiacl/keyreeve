@@ -6,11 +6,11 @@ import Testing
 
 struct VaultTests {
     let chip = SoftwareRecipient()
-    let recovery = SoftwareRecipient()
+    let recovery = Age.X25519Identity()
     let value = Data("CANARY-value".utf8)
 
     func vault() throws -> VaultFile {
-        var file = VaultFile(enclave: chip.publicKey, recovery: recovery.publicKey)
+        var file = VaultFile(enclave: chip.publicKey, recovery: recovery.recipient)
         try file.add(name: "a/key.txt", value: value)
         return file
     }
@@ -29,15 +29,17 @@ struct VaultTests {
         let encoded = try JSONEncoder().encode(try vault())
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("CANARY"))
         XCTAssertNil(encoded.range(of: value))
+        XCTAssertNil(try vault().entries["a/key.txt"]!.sealed.range(of: value))
     }
 
     @Test func testAChangedFileDoesNotOpen() throws {
         var file = try vault()
-        file.entries["a/key.txt"]!.sealedValue[20] ^= 1
+        let last = file.entries["a/key.txt"]!.sealed.count - 1
+        file.entries["a/key.txt"]!.sealed[last] ^= 1
         XCTAssertThrowsError(try file.open(name: "a/key.txt", with: chip))
 
         file = try vault()
-        file.entries["a/key.txt"]!.enclaveWrap.sealedKey[20] ^= 1
+        file.entries["a/key.txt"]!.sealed[40] ^= 1
         XCTAssertThrowsError(try file.open(name: "a/key.txt", with: chip))
     }
 
@@ -75,22 +77,17 @@ struct VaultTests {
     @Test func testTheWrongKeyCannotMoveTheVault() throws {
         var file = try vault()
         XCTAssertThrowsError(
-            try file.moveToNewEnclave(SoftwareRecipient().publicKey, recovery: SoftwareRecipient()))
+            try file.moveToNewEnclave(SoftwareRecipient().publicKey, recovery: Age.X25519Identity()))
         XCTAssertEqual(try file.open(name: "a/key.txt", with: chip), value)
     }
 
     @Test func testTheRecoveryKeyRoundTripsAndCatchesATypo() throws {
-        let key = P256.KeyAgreement.PrivateKey()
-        let text = RecoveryKey.encode(key)
-        XCTAssertEqual(try RecoveryKey.decode(text).rawRepresentation, key.rawRepresentation)
-        XCTAssertEqual(
-            try RecoveryKey.decode(text.lowercased().replacingOccurrences(of: "-", with: " ")).rawRepresentation,
-            key.rawRepresentation)
-        var chars = Array(text)
-        let index = chars.firstIndex { $0 != "-" }!
-        chars[index] = chars[index] == "A" ? "B" : "A"
-        XCTAssertThrowsError(try RecoveryKey.decode(String(chars)))
-        XCTAssertThrowsError(try RecoveryKey.decode("short"))
+        let key = Age.X25519Identity()
+        XCTAssertEqual(try Age.X25519Identity(string: key.string).recipient, key.recipient)
+        var chars = Array(key.string)
+        chars[chars.count - 3] = chars[chars.count - 3] == "Q" ? "P" : "Q"
+        XCTAssertThrowsError(try Age.X25519Identity(string: String(chars)))
+        XCTAssertThrowsError(try Age.X25519Identity(string: "short"))
     }
 
     @Test func testTheStoreIsPrivateAndRoundTrips() throws {
@@ -100,9 +97,9 @@ struct VaultTests {
         let store = VaultStore(directory: dir)
         XCTAssertFalse(store.exists)
         try store.save(try vault())
-        try store.saveBlob(Data([1]), for: chip.publicKey.rawRepresentation)
+        try store.saveBlob(Data([1]), for: Age.TagRecipient(publicKey: chip.publicKey).string)
         XCTAssertEqual(try store.load(), try vault().withSameEntries(as: store.load()))
-        for (path, mode) in [(dir.path, 0o700), (store.vaultURL.path, 0o600), (store.blobURL(for: chip.publicKey.rawRepresentation).path, 0o600)] {
+        for (path, mode) in [(dir.path, 0o700), (store.vaultURL.path, 0o600), (store.blobURL(for: Age.TagRecipient(publicKey: chip.publicKey).string).path, 0o600)] {
             let attributes = try FileManager.default.attributesOfItem(atPath: path)
             XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, mode, path)
         }
@@ -112,14 +109,14 @@ struct VaultTests {
 /// Moving real files, with software keys in place of the chip.
 struct KeeperTests {
     let chip = SoftwareRecipient()
-    let recovery = SoftwareRecipient()
+    let recovery = Age.X25519Identity()
 
     func folder() throws -> (root: URL, keys: URL, store: VaultStore) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-keeper-\(UUID().uuidString)")
         let keys = root.appendingPathComponent("keys")
         try FileManager.default.createDirectory(at: keys.appendingPathComponent("sub dir"), withIntermediateDirectories: true)
         let store = VaultStore(directory: root.appendingPathComponent("vault"))
-        try store.save(VaultFile(enclave: chip.publicKey, recovery: recovery.publicKey))
+        try store.save(VaultFile(enclave: chip.publicKey, recovery: recovery.recipient))
         return (root, keys, store)
     }
 
@@ -337,17 +334,16 @@ struct KeeperTests {
         let (root, _, store) = try folder()
         defer { try? FileManager.default.removeItem(at: root) }
         try store.update { try $0.add(name: "kept", value: Data("v".utf8)) }
-        XCTAssertThrowsError(try store.create(VaultFile(enclave: chip.publicKey, recovery: recovery.publicKey), blob: Data([1])))
+        XCTAssertThrowsError(try store.create(VaultFile(enclave: chip.publicKey, recovery: recovery.recipient), blob: Data([1])))
         XCTAssertEqual(try store.load().entries.count, 1)
     }
 
     @Test func testACrashDuringRecoveryLeavesTheOldPairWorking() throws {
         let (root, _, store) = try folder()
         defer { try? FileManager.default.removeItem(at: root) }
-        let oldKey = chip.publicKey.rawRepresentation
-        try store.saveBlob(Data([1]), for: oldKey)
+        try store.saveBlob(Data([1]), for: try store.load().enclave)
         // The new blob lands, and the crash comes before the vault switches to it.
-        try store.saveBlob(Data([2]), for: SoftwareRecipient().publicKey.rawRepresentation)
+        try store.saveBlob(Data([2]), for: Age.TagRecipient(publicKey: SoftwareRecipient().publicKey).string)
         XCTAssertEqual(try store.loadBlob(), Data([1]))
     }
 
@@ -355,7 +351,7 @@ struct KeeperTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-draft-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = VaultStore(directory: root.appendingPathComponent("vault"))
-        let draft = VaultDraft(enclave: chip, blob: Data([1]), recovery: P256.KeyAgreement.PrivateKey())
+        let draft = VaultDraft(enclave: chip, blob: Data([1]))
         XCTAssertFalse(store.exists)
         #expect(draft.accepts(" \(draft.lastGroup.lowercased()) "))
         XCTAssertFalse(draft.accepts("nope"))
@@ -363,7 +359,7 @@ struct KeeperTests {
         try draft.save(to: store)
         #expect(store.exists)
         XCTAssertThrowsError(try draft.save(to: store))
-        XCTAssertEqual(try RecoveryKey.decode(draft.recoveryKey).publicKey.rawRepresentation, try store.load().recoveryPublicKey)
+        XCTAssertEqual(try Age.X25519Identity(string: draft.recoveryKey).recipient.string, try store.load().recovery)
     }
 }
 

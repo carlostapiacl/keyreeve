@@ -209,19 +209,22 @@ the approval. A file that ships with keyreeve can never run a program.
 A secret with no provider, such as a signing key, is marked as internal, and no check is offered. Secrets for your own
 products go the same way: a file of yours, in that folder, never in a repository.
 
-These recipes have been shown to reject a fake key at the real address, and that is all most of them have seen: a pass
-with a real key is what proves a recipe. `self_hosted` recipes need your server first.
+These recipes have been shown to reject a fake key at the real address. A file's `tested` line says when it was last tried with a
+real key, and a pass with a real key is what proves a recipe. `self_hosted` recipes need your server first.
 
 ## The vault (Mac)
 
 In the app, open **Vault** and press **Create my vault**. It shows a recovery key once, and saves nothing until you type
-back its last group. Keep that key away from this Mac, because if the Mac dies it is the only way back in.
+back its last 6 characters. Keep that key away from this Mac, because if the Mac dies it is the only way back in.
 
-Then choose keys and press **Seal**. Each file is sealed by a key inside your Mac's Secure Enclave, which it cannot leave.
-Your original files stay where they are. **Compare with the files** opens every sealed copy and tells you whether it matches.
-From then on, checks, identification and your own actions use the sealed copy, and ask for your finger once per batch.
+Then choose keys and press **Seal**. Each file is sealed for a key inside your Mac's Secure Enclave, which it cannot leave, and
+for the recovery key. Your original files stay where they are. **Compare with the files** opens every sealed copy and tells you
+whether it matches. From then on, checks, identification and your own actions use the sealed copy, and ask for your finger once per batch.
 
 If a file changes after you seal it, the app says so and uses the file, because the sealed copy may be an old key.
+**Seal the changed files again** replaces the copy, and the old one stays sealed. After a comparison, you can move the files that
+matched out of the keys folder to `~/.keyreeve/originals`. They stay readable there, the list keeps showing them and you can put them
+back. keyreeve never deletes them, so that step is yours once you trust the vault.
 
 The same vault works from a terminal:
 
@@ -234,14 +237,44 @@ app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 Adding a key needs no fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init`
 refuses to run outside a terminal so the recovery key does not land in a log. There is no command that prints a key.
 
-A copy sealed from the app holds the whole file, so `run` hands a program everything in it. For a file with several values,
-add the one key by hand under its own name.
+A copy sealed from the app holds the whole file, so `run` hands a program everything in it. For a file with several values, use
+`env` below and name the field.
 
-If a file changes, **Seal the changed files again** replaces the copy, and the old one stays sealed. After a comparison, you can
-move the files that matched out of the keys folder to `~/.keyreeve/originals`. They stay readable there, the list keeps showing
-them and you can put them back. keyreeve never deletes them, so that step is yours once you trust the vault.
+### Your keys do not depend on this tool
 
-The vault format is mine and has had no outside review, so keep your old copies until it has.
+Each sealed key is a standard [age](https://age-encryption.org) file, and the recovery key is an ordinary age key. With only the
+vault and the `age` command, on any computer:
+
+```bash
+keyreeve-vault export hosting-token --recovery | age -d -i recovery-key.txt
+```
+
+The first line of what comes out names the key, and the rest is its value. The keys in the chip use age's `p256tag` recipient. The
+file format is reviewed by others and tested here against the official tool in both directions. The code that writes it is mine, and it
+has had no outside review.
+
+## Keys and agents
+
+An env file can hold references in place of values, so it is safe in a repository:
+
+```bash
+# app.env
+HOSTING_TOKEN=keyreeve://hosting-token
+MAIL_KEY=keyreeve://mail.env#API_KEY
+LOG_LEVEL=info
+```
+
+```bash
+keyreeve-vault env app.env -- ./deploy.sh
+```
+
+One fingerprint opens them all for that command.
+
+An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. It can list the keys it may use and run
+a program with one, and no tool returns a value. Nothing is allowed until you write `~/.keyreeve/agent-commands.json`
+([example](examples/agent-commands.json)), which says which programs may use which keys. Each use asks for your finger, with a prompt
+that shows the program and the key, and the agent's reason goes in the usage log. Choose programs that cannot print what they
+receive: the output hides the plain key and its base64, but a program can hide it in other ways.
 
 ## Rotate a key
 
@@ -256,18 +289,34 @@ then press **Rotate this key**. One fingerprint, and keyreeve:
 A crash at any step resumes from a journal in `~/.keyreeve/rotations.jsonl`, which holds ids and no values.
 
 Most providers give no way to learn the id of a key you already have, so the first rotation may ask you to revoke the old key by
-hand. Later ones know the id. Resend and LangSmith can rotate today, and neither has yet been tried against the real service. To add
-a provider, give its file `create` and `revoke`, and `keyreeve simulate` will test it against failures and crashes.
+hand. Later ones know the id.
 
-A key joined from two fields, such as AWS, cannot rotate yet. A provider that rotates by replacing the key in one call, such as GitLab,
-does not fit these steps yet.
+There are three ways to rotate, and a provider's file says which:
+
+- **Two keys for a while.** Resend and LangSmith. A failure anywhere before the old key goes undoes everything.
+- **`rotation: single`.** GitLab and Cal.com end the old key the moment the new one exists, so nothing can be undone. A place that
+  fails is reported for you to fix, and the rotation goes on.
+- **By hand.** A provider with no way to make keys through its API, such as Hetzner or Netlify. You make the key at its page and paste
+  it in. keyreeve tests it, updates the places, and then checks that the old key really died once you revoke it. This works for
+  providers that test a key with one plain request.
+
+None of these has run against a real service yet, and the list in Settings shows what each file has been tried with. To add a provider,
+give its file `create` and `revoke`, and `keyreeve simulate` tests it against failures and crashes. The simulator's guarantees do not
+apply to `rotation: single`.
+
+A place can be a file, or a button of yours that receives the new key on stdin. There are [examples](examples/places) for GitHub
+Actions, Vercel and an env file on a server, which have not been run against those services.
+
+A key joined from two fields, such as AWS, cannot rotate yet.
 
 ## What is missing
 
 - A rotation tried against a real provider
-- Storage for Linux and Windows
-- More places to update, such as GitHub and Netlify. Today a button of yours can reach them
-- Recipes for more providers that can rotate, and rotation written as a program of yours
+- Using the vault on Linux and Windows, and a chip-free key for them. The file format already works there
+- Other vaults as storage, such as 1Password or the system keychain
+- A scan that finds where each key is used, and which permissions each key has
+- An Apple signature, so the app can be downloaded and not only built
+- Recipes for more providers that can rotate, keys made of two fields, and rotation written as a program of yours
 - Approvals that expire
 - Integration with [seisin](https://github.com/carlostapiacl/seisin), which gives each agent its own keys
 

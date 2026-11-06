@@ -111,6 +111,9 @@ public struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
+                            Text(testedLine(provider))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                         Spacer()
                         if provider.needsApproval {
@@ -126,5 +129,11 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func testedLine(_ provider: ProviderInfo) -> String {
+        if let date = provider.tested.rotate { return T("Rotated with a real key: %@", date) }
+        if let date = provider.tested.check { return T("Tried with a real key: %@", date) }
+        return T("Not tried with a real key yet")
     }
 }

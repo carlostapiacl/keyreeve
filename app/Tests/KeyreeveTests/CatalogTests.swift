@@ -58,7 +58,7 @@ struct ActionTests {
     ])
 
     @Test func testProvidersComeFromTheirFiles() {
-        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"self_hosted":false,"suggested_name":null,"problem":null,"programs":[],"actions":[]}]"#.utf8)
+        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"can_rotate_by_hand":false,"single_rotation":false,"tested":{},"self_hosted":false,"suggested_name":null,"problem":null,"programs":[],"actions":[]}]"#.utf8)
         XCTAssertEqual(ProviderDirectory.parse(data).name(of: "x"), "X")
         XCTAssertEqual(ProviderDirectory.parse(Data("nope".utf8)).all.count, 0)
         XCTAssertEqual(directory.usable.map(\.id), ["langsmith", "aws"])
@@ -494,6 +494,7 @@ struct SealedRunTests {
         XCTAssertFalse(KeyPlaces().isDecided)
         XCTAssertNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate: false)]).rotator(of: item))
         XCTAssertNotNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate: true)]).rotator(of: item))
+        XCTAssertNotNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate_by_hand: true)]).rotator(of: item))
     }
 
     @Test func testTheFirstKeysOfferedAreLiveAndLeastCritical() {

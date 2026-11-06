@@ -4,6 +4,7 @@ name: Telegram bot
 dashboard: https://t.me/BotFather
 rotate_every_days: 365
 criticality_hint: 2
+tested: { check: 2026-11 }
 hosts: [api.telegram.org]
 # Telegram takes the token in the address, and has no other way.
 auth: { type: url }

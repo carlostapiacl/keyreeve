@@ -5,6 +5,7 @@ dashboard: https://developers.facebook.com/apps
 prefixes: []
 rotate_every_days: 60
 criticality_hint: 3
+tested: { check: 2026-11 }
 hosts: [graph.instagram.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /me, reject: [400] }

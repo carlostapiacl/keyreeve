@@ -27,6 +27,7 @@ Usage:
   keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>] [--edits <file>] [--moved <file>]
       Give each file tags and an access level, from your rules.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
+  keyreeve verify <provider> --key-stdin [--field <name>]
       Check whether a key still works, with one read-only request.
   keyreeve verify --plan <plan.yaml> --keys <folder> [--history <file>] [--progress] [--sealed-stdin]
       Check several keys at once, and keep the results. --sealed-stdin takes a JSON map of paths to

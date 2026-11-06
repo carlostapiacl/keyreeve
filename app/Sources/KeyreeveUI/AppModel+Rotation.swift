@@ -36,7 +36,46 @@ extension AppModel {
         objectWillChange.send()
     }
 
-    public func rotate(_ item: CatalogItem) { runRotation(item, resume: false) }
+    public func rotate(_ item: CatalogItem, handedOver: String? = nil) {
+        runRotation(item, resume: false, handedOver: handedOver)
+    }
+
+    /// Opens the copy a rotation replaced and asks the provider about it, so "revoked" is not only
+    /// your word. Nothing goes in the history: this is an old key's fate, not this key's state.
+    public func confirmOldKeyDead(_ status: RotationStatus) {
+        guard !busy, let binary, let item = items.first(where: { $0.path == status.key }),
+            let recipe = item.recipes.first
+        else { return }
+        openVault(reason: T("check that an old key is dead")) { unlocked in
+            guard let unlocked else {
+                self.message = T("Not checked: it was not confirmed")
+                return
+            }
+            self.busy = true
+            let store = self.vaultStore
+            let key = status.key
+            let field = item.field
+            Task.detached {
+                let result = Result { () throws -> CheckRunner.KeyCheck in
+                    let vault = try store.load()
+                    guard let last = vault.replaced?[key]?.indices.last else { return .unknown }
+                    let value = try vault.openReplaced(name: key, index: last, with: try unlocked.recipient(store))
+                    return try CheckRunner.checkText(
+                        String(decoding: value, as: UTF8.self), recipe: recipe, field: field, binary: binary)
+                }
+                await MainActor.run {
+                    self.busy = false
+                    switch result {
+                    case .success(.rejected):
+                        self.dismiss(status)
+                        self.message = T("The old key is dead. Done.")
+                    case .success(.works): self.message = T("The old key still works: revoke it at the provider.")
+                    default: self.message = T("Could not tell whether the old key is dead.")
+                    }
+                }
+            }
+        }
+    }
 
     /// Finishes from the plan the rotation started with. The key may no longer be on the list, since
     /// its original can be gone, and the old key must still be revocable.
@@ -51,7 +90,7 @@ extension AppModel {
         run(plan: stub, admin: nil, resume: true, binary: binary, vaultTool: vaultTool)
     }
 
-    func runRotation(_ item: CatalogItem, resume: Bool) {
+    func runRotation(_ item: CatalogItem, resume: Bool, handedOver: String? = nil) {
         guard !busy, let binary, let vaultTool, item.vault == .sealed || item.vault == .outdated else { return }
         let places = self.places[item.path] ?? KeyPlaces()
         let admin = places.admin.flatMap { name in items.first { $0.path == name } }
@@ -59,10 +98,12 @@ extension AppModel {
         let plan = RotationPlan(
             item: item, places: places, admin: admin,
             original: original.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil })
-        run(plan: plan, admin: admin?.path, resume: resume, binary: binary, vaultTool: vaultTool)
+        run(plan: plan, admin: admin?.path, resume: resume, handedOver: handedOver, binary: binary, vaultTool: vaultTool)
     }
 
-    private func run(plan: RotationPlan, admin: String?, resume: Bool, binary: URL, vaultTool: URL) {
+    private func run(
+        plan: RotationPlan, admin: String?, resume: Bool, handedOver: String? = nil, binary: URL, vaultTool: URL
+    ) {
         let key = plan.key
         let reason = resume ? T("finish rotating a key") : T("rotate a key with its provider")
         openVault(reason: reason) { unlocked in
@@ -86,8 +127,9 @@ extension AppModel {
                     // An open rotation goes on with the admin key it started with.
                     let wanted = [key, resume ? status?.admin ?? admin : admin, "\(key)#pending", "\(key)#previous"]
                         .compactMap { $0 }.filter { vault.entries[$0] != nil }
-                    let sealed = try VaultKeeper.open(
+                    var sealed = try VaultKeeper.open(
                         names: wanted, recipient: try unlocked.recipient(store), store: store, by: "rotate")
+                    if let handedOver { sealed["\(key)#incoming"] = handedOver }
                     return try CheckRunner.rotate(
                         plan: plan, resume: resume, sealed: sealed, binary: binary, vaultTool: vaultTool, files: files)
                 }

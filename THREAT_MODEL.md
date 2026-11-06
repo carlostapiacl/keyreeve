@@ -57,8 +57,8 @@ recipe is accepted only when typed at the `verify` command for one run, and such
 
 ## The vault and the Mac app
 
-The vault is a file sealed for two keys: one inside the Secure Enclave, which asks for a fingerprint, and a recovery
-key held by you. Each value is bound to its name, so a value cannot be swapped under another name.
+The vault holds one age file per key, sealed for two keys: one inside the Secure Enclave, which asks for a fingerprint, and a
+recovery key held by you. Each value carries its name inside, so a value cannot be swapped under another name.
 
 - **Any program running as you can ask for your finger,** with text of its own in the prompt. Only touch the sensor
   when you asked for something. The fingerprint is a check on you, and it does not identify the program asking.
@@ -101,7 +101,16 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
 - **The app's settings decide where a key is sent.** `edits.json` and your rules name the recipe for each key. A program
   running as you could change them, and the next check would send the key to another listed provider.
 - **Pressing "I already revoked it" is proof only with a check.** A key with no recipe is marked on your word alone.
-- **The format has had no outside review.** It uses standard CryptoKit parts (P-256, HKDF, AES-GCM), put together here.
+- **This code has had no outside review.** The file format is age's, and tests compare it with the official tool in both
+  directions, including `p256tag` for the chip. Writing it here is what lets one fingerprint cover a batch and leaves no plugin to
+  trust. Decrypting with the chip was never compared with age's plugin for it.
+- **An agent's program holds the key.** Over MCP an agent runs programs a person allowed, with a fingerprint each time. The output
+  hides the plain key and its base64, and a program can hide it another way, so the allowed list is the protection. The agent runs as
+  you, so it can also edit that list and then ask for your finger. Read the prompt: it names the program and the key.
+- **An env file's references name your keys.** `keyreeve://` holds no value, but it says which keys exist.
+- **A key you paste by hand** passes through the app's memory on its way to the vault, and Swift strings are not wiped.
+- **A single rotation cannot be undone.** A provider that ends the old key at once leaves you with whatever comes back. If the
+  answer is lost, or the new key fails, you make another at its page.
 
 ## Known limits of the simulator
 

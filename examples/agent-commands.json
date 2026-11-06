@@ -1,0 +1,5 @@
+{
+  "commands": {
+    "hosting-token.txt": ["./deploy.sh"]
+  }
+}

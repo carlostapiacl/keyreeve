@@ -78,9 +78,18 @@ pub fn run_verify(args: &[String]) -> ExitCode {
             }
         };
     }
-    let Some((name, found)) = options(args, &["--key-file", "--field"]) else {
+    let from_stdin = args.iter().any(|arg| arg == "--key-stdin");
+    let rest: Vec<String> = args
+        .iter()
+        .filter(|arg| *arg != "--key-stdin")
+        .cloned()
+        .collect();
+    let Some((name, found)) = options(&rest, &["--key-file", "--field"]) else {
         return usage();
     };
+    if from_stdin {
+        return verify_stdin(name, found.get("--field").copied());
+    }
     let Some(file) = found.get("--key-file").copied() else {
         return usage();
     };
@@ -91,6 +100,30 @@ pub fn run_verify(args: &[String]) -> ExitCode {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("verify: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// Checks a key's text sent on stdin, and says only the result. Exit 0 means it works, 1 that it does
+/// not, and 2 that nothing could be said.
+fn verify_stdin(name: &str, field: Option<&str>) -> ExitCode {
+    let mut text = zeroize::Zeroizing::new(String::new());
+    if std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).is_err() {
+        eprintln!("verify: could not read the key on stdin");
+        return ExitCode::from(2);
+    }
+    match verify::run_at(name, &verify::KeySource::Text(&text), field, None) {
+        Ok(verdict) => {
+            println!("{}", verdict.code());
+            match verdict {
+                verify::Verdict::Works { .. } | verify::Verdict::Forbidden => ExitCode::SUCCESS,
+                verify::Verdict::Rejected => ExitCode::FAILURE,
+                verify::Verdict::NoResult(_) => ExitCode::from(2),
             }
         }
         Err(error) => {

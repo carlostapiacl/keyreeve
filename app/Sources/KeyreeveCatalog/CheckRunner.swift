@@ -140,6 +140,20 @@ public enum CheckRunner {
         return report
     }
 
+    public enum KeyCheck: Sendable { case works, rejected, unknown }
+
+    /// Checks one key's text, with nothing written to the history, since this is not that key's
+    /// present but an old copy of it.
+    public static func checkText(_ text: String, recipe: String, field: String?, binary: URL) throws -> KeyCheck {
+        var arguments = ["verify", recipe, "--key-stdin"]
+        if let field, !field.isEmpty { arguments += ["--field", field] }
+        switch try execute(binary, arguments, stdin: Data(text.utf8)) {
+        case 0: return .works
+        case 1: return .rejected
+        default: return .unknown
+        }
+    }
+
     /// A key replaced by hand is another key, so the id on record must not be revoked for it.
     public static func forgetRotationID(of key: String, binary: URL, files: KeyreeveFiles) throws {
         guard FileManager.default.fileExists(atPath: files.rotations.path) else { return }

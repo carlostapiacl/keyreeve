@@ -27,6 +27,13 @@ impl fmt::Display for RecipeError {
 
 impl std::error::Error for RecipeError {}
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tested {
+    pub check: Option<String>,
+    pub rotate: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
@@ -53,6 +60,11 @@ pub struct Recipe {
     pub actions: Vec<CustomAction>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// `dual`, the default, keeps the old key working until it is revoked. `single` means creating the
+    /// new key ends the old one at once, so it cannot be undone and has no `revoke`.
+    pub rotation: Option<String>,
+    /// When this file was last tried against the real service, as `yyyy-mm`.
+    pub tested: Option<Tested>,
     /// With `revoke`, lets the recipe rotate. A recipe without them only checks a key.
     pub create: Option<Step>,
     #[serde(default = "no_request")]
@@ -380,6 +392,38 @@ impl Recipe {
         {
             return fail(format!("verify: reject {status} must be a 4xx status"));
         }
+        if !matches!(
+            self.rotation.as_deref(),
+            None | Some("dual") | Some("single")
+        ) {
+            return fail("rotation must be dual or single".into());
+        }
+        if let Some(tested) = &self.tested {
+            for date in [&tested.check, &tested.rotate].into_iter().flatten() {
+                let (year, month) = date.split_once('-').unwrap_or(("", ""));
+                let digits = |part: &str, size: usize| {
+                    part.len() == size && part.bytes().all(|b| b.is_ascii_digit())
+                };
+                if !digits(year, 4) || !digits(month, 2) {
+                    return fail(format!("tested: {date} must be yyyy-mm"));
+                }
+            }
+        }
+        if self.is_single() {
+            let Some(create) = &self.create else {
+                return fail("a single rotation needs create".into());
+            };
+            if self.revoke.is_some() {
+                return fail(
+                    "a single rotation ends the old key by itself, so it has no revoke".into(),
+                );
+            }
+            if create.id_from.is_some() && create.value_from.as_deref() == create.id_from.as_deref()
+            {
+                return fail("create.value_from and create.id_from must differ".into());
+            }
+            return self.validate_step("create", create, &["POST", "PUT"], &["key_name"], true);
+        }
         if self.create.is_some() != self.revoke.is_some() {
             return fail("create and revoke go together, or a key could never be removed".into());
         }
@@ -431,7 +475,24 @@ impl Recipe {
     }
 
     pub fn can_rotate(&self) -> bool {
-        self.create.is_some() && self.revoke.is_some()
+        self.create.is_some() && (self.revoke.is_some() || self.is_single())
+    }
+
+    pub fn is_single(&self) -> bool {
+        self.rotation.as_deref() == Some("single")
+    }
+
+    /// A person can make the new key at the provider's page and hand it over, if this file can test
+    /// it with one plain request. Tokens, programs and ssh need steps the rotation does not take.
+    pub fn can_rotate_by_hand(&self) -> bool {
+        !self.can_rotate()
+            && !self.verify.path.is_empty()
+            && self.verify.method == "GET"
+            && !matches!(
+                self.auth.kind.as_deref(),
+                Some("oauth_token") | Some("ssh") | Some("command") | Some("aws_sigv4")
+            )
+            && self.auth.run.is_none()
     }
 
     /// Only for recipes where `can_rotate` is true, which the engine checks first.
@@ -498,6 +559,8 @@ impl Recipe {
                 match value {
                     Some(path) if valid_json_path(path) => {}
                     Some(path) => return fail(format!("{field} {path:?} must look like $.a.b")),
+                    // Nothing gets revoked by id in a single rotation, and some answers hold none.
+                    None if field == "id_from" && self.is_single() => {}
                     None => return fail(format!("{field} is required")),
                 }
             }
@@ -830,6 +893,31 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
         assert_eq!(good.display_name(), "X");
         assert!(Recipe::parse(&base.replace("{ header: A }", "{ type: magic }")).is_err());
         assert!(Recipe::parse(&base.replace("{ header: A }", "{ type: aws_sigv4 }")).is_err());
+    }
+
+    #[test]
+    fn rotation_modes_and_dates_are_checked() {
+        let base = "schema: 1\nprovider: p\nhosts: [a.example.com]\nauth: { header: A }\nverify: { method: GET, path: /m }\n";
+        let create = "create: { method: POST, path: /r, value_from: $.k }\n";
+        let revoke = "revoke: { method: DELETE, path: \"/k/{id}\" }\n";
+        assert!(Recipe::parse(&format!("{base}rotation: single\n{create}"))
+            .unwrap()
+            .can_rotate());
+        assert!(Recipe::parse(&format!("{base}rotation: single\n")).is_err());
+        assert!(Recipe::parse(&format!("{base}rotation: single\n{create}{revoke}")).is_err());
+        assert!(Recipe::parse(&format!("{base}rotation: weird\n")).is_err());
+        assert!(
+            Recipe::parse(&format!("{base}{create}{revoke}")).is_err(),
+            "dual needs an id"
+        );
+        assert!(Recipe::parse(&format!("{base}tested: {{ check: 2026-11 }}\n")).is_ok());
+        assert!(Recipe::parse(&format!("{base}tested: {{ check: soon }}\n")).is_err());
+        let by_hand = Recipe::parse(base).unwrap();
+        assert!(by_hand.can_rotate_by_hand());
+        let oauth = base.replace("{ header: A }", "{ type: ssh, user: git }");
+        if let Ok(recipe) = Recipe::parse(&oauth) {
+            assert!(!recipe.can_rotate_by_hand());
+        }
     }
 
     #[test]

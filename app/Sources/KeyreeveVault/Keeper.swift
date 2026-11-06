@@ -7,14 +7,14 @@ public struct VaultDraft {
     let file: VaultFile
     let blob: Data
 
-    public init(enclave: VaultRecipient, blob: Data, recovery: P256.KeyAgreement.PrivateKey) {
-        recoveryKey = RecoveryKey.encode(recovery)
-        file = VaultFile(enclave: enclave.publicKey, recovery: recovery.publicKey)
+    public init(enclave: VaultRecipient, blob: Data, recovery: Age.X25519Identity = .init()) {
+        recoveryKey = recovery.string
+        file = VaultFile(enclave: enclave.publicKey, recovery: recovery.recipient)
         self.blob = blob
     }
 
-    /// The last group of the recovery key, which the person types back as proof they have it.
-    public var lastGroup: String { recoveryKey.split(separator: "-").last.map(String.init) ?? "" }
+    /// The end of the recovery key, which the person types back as proof they have it.
+    public var lastGroup: String { String(recoveryKey.suffix(6)) }
 
     public func accepts(_ typed: String) -> Bool {
         typed.trimmingCharacters(in: .whitespaces).uppercased() == lastGroup
@@ -97,7 +97,7 @@ public enum VaultKeeper {
 
     /// Opens these keys for one use, and notes the use. Values stay in the returned memory only.
     public static func open(
-        names: [String], recipient: VaultRecipient, store: VaultStore, by command: String
+        names: [String], recipient: Age.Identity, store: VaultStore, by command: String
     ) throws -> [String: String] {
         let vault = try store.load()
         var opened: [String: String] = [:]
@@ -116,7 +116,7 @@ public enum VaultKeeper {
 
     /// Opens every sealed copy and compares it with its file. The report holds names alone.
     public static func compare(
-        names: [String], folder: URL, recipient: VaultRecipient, store: VaultStore
+        names: [String], folder: URL, recipient: Age.Identity, store: VaultStore
     ) throws -> CompareReport {
         let vault = try store.load()
         var report = CompareReport()

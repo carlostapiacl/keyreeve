@@ -139,6 +139,11 @@ struct VaultView: View {
                                 .buttonStyle(KRButtonStyle(primary: true))
                                 .disabled(model.busy)
                             } else {
+                                if status.waitsForManualRevoke {
+                                    Button(T("Check that the old key is dead")) { model.confirmOldKeyDead(status) }
+                                        .buttonStyle(KRButtonStyle(primary: true))
+                                        .disabled(model.busy)
+                                }
                                 Button(T("I did it")) { model.dismiss(status) }.buttonStyle(KRButtonStyle())
                             }
                         }
@@ -231,7 +236,7 @@ struct RecoveryKeyView: View {
                 .font(Theme.body).foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Text(draft.recoveryKey)
-                .font(.system(size: 15, weight: .medium, design: .monospaced))
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -239,8 +244,8 @@ struct RecoveryKeyView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.smallRadius))
             VStack(alignment: .leading, spacing: 5) {
-                Text(T("Type its last group to continue")).font(Theme.section).foregroundStyle(Theme.text)
-                TextField(T("Last group"), text: $typed)
+                Text(T("Type its last 6 characters to continue")).font(Theme.section).foregroundStyle(Theme.text)
+                TextField(T("Last 6 characters"), text: $typed)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 140)
                     .autocorrectionDisabled()

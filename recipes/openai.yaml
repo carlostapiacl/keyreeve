@@ -5,6 +5,7 @@ dashboard: https://platform.openai.com/api-keys
 prefixes: [sk-proj-, sk-svcacct-, sk-admin-]
 rotate_every_days: 180
 criticality_hint: 3
+tested: { check: 2026-11 }
 hosts: [api.openai.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /v1/models }

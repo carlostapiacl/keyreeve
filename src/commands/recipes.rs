@@ -71,7 +71,9 @@ pub fn run_recipe_files(command: &str, paths: &[String]) -> ExitCode {
                 "{path}: ok, {} talks only to {}{}",
                 recipe.provider,
                 recipe.hosts.join(", "),
-                if recipe.can_rotate() {
+                if recipe.is_single() {
+                    ", single rotation"
+                } else if recipe.can_rotate() {
                     ""
                 } else {
                     ", check only"
@@ -81,6 +83,10 @@ pub fn run_recipe_files(command: &str, paths: &[String]) -> ExitCode {
         }
         if !recipe.can_rotate() {
             println!("{path}: this recipe only checks a key, so there is nothing to simulate");
+            continue;
+        }
+        if recipe.is_single() {
+            println!("{path}: a single rotation cannot be undone, so the simulator's guarantees do not apply");
             continue;
         }
         let report = simulate::run(&recipe);

@@ -19,6 +19,14 @@ let help = """
       keyreeve-vault run <name> --as <VARIABLE> -- <command> [args...]
           Run a command with the key in one variable. Asks for a fingerprint.
           The command's own output is not filtered, so choose a command that does not print it.
+      keyreeve-vault env <file.env> -- <command> [args...]
+          Run a command with an env file whose values can be keyreeve://name or keyreeve://name#FIELD.
+          Asks for one fingerprint. The file holds references, so it is safe in a repository.
+      keyreeve-vault mcp
+          Serve agents over MCP. They run allowed programs with a key and never get its value.
+          ~/.keyreeve/agent-commands.json says which, and it starts empty.
+      keyreeve-vault export <name> --recovery
+          Print an age file for this key, which any age tool opens with the recovery key.
       keyreeve-vault check-recovery
           Check a recovery key, read from stdin, against this vault.
       keyreeve-vault recover
@@ -67,17 +75,17 @@ do {
         }
         guard !store.exists else { fail("there is already a vault in \(store.directory.path)") }
         let (enclave, blob) = try EnclaveRecipient.create()
-        let recovery = P256.KeyAgreement.PrivateKey()
-        try store.create(VaultFile(enclave: enclave.publicKey, recovery: recovery.publicKey), blob: blob)
+        let recovery = Age.X25519Identity()
+        try store.create(VaultFile(enclave: enclave.publicKey, recovery: recovery.recipient), blob: blob)
         print("""
             Vault created in \(store.directory.path)
 
             Recovery key. It is shown only now, and it opens every key in this vault:
 
-                \(RecoveryKey.encode(recovery))
+                \(recovery.string)
 
             Write it on paper or in your password manager, away from this Mac. If this Mac dies,
-            it is the only way back in.
+            it is the only way back in. It is an ordinary age key, so any age tool can use it too.
             """)
     case "add":
         guard arguments.count == 2 else { fail(help, code: 2) }
@@ -120,24 +128,72 @@ do {
         var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
         execvp(command[0], &pointers)
         fail("could not run \(command[0])")
+    case "env":
+        guard arguments.count >= 4, arguments[2] == "--" else { fail(help, code: 2) }
+        let lines = EnvReferences.parse(try String(contentsOfFile: arguments[1], encoding: .utf8))
+        let command = Array(arguments[3...])
+        let references = lines.contains { if case .reference = $0 { true } else { false } }
+        var recipient: EnclaveRecipient?
+        if references {
+            let program = URL(fileURLWithPath: command[0]).lastPathComponent
+            let context = try EnclaveRecipient.confirm(reason: "run \(program) with its keys")
+            recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), context: context)
+        }
+        let vault = references ? try store.load() : nil
+        for line in lines {
+            switch line {
+            case .value(let name, let value):
+                setenv(name, value, 1)
+            case .reference(let name, let key, let field):
+                guard let vault, let recipient else { fail("the vault could not be opened") }
+                let value = try EnvReferences.value(in: try vault.open(name: key, with: recipient), field: field)
+                setenv(name, value, 1)
+                store.recordUse(of: key, by: command[0])
+            }
+        }
+        var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
+        execvp(command[0], &pointers)
+        fail("could not run \(command[0])")
+    case "mcp":
+        let policy = AgentPolicy.load(
+            from: store.directory.deletingLastPathComponent().appendingPathComponent("agent-commands.json"))
+        let bridge = AgentBridge(
+            policy: policy,
+            names: { Array(try store.load().entries.keys) },
+            open: { key, prompt in
+                let recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), reason: prompt)
+                return try store.load().open(name: key, with: recipient)
+            },
+            run: { try AgentRunner.run($0, variable: $1, value: $2) },
+            record: { store.recordUse(of: $0, by: "agent:\($1)", reason: $2) })
+        while let line = readLine() {
+            if let answer = bridge.handle(line) {
+                FileHandle.standardOutput.write(Data((answer + "\n").utf8))
+            }
+        }
+    case "export":
+        guard arguments.count == 3, arguments[2] == "--recovery" else { fail(help, code: 2) }
+        guard let entry = try store.load().entries[arguments[1]] else { fail("\(arguments[1]) is not in the vault") }
+        // This is ciphertext, so printing it reveals nothing without the recovery key.
+        FileHandle.standardOutput.write(entry.sealed)
     case "check-recovery":
         let vault = try store.load()
         let text = String(decoding: readSecret(prompt: "Recovery key"), as: UTF8.self)
-        let recovery = SoftwareRecipient(key: try RecoveryKey.decode(text))
-        guard recovery.publicKey.rawRepresentation == vault.recoveryPublicKey else {
+        let recovery = try Age.X25519Identity(string: text)
+        guard recovery.recipient.string == vault.recovery else {
             fail("this is not the recovery key of this vault")
         }
         for name in vault.entries.keys { _ = try vault.open(name: name, with: recovery) }
         print("The recovery key is right, and it opens all \(vault.entries.count) keys")
     case "recover":
         let text = String(decoding: readSecret(prompt: "Recovery key"), as: UTF8.self)
-        let recovery = SoftwareRecipient(key: try RecoveryKey.decode(text))
+        let recovery = try Age.X25519Identity(string: text)
         let (enclave, blob) = try EnclaveRecipient.create()
         try store.update { vault in
             try vault.moveToNewEnclave(enclave.publicKey, recovery: recovery)
             // After the move worked, so a bad key changes nothing. The vault's own save then
             // switches to this blob, and a crash before that leaves the old pair working.
-            try store.saveBlob(blob, for: vault.enclavePublicKey)
+            try store.saveBlob(blob, for: vault.enclave)
         }
         print("This vault now opens with this Mac's fingerprint")
     case "--help", "-h", "help":

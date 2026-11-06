@@ -24,6 +24,20 @@ public struct EnclaveRecipient: VaultRecipient {
         return (EnclaveRecipient(key: key), key.dataRepresentation)
     }
 
+    /// Asks for the finger once, so several keys can open on one touch.
+    public static func confirm(reason: String) throws -> LAContext {
+        let context = LAContext()
+        let done = DispatchSemaphore(value: 0)
+        var accepted = false
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, _ in
+            accepted = success
+            done.signal()
+        }
+        done.wait()
+        guard accepted else { throw VaultError("the fingerprint was not accepted") }
+        return context
+    }
+
     public static func load(blob: Data, reason: String, interactive: Bool = true) throws -> EnclaveRecipient {
         let context = LAContext()
         context.localizedReason = reason
@@ -39,16 +53,14 @@ public struct EnclaveRecipient: VaultRecipient {
     }
 }
 
-/// The vault's folder: `vault.json`, which is sealed, and `enclave.blob`.
+/// The vault's folder: `vault.json`, which is sealed, and the chip's blob.
 public struct VaultStore: Sendable {
     public let directory: URL
     var vaultURL: URL { directory.appendingPathComponent("vault.json") }
-    var blobURL: URL { directory.appendingPathComponent("enclave.blob") }
-
     /// The blob that belongs to this public key. The vault names its key, so moving to a new chip
     /// switches blobs in the one atomic write of `vault.json`, and a crash cannot split the pair.
-    func blobURL(for publicKey: Data) -> URL {
-        let digest = SHA256.hash(data: publicKey).map { String(format: "%02x", $0) }.joined()
+    func blobURL(for publicKey: String) -> URL {
+        let digest = SHA256.hash(data: Data(publicKey.utf8)).map { String(format: "%02x", $0) }.joined()
         return directory.appendingPathComponent("enclave-\(digest).blob")
     }
 
@@ -66,7 +78,7 @@ public struct VaultStore: Sendable {
         decoder.dateDecodingStrategy = .iso8601
         do {
             let vault = try decoder.decode(VaultFile.self, from: Data(contentsOf: vaultURL))
-            guard vault.schema == 1 else { throw VaultError("unknown vault schema \(vault.schema)") }
+            guard vault.schema == 2 else { throw VaultError("this vault's format is not one this version reads") }
             return vault
         } catch let error as VaultError {
             throw error
@@ -82,24 +94,25 @@ public struct VaultStore: Sendable {
         try write(try encoder.encode(vault), to: vaultURL)
     }
 
-    public func saveBlob(_ blob: Data, for publicKey: Data) throws { try write(blob, to: blobURL(for: publicKey)) }
+    public func saveBlob(_ blob: Data, for publicKey: String) throws { try write(blob, to: blobURL(for: publicKey)) }
 
     /// Creates the vault, unless one appeared in the meantime. Nothing gets overwritten.
     public func create(_ vault: VaultFile, blob: Data) throws {
         try withLock {
             guard !exists else { throw VaultError("there is already a vault") }
-            try saveBlob(blob, for: vault.enclavePublicKey)
+            try saveBlob(blob, for: vault.enclave)
             try save(vault)
         }
     }
 
     /// Keeps which key was used and by which program, next to the vault. It never holds a value or
     /// the command's arguments, which can carry anything. A failure here stops nothing.
-    public func recordUse(of name: String, by command: String) {
-        let entry: [String: Any] = [
+    public func recordUse(of name: String, by command: String, reason: String? = nil) {
+        var entry: [String: Any] = [
             "at": Int(Date().timeIntervalSince1970), "name": name,
             "command": URL(fileURLWithPath: command).lastPathComponent,
         ]
+        if let reason { entry["reason"] = String(reason.prefix(200)) }
         guard let line = try? JSONSerialization.data(withJSONObject: entry) else { return }
         let path = directory.deletingLastPathComponent().appendingPathComponent("usage.jsonl").path
         let descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
@@ -109,8 +122,7 @@ public struct VaultStore: Sendable {
     }
 
     public func loadBlob() throws -> Data {
-        let named = blobURL(for: try load().enclavePublicKey)
-        return try Data(contentsOf: FileManager.default.fileExists(atPath: named.path) ? named : blobURL)
+        try Data(contentsOf: blobURL(for: try load().enclave))
     }
 
     /// Changes the vault with no other process in the middle. Without this, two writers that loaded

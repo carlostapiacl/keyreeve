@@ -328,6 +328,24 @@ fn another_host_gets_a_tunnel_and_never_the_key() {
 }
 
 #[test]
+fn the_key_never_reaches_a_host_that_is_not_its_own() {
+    // Port 443 of a host this key is not for. Were the proxy to end TLS here, the test's upstream would
+    // receive the request with the real key. A tunnel to port 443 of this machine reaches nothing.
+    let run = run_with("hello", &["api.example.com"], false, u64::MAX);
+    let (_, code) = curl(
+        &run,
+        &run.token,
+        &["-H", &format!("Authorization: Bearer {FAKE}"), &url("/")],
+    );
+    assert_ne!(code, "200");
+    assert!(
+        run.seen.lock().unwrap().is_empty(),
+        "the request got through"
+    );
+    assert!(run.events.try_recv().is_err(), "the proxy read the request");
+}
+
+#[test]
 fn a_host_header_naming_elsewhere_is_refused() {
     let run = run();
     let (_, code) = curl(

@@ -2,6 +2,7 @@
 //! the key's value, and no error quotes the file it came from.
 
 use crate::inventory::{split_label, strip_comment};
+use crate::providers;
 use crate::recipe::{extract, Recipe};
 use crate::secret::Secret;
 use crate::transport::{HttpTransport, Request, Transport, TransportError};
@@ -14,22 +15,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
 const MAX_KEY_FILE_BYTES: u64 = 1024 * 1024;
-
-const BUILTIN: &[(&str, &str)] = &[
-    ("anthropic", include_str!("../recipes/anthropic.yaml")),
-    ("cloudflare", include_str!("../recipes/cloudflare.yaml")),
-    ("github", include_str!("../recipes/github.yaml")),
-    ("gitlab", include_str!("../recipes/gitlab.yaml")),
-    ("hetzner", include_str!("../recipes/hetzner.yaml")),
-    ("instagram", include_str!("../recipes/instagram.yaml")),
-    ("langsmith", include_str!("../recipes/langsmith.yaml")),
-    ("meta", include_str!("../recipes/meta.yaml")),
-    ("netlify", include_str!("../recipes/netlify.yaml")),
-    ("openai", include_str!("../recipes/openai.yaml")),
-    ("sentry", include_str!("../recipes/sentry.yaml")),
-    ("stripe", include_str!("../recipes/stripe.yaml")),
-    ("supabase", include_str!("../recipes/supabase.yaml")),
-];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -115,26 +100,16 @@ impl fmt::Display for Verdict {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Plan {
-    keys: Vec<PlanKey>,
+pub(crate) struct Plan {
+    pub(crate) keys: Vec<PlanKey>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PlanKey {
-    file: String,
-    recipe: String,
-    field: Option<String>,
-}
-
-pub fn builtin_recipes() -> Vec<(&'static str, Recipe)> {
-    BUILTIN
-        .iter()
-        .map(|(name, text)| {
-            let recipe = Recipe::parse(text).expect("the recipes that ship are tested");
-            (*name, recipe)
-        })
-        .collect()
+pub(crate) struct PlanKey {
+    pub(crate) file: String,
+    pub(crate) recipe: String,
+    pub(crate) field: Option<String>,
 }
 
 /// Sends the recipe's verify step. Only a GET runs, so a check cannot change anything.
@@ -162,7 +137,8 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
     }
 }
 
-/// Reads a key from a file: the whole file, or one field of an env file, JSON or loose notes.
+/// Reads a key from a file: the whole file, or named fields of an env file, JSON, CSV or loose
+/// notes. `A+B` joins two fields with `:`, for providers whose key has two parts.
 pub fn read_key(text: &str, field: Option<&str>) -> Result<Secret, String> {
     let trimmed = text.trim().trim_start_matches('\u{FEFF}');
     let Some(field) = field else {
@@ -174,12 +150,42 @@ pub fn read_key(text: &str, field: Option<&str>) -> Result<Secret, String> {
         }
         return Ok(Secret::new(trimmed));
     };
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+    let parts: Vec<Secret> = field
+        .split('+')
+        .map(|name| read_field(trimmed, name))
+        .collect::<Result<_, _>>()?;
+    if let [only] = parts.as_slice() {
+        return Ok(only.clone());
+    }
+    let joined: Vec<&str> = parts.iter().map(Secret::expose).collect();
+    Ok(Secret::new(joined.join(":")))
+}
+
+fn read_field(text: &str, field: &str) -> Result<Secret, String> {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
         return extract(&json, &format!("$.{field}"))
             .map(Secret::new)
             .ok_or_else(|| format!("field {field} was not found"));
     }
-    for line in trimmed.lines().map(str::trim) {
+    let mut lines = text.lines();
+    if let (Some(head), Some(row)) = (lines.next(), lines.next()) {
+        let cells = |line: &str| -> Vec<String> {
+            line.split(',')
+                .map(|c| c.trim().trim_matches('"').to_owned())
+                .collect()
+        };
+        let names = cells(head);
+        if let Some(index) = names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(field))
+        {
+            let values = cells(row);
+            if names.len() == values.len() && !values[index].is_empty() {
+                return Ok(Secret::new(values[index].clone()));
+            }
+        }
+    }
+    for line in text.lines().map(str::trim) {
         if strip_comment(line).is_some() {
             continue;
         }
@@ -196,19 +202,11 @@ pub fn read_key(text: &str, field: Option<&str>) -> Result<Secret, String> {
     Err(format!("field {field} was not found"))
 }
 
-fn load_recipe(name: &str) -> Result<Recipe, String> {
-    if let Some((_, text)) = BUILTIN.iter().find(|(builtin, _)| *builtin == name) {
-        return Recipe::parse(text).map_err(|e| e.to_string());
-    }
-    let text = fs::read_to_string(name).map_err(|_| {
-        format!(
-            "{name} is not a recipe that ships with keyreeve, or a file. See `keyreeve recipes`"
-        )
-    })?;
-    Recipe::parse(&text).map_err(|e| format!("{name}: {e}"))
+pub(crate) fn load_recipe(name: &str) -> Result<Recipe, String> {
+    providers::load(name)
 }
 
-fn load_key(path: &Path, field: Option<&str>) -> Result<Secret, String> {
+pub(crate) fn load_key(path: &Path, field: Option<&str>) -> Result<Secret, String> {
     let shown = path.display();
     let size = fs::metadata(path)
         .map_err(|e| format!("{shown}: {}", e.kind()))?
@@ -270,13 +268,19 @@ pub fn run_plan(
     Ok(lines)
 }
 
-fn run_entry(entry: &PlanKey, keys: &Path) -> Result<Verdict, String> {
-    if Path::new(&entry.file)
+/// A plan names files inside the keys folder and nowhere else.
+pub(crate) fn inside_folder(file: &str) -> Result<(), String> {
+    if Path::new(file)
         .components()
         .any(|part| !matches!(part, std::path::Component::Normal(_)))
     {
         return Err("the file must be a path inside the keys folder".into());
     }
+    Ok(())
+}
+
+fn run_entry(entry: &PlanKey, keys: &Path) -> Result<Verdict, String> {
+    inside_folder(&entry.file)?;
     run_one(
         &entry.recipe,
         &keys.join(&entry.file),
@@ -448,13 +452,28 @@ mod tests {
     }
 
     #[test]
-    fn the_recipes_that_ship_only_read() {
-        let recipes = builtin_recipes();
-        assert_eq!(recipes.len(), BUILTIN.len());
-        for (name, recipe) in recipes {
-            assert_eq!(recipe.provider, name);
-            assert_eq!(recipe.verify.method, "GET", "{name}");
-            assert!(!recipe.verify.path.contains("{id}"), "{name}");
-        }
+    fn reads_a_key_in_two_parts_from_a_csv() {
+        let text = "User name,Access key ID,Secret access key\nu,AKIACANARY,CANARYsecret\n";
+        let key = read_key(text, Some("Access key ID+Secret access key")).unwrap();
+        assert_eq!(key.expose(), "AKIACANARY:CANARYsecret");
+        let error = read_key(text, Some("Access key ID+Missing")).unwrap_err();
+        assert!(!error.contains("CANARY"), "{error}");
+    }
+
+    #[test]
+    fn a_signed_request_does_not_send_the_secret() {
+        let recipe = load_recipe("aws").unwrap();
+        let mut transport = Fixed {
+            status: Some(403),
+            sent: Vec::new(),
+        };
+        let verdict = check(
+            &recipe,
+            &Secret::new("AKIACANARY:CANARYsecret"),
+            &mut transport,
+        );
+        assert_eq!(verdict, Verdict::Rejected);
+        assert!(transport.sent[0].2.contains("AWS4-HMAC-SHA256"));
+        assert!(!transport.sent[0].2.contains("CANARYsecret"));
     }
 }

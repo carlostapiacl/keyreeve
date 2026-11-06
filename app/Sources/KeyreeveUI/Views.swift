@@ -27,6 +27,7 @@ public struct MainView: View {
 
     private var items: [CatalogItem] { model.items }
     private var shown: [CatalogItem] { filter(items, by: selection ?? .all, search: search) }
+    private var active: [CatalogItem] { items.filter { !$0.isArchived } }
     private var toReview: Int { items.filter { $0.attention != nil }.count }
 
     private var chosenItem: CatalogItem? {
@@ -34,30 +35,33 @@ public struct MainView: View {
         return items.first { $0.path == path }
     }
 
-    private var checkable: [CatalogItem] {
-        let base = chosenRows.isEmpty ? shown : shown.filter { chosenRows.contains($0.id) }
-        return base.filter(\.canCheck)
+    private var scope: [CatalogItem] {
+        chosenRows.isEmpty ? shown : shown.filter { chosenRows.contains($0.id) }
     }
+    private var checkable: [CatalogItem] { scope.filter(\.canCheck) }
+    private var identifiable: [CatalogItem] { scope.filter(model.providers.canIdentify) }
 
     public var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                Label(T("Overview"), systemImage: "gauge.with.dots.needle.33percent").tag(Sidebar.home)
+                Label(T("Overview"), systemImage: "square.grid.2x2").tag(Sidebar.home)
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
-                sidebarRow(T("All keys"), "key", .all, items.count)
+                sidebarRow(T("All keys"), "key", .all, active.count)
+                sidebarRow(T("Archive"), "archivebox", .archive, items.count - active.count)
                 Section(T("Projects")) {
-                    ForEach(projectTags(in: items), id: \.tag) { entry in
+                    ForEach(projectTags(in: active), id: \.tag) { entry in
                         sidebarRow(entry.tag, "folder", .tag(entry.tag), entry.count)
                     }
                 }
             }
+            .tint(Theme.accent)
             .navigationSplitViewColumnWidth(min: 190, ideal: 220)
         } detail: {
             VStack(spacing: 0) {
                 content
-                Divider()
-                footer
+                statusBar
             }
+            .background(Theme.background)
             .navigationTitle(title)
             .toolbar { toolbar }
         }
@@ -75,11 +79,11 @@ public struct MainView: View {
                 if shown.isEmpty {
                     emptyList.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    table
+                    keyList
                 }
                 if let chosenItem {
-                    Divider()
-                    KeyDetail(item: chosenItem, model: model).frame(width: 280)
+                    Rectangle().fill(Theme.border).frame(width: 1)
+                    KeyDetail(item: chosenItem, model: model).frame(width: 300)
                 }
             }
             .searchable(text: $search, prompt: T("Search by name or tag"))
@@ -91,7 +95,9 @@ public struct MainView: View {
         case .home: return T("Overview")
         case .attention: return T("To review")
         case .all: return T("All keys")
+        case .archive: return T("Archive")
         case .checkable: return T("Can be checked")
+        case .critical: return T("Critical keys")
         case .level(let level): return levelName(level)
         case .tag(let tag): return tag
         }
@@ -107,11 +113,22 @@ public struct MainView: View {
         }
     }
 
+    private var keyList: some View {
+        List(shown, selection: $chosenRows) { item in
+            KeyRow(item: item, compact: chosenItem != nil)
+                .listRowSeparatorTint(Theme.border)
+                .listRowBackground(Color.clear)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+    }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         if selection != .home {
             ToolbarItem(placement: .automatic) {
                 Menu {
                     Button(T("All keys")) { selection = .all }
+                    Button(T("Critical keys")) { selection = .critical }
                     Button(T("Can be checked")) { selection = .checkable }
                     Divider()
                     ForEach(["free", "ask", "never", "none"], id: \.self) { level in
@@ -121,11 +138,27 @@ public struct MainView: View {
                     Label(T("Show"), systemImage: "line.3.horizontal.decrease.circle")
                 }
             }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    model.identify(identifiable)
+                } label: {
+                    Label(
+                        identifiable.count == 1 ? T("Identify 1 key") : T("Identify %d keys", identifiable.count),
+                        systemImage: "person.text.rectangle"
+                    )
+                    .labelStyle(.titleAndIcon)
+                }
+                .disabled(model.busy || identifiable.isEmpty)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     model.check(checkable)
                 } label: {
-                    Label(checkTitle, systemImage: "checkmark.shield").labelStyle(.titleAndIcon)
+                    Label(
+                        checkable.count == 1 ? T("Check 1 key") : T("Check %d keys", checkable.count),
+                        systemImage: "checkmark.shield"
+                    )
+                    .labelStyle(.titleAndIcon)
                 }
                 .disabled(model.busy || checkable.isEmpty)
                 .help(checkHelp)
@@ -142,10 +175,6 @@ public struct MainView: View {
         }
     }
 
-    private var checkTitle: String {
-        checkable.count == 1 ? T("Check 1 key") : T("Check %d keys", checkable.count)
-    }
-
     private var checkHelp: String {
         if !checkable.isEmpty { return T("One read-only request to each provider. Some need your fingerprint.") }
         return shown.first { chosenRows.contains($0.id) }?.whyNoCheck ?? T("Choose where to check it")
@@ -156,7 +185,7 @@ public struct MainView: View {
             HStack {
                 Text(title).lineLimit(1)
                 Spacer()
-                Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
+                Text("\(count)").font(Theme.caption).foregroundStyle(Theme.muted).monospacedDigit()
             }
         } icon: {
             Image(systemName: icon)
@@ -164,44 +193,88 @@ public struct MainView: View {
         .tag(value)
     }
 
-    private var table: some View {
-        Table(shown, selection: $chosenRows) {
-            TableColumn(T("Key")) { item in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(item.path).lineLimit(1).truncationMode(.middle)
-                    if let attention = item.attention {
-                        Text(attention).font(.caption).foregroundStyle(.orange)
-                    }
+    private var statusBar: some View {
+        HStack(spacing: 8) {
+            if model.busy { ProgressView().controlSize(.mini) }
+            if let message = model.message { Text(message).foregroundStyle(Theme.text) }
+            Spacer()
+            if selection != .home { Text(T("%d of %d", shown.count, active.count)).monospacedDigit() }
+        }
+        .font(Theme.caption)
+        .foregroundStyle(Theme.muted)
+        .padding(.horizontal, 14)
+        .frame(height: 26)
+        .background(Theme.surface)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
+}
+
+/// One key in a list: its name first, and the file as a detail.
+struct KeyRow: View {
+    let item: CatalogItem
+    /// With the details open, the row keeps only what fits comfortably.
+    let compact: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title).font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                if !item.name.isEmpty {
+                    Text(item.path).font(Theme.code).foregroundStyle(Theme.faint).lineLimit(1).truncationMode(.middle)
+                }
+                if let attention = item.attention {
+                    Text(attention).font(Theme.caption).foregroundStyle(Theme.warn)
+                } else if let account = item.details?.fields["account"] {
+                    Text(account).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
                 }
             }
-            .width(min: 180, ideal: 260)
-            TableColumn(T("Who can use it")) { item in LevelText(level: item.level) }
-                .width(min: 90, ideal: 120)
-            TableColumn(T("Last check")) { item in ResultText(item: item) }
-                .width(min: 110, ideal: 150)
-            TableColumn(T("Tags")) { item in
-                Text(item.tags.filter { !$0.hasPrefix("kind:") }.joined(separator: "  "))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .help(item.tags.joined(separator: "\n"))
+            Spacer(minLength: 8)
+            if !compact {
+                HStack(spacing: 4) {
+                    ForEach(visibleTags, id: \.self) { Chip(text: $0) }
+                }
             }
-            .width(min: 90, ideal: 130)
+            HStack {
+                if item.criticality > 0 {
+                    CriticalityMeter(value: item.criticality)
+                        .help("\(T("Criticality")): \(criticalityName(item.criticality))")
+                }
+            }
+            .frame(width: 34, alignment: .leading)
+            HStack {
+                Spacer(minLength: 0)
+                ResultBadge(item: item)
+            }
+            .frame(width: 112)
+            if !compact {
+                Text(levelName(item.level))
+                    .font(Theme.caption)
+                    .foregroundStyle(item.level == "never" ? Theme.text : Theme.muted)
+                    .frame(width: 128, alignment: .trailing)
+                    .lineLimit(1)
+            }
         }
+        .padding(.vertical, 5)
     }
 
-    private var footer: some View {
-        HStack(spacing: 10) {
-            if model.busy { ProgressView().controlSize(.small) }
-            if let message = model.message { Text(message).foregroundStyle(.primary) }
-            Spacer()
-            if selection != .home { Text(T("%d of %d", shown.count, items.count)).monospacedDigit() }
+    private var visibleTags: [String] {
+        item.tags.filter { !$0.contains(":") && !["revoke", "confirm"].contains($0) }.prefix(2).map { $0 }
+    }
+}
+
+struct ResultBadge: View {
+    let item: CatalogItem
+
+    var body: some View {
+        switch item.lastResult {
+        case "works": Badge(text: T("Works"), icon: "checkmark", tone: .good).help(item.lastChecked)
+        case "rejected": Badge(text: T("Rejected"), icon: "xmark", tone: .bad).help(item.lastChecked)
+        case "forbidden", "no_result": Badge(text: T("No answer"), icon: "questionmark", tone: .neutral)
+        default:
+            if item.isSecret {
+                Text(T("Never checked")).font(Theme.caption).foregroundStyle(Theme.faint)
+            }
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .frame(height: 26)
-        .background(.bar)
     }
 }
 
@@ -210,18 +283,27 @@ struct KeyDetail: View {
     let item: CatalogItem
     @ObservedObject var model: AppModel
     @State private var newTag = ""
+    @State private var name = ""
+    @State private var note = ""
+    @State private var confirmArchive = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(item.path).font(.headline).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 18) {
+                header
                 if let attention = item.attention {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(attention, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Label(attention, systemImage: "exclamationmark.triangle.fill")
+                            .font(Theme.body).foregroundStyle(Theme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
                         ActionButtons(item: item, model: model)
                     }
                 }
-                fact(T("Last check")) { ResultText(item: item) }
+                checkButton
+                identity
+                naming
+                criticality
+                if item.isSecret { checkPlace }
                 fact(T("Who can use it")) {
                     Picker("", selection: levelBinding) {
                         Text(T("Agents can use it")).tag("free")
@@ -231,16 +313,137 @@ struct KeyDetail: View {
                     }
                     .labelsHidden()
                 }
-                if item.isSecret { checkPlace }
                 fact(T("Tags")) { tagEditor }
-                fact(T("File changed")) { Text(item.modified).monospacedDigit() }
-                if !item.format.isEmpty { fact(T("Format")) { Text(item.format) } }
-                fact(T("Permissions")) { Text(item.mode).monospacedDigit() }
+                fileFacts
+                archiveButton
             }
-            .padding(16)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.surface)
+        .onAppear(perform: syncFields)
+        .onChange(of: item.path) { syncFields() }
+        .confirmationDialog(
+            T("Archive this key"), isPresented: $confirmArchive, titleVisibility: .visible
+        ) {
+            Button(T("Archive anyway"), role: .destructive) { model.archive(item) }
+            Button(T("Cancel"), role: .cancel) {}
+        } message: {
+            Text(T("Archiving hides it from your lists. It does not stop it: this key still works."))
+        }
+    }
+
+    /// Tests this one key. A key with no place to check says why, instead of hiding the button.
+    @ViewBuilder private var checkButton: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                model.check([item])
+            } label: {
+                Label(T("Check this key"), systemImage: "checkmark.shield")
+            }
+            .buttonStyle(KRButtonStyle(primary: item.attention == nil))
+            .disabled(model.busy || !item.canCheck)
+            if let why = item.whyNoCheck {
+                Text(why).font(Theme.caption).foregroundStyle(Theme.muted)
+            }
+        }
+    }
+
+    private var criticality: some View {
+        fact(T("Criticality")) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    ForEach(1...5, id: \.self) { step in
+                        Button {
+                            model.save(KeyEdit(criticality: step), for: item)
+                        } label: {
+                            Text("\(step)")
+                                .font(.system(size: 12, weight: .medium))
+                                .monospacedDigit()
+                                .foregroundStyle(step == item.criticality ? Theme.onAccent : Theme.text)
+                                .frame(width: 30, height: 24)
+                                .background(
+                                    step == item.criticality ? Theme.accent : Theme.raised,
+                                    in: RoundedRectangle(cornerRadius: Theme.smallRadius))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(criticalityName(step))
+                    }
+                }
+                Text(item.criticality == 0 ? T("How bad would a leak be?") : criticalityName(item.criticality))
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.muted)
+            }
+        }
+    }
+
+    private func syncFields() {
+        name = item.name
+        note = item.description
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(item.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+            Text(item.path).font(Theme.code).foregroundStyle(Theme.faint).textSelection(.enabled)
+            HStack(spacing: 6) {
+                ResultBadge(item: item)
+                if item.criticality > 0 { CriticalityMeter(value: item.criticality) }
+                if !item.lastChecked.isEmpty {
+                    Text(item.lastChecked).font(Theme.caption).foregroundStyle(Theme.faint).monospacedDigit()
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder private var identity: some View {
+        if let details = item.details {
+            fact(T("From the provider")) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(details.fields.sorted { $0.key < $1.key }, id: \.key) { field in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(field.key).font(Theme.caption).foregroundStyle(Theme.faint).frame(width: 56, alignment: .leading)
+                            Text(field.value).font(Theme.body).foregroundStyle(Theme.text).lineLimit(2).textSelection(.enabled)
+                        }
+                    }
+                    if let suggested = details.suggested_name, suggested != item.name {
+                        Button(T("Use") + " “\(suggested)”") {
+                            model.save(KeyEdit(name: suggested), for: item)
+                            name = suggested
+                        }
+                        .buttonStyle(KRButtonStyle())
+                        .padding(.top, 4)
+                    }
+                }
+            }
+        } else if model.providers.canIdentify(item) {
+            Button {
+                model.identify([item])
+            } label: {
+                Label(T("Identify"), systemImage: "person.text.rectangle")
+            }
+            .buttonStyle(KRButtonStyle())
+            .disabled(model.busy)
+        }
+    }
+
+    private var naming: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            fact(T("Name")) {
+                TextField(T("Give it a name"), text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { model.save(KeyEdit(name: name), for: item) }
+            }
+            fact(T("Description")) {
+                TextField(T("Add a note about this key"), text: $note, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { model.save(KeyEdit(description: note), for: item) }
+            }
+        }
     }
 
     private var levelBinding: Binding<String> {
@@ -261,15 +464,16 @@ struct KeyDetail: View {
             VStack(alignment: .leading, spacing: 6) {
                 Picker("", selection: recipeBinding) {
                     Text(T("Nobody")).tag("")
-                    ForEach(Providers.checkable, id: \.self) { Text(Providers.displayName($0)).tag($0) }
+                    ForEach(model.providers.usable) { Text($0.name).tag($0.id) }
                     if item.recipes.count > 1 {
-                        Text(item.recipes.map(Providers.displayName).joined(separator: ", ")).tag(item.recipes.joined(separator: " "))
+                        Text(item.recipes.map(model.providers.name(of:)).joined(separator: ", "))
+                            .tag(item.recipes.joined(separator: " "))
                     }
                 }
                 .labelsHidden()
                 Text(T("The key is sent to this company to check it. Choose only the company it belongs to."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -283,6 +487,9 @@ struct KeyDetail: View {
                 ) {
                     Text(T("None")).tag("")
                     ForEach(item.labels, id: \.self) { Text($0).tag($0) }
+                    if !item.field.isEmpty && !item.labels.contains(item.field) {
+                        Text(item.field).tag(item.field)
+                    }
                 }
                 .labelsHidden()
             }
@@ -293,12 +500,12 @@ struct KeyDetail: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(item.tags.filter { !$0.hasPrefix("kind:") }, id: \.self) { tag in
                 HStack(spacing: 4) {
-                    Text(tag).lineLimit(1)
+                    Chip(text: tag)
                     Spacer()
                     Button {
                         model.save(KeyEdit(tags: item.tags.filter { $0 != tag }), for: item)
                     } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                        Image(systemName: "xmark").imageScale(.small).foregroundStyle(Theme.faint)
                     }
                     .buttonStyle(.plain)
                     .help(T("Remove %@", tag))
@@ -315,9 +522,28 @@ struct KeyDetail: View {
         }
     }
 
+    private var fileFacts: some View {
+        HStack(alignment: .top, spacing: 18) {
+            fact(T("File changed")) { Text(item.modified).font(Theme.caption).monospacedDigit() }
+            if !item.format.isEmpty { fact(T("Format")) { Text(item.format).font(Theme.caption) } }
+            fact(T("Permissions")) { Text(item.mode).font(Theme.caption).monospacedDigit() }
+        }
+    }
+
+    @ViewBuilder private var archiveButton: some View {
+        if item.isArchived {
+            Button(T("Restore")) { model.restore(item) }.buttonStyle(KRButtonStyle())
+        } else {
+            Button(T("Archive this key")) {
+                if item.lastResult == "works" { confirmArchive = true } else { model.archive(item) }
+            }
+            .buttonStyle(KRButtonStyle())
+        }
+    }
+
     private func fact<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(Theme.caption).foregroundStyle(Theme.muted)
             content()
         }
     }
@@ -328,23 +554,15 @@ struct ActionButtons: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        let list = model.actionsFor(item)
         FlowRow(spacing: 6) {
-            ForEach(actions(for: item), id: \.self) { action in
-                let main = action == actions(for: item).first
+            ForEach(list, id: \.self) { action in
                 Button(action.title) { model.perform(action, on: item) }
-                    .controlSize(.small)
+                    .buttonStyle(KRButtonStyle(primary: action == list.first && action != .ignore))
                     .disabled(model.busy)
-                    .buttonStyle(main ? AnyPrimitiveButtonStyle(.borderedProminent) : AnyPrimitiveButtonStyle(.bordered))
             }
         }
     }
-}
-
-/// Lets one button stand out in a row, which SwiftUI's style types do not allow directly.
-struct AnyPrimitiveButtonStyle: PrimitiveButtonStyle {
-    private let make: (Configuration) -> AnyView
-    init<S: PrimitiveButtonStyle>(_ style: S) { make = { AnyView(style.makeBody(configuration: $0)) } }
-    func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }
 
 /// Lays out buttons in rows, because translated labels differ in length.
@@ -384,37 +602,6 @@ struct FlowRow: Layout {
     }
 }
 
-struct LevelText: View {
-    let level: String
-    var body: some View {
-        switch level {
-        case "never": Label(levelName(level), systemImage: "lock.fill").labelStyle(.titleOnly).foregroundStyle(.primary)
-        case "none": Text(levelName(level)).foregroundStyle(.secondary)
-        default: Text(levelName(level))
-        }
-    }
-}
-
-struct ResultText: View {
-    let item: CatalogItem
-    var body: some View {
-        switch item.lastResult {
-        case "works": line(T("Works"), "checkmark.circle.fill", .green)
-        case "rejected": line(T("Rejected"), "xmark.circle.fill", .red)
-        case "forbidden", "no_result": line(T("No answer"), "questionmark.circle", .secondary)
-        default: Text(item.isSecret ? T("Never checked") : "").foregroundStyle(.tertiary)
-        }
-    }
-
-    private func line(_ title: String, _ icon: String, _ color: Color) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).foregroundStyle(color).imageScale(.small)
-            Text(title)
-            Text(item.lastChecked).font(.caption).foregroundStyle(.secondary).monospacedDigit()
-        }
-    }
-}
-
 public struct LockedView: View {
     let message: String?
     let unlock: () -> Void
@@ -428,16 +615,18 @@ public struct LockedView: View {
         VStack(spacing: 14) {
             Image(systemName: "touchid")
                 .font(.system(size: 44, weight: .light))
-                .foregroundStyle(.secondary)
-            Text(T("Keyreeve is locked")).font(.title3)
+                .foregroundStyle(Theme.accent)
+            Text(T("Keyreeve is locked")).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
             if let message {
-                Text(message).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text(message).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
             }
-            Button(T("Unlock"), action: unlock).keyboardShortcut(.defaultAction)
+            Button(T("Unlock"), action: unlock)
+                .buttonStyle(KRButtonStyle(primary: true))
+                .keyboardShortcut(.defaultAction)
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.background)
     }
 }
 
@@ -453,29 +642,31 @@ public struct WelcomeView: View {
 
     public var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "key.viewfinder")
-                .font(.system(size: 48, weight: .light))
-                .foregroundStyle(Color.accentColor)
-            Text(T("Your keys, without showing them")).font(.title2)
-            Text(T("A short list of what to do, and a way to confirm it got done."))
-                .foregroundStyle(.secondary)
+            Image(systemName: "key.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 72, height: 72)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.border))
+            Text(T("Your keys, without showing them")).font(Theme.title).foregroundStyle(Theme.text)
+            Text(T("A short list of what to do, and a way to confirm it got done.")).foregroundStyle(Theme.muted)
             if busy {
                 ProgressView().controlSize(.small).padding(.top, 6)
             } else {
                 Button(T("Choose your keys folder"), action: choose)
+                    .buttonStyle(KRButtonStyle(primary: true))
                     .keyboardShortcut(.defaultAction)
-                    .controlSize(.large)
                     .padding(.top, 6)
             }
             Text(T("Scanning sends nothing out of this Mac. Keyreeve reads your files to describe them, and saves no value."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Theme.caption)
+                .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.background)
     }
 }
 
@@ -490,6 +681,15 @@ public struct SettingsView: View {
     public init(model: AppModel) { self.model = model }
 
     public var body: some View {
+        TabView {
+            general.tabItem { Label(T("General"), systemImage: "gearshape") }
+            providers.tabItem { Label(T("Providers"), systemImage: "puzzlepiece.extension") }
+        }
+        .frame(width: 520, height: 460)
+        .id(language)
+    }
+
+    private var general: some View {
         Form {
             Section(T("General")) {
                 Picker(T("Language"), selection: $language) {
@@ -517,9 +717,7 @@ public struct SettingsView: View {
                         Button(T("Change"), action: model.chooseFolder)
                     }
                 }
-                Button(T("Show the app's files")) {
-                    NSWorkspace.shared.open(model.files.directory)
-                }
+                Button(T("Show the app's files")) { NSWorkspace.shared.open(model.files.directory) }
             }
             Section(T("About")) {
                 Text(T("Version %@", Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"))
@@ -527,7 +725,33 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
-        .id(language)
+    }
+
+    private var providers: some View {
+        Form {
+            Section {
+                ForEach(model.providers.all) { provider in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(provider.name.isEmpty ? provider.id : provider.name)
+                            Text(provider.problem ?? T("Sent only to %@", provider.hosts.joined(separator: ", ")))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                        if provider.needsApproval {
+                            Button(T("Approve")) { model.approve(provider) }
+                        } else if provider.source == "local" {
+                            Text(T("Your file")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } footer: {
+                Text(T("Your files can add more providers, in ~/.keyreeve/providers. Each one needs your approval before it receives a key."))
+                    .font(.caption)
+            }
+        }
+        .formStyle(.grouped)
     }
 }

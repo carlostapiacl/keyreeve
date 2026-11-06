@@ -110,7 +110,7 @@ keys:
   - { file: app.env, recipe: github, field: GITHUB_TOKEN }
 ```
 
-A recipe with only `verify` is enough to check a key, and it is the easiest way to contribute. A rejected key may
+A rejected key may
 still be alive for other uses: a restricted token can fail a check it has no permission for. Cloudflare's check
 only covers user tokens, so an account token reads as rejected. A pass says the key works, and not what it may do.
 The `hetzner` and `langsmith` recipes have passed with a real key. The others have only been shown to reject a
@@ -131,10 +131,37 @@ opens, and shows what to do first, with a button on each item. To revoke a key, 
 press "I already revoked it": the app checks the key again, and the warning goes away only if the provider rejects it.
 A key with no check available is marked by hand. "Ignore" lasts 30 days, then the warning comes back.
 
-Who can use each key, its tags and where it is checked are edited beside the list. A check sends a key to a company, so
-the app never guesses where: you choose, or the key's prefix proves it. Checks are one read-only request, keys set to
-"Ask me" need your fingerprint, and keys set to "Only me" are not offered. Settings has the language, appearance and
-auto-lock. The build is not notarized, so macOS warns you the first time.
+Beside the list you can name a key and describe it, rate it from 1 to 5 by how bad a leak would be, change who can use
+it, and archive it. A name does not rename the file, so nothing that uses the file breaks. Archiving hides a key and does
+not stop it, so an archived key that still works keeps a warning. Identify asks the provider whose key it is, and keeps
+only the fields that provider's file declares, then offers a name.
+
+A check sends a key to a company, so the app never guesses where: you choose, or the key's prefix proves it. A check is
+one read-only request, keys set to "Ask me" need your fingerprint, and keys set to "Only me" are not offered. Settings has
+the language, appearance and auto-lock. The build is not notarized, so macOS warns you the first time.
+
+## Adding a provider
+
+Everything about a provider lives in one file, and the app knows no provider by name. See [`recipes/github.yaml`](recipes/github.yaml):
+
+```yaml
+schema: 1
+provider: github
+name: GitHub
+dashboard: https://github.com/settings/tokens
+prefixes: [ghp_, github_pat_]
+hosts: [api.github.com]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /user }
+identify:
+  request: { method: GET, path: /user }
+  fields: { account: $.login, email: $.email }
+suggested_name: "GitHub · {account}"
+```
+
+Put yours in `~/.keyreeve/providers/` and it works with no new build, once you approve the hosts it lists, in Settings or
+with `keyreeve recipes approve <name>`. Changing its hosts undoes the approval, and a file cannot replace one that ships.
+To share it with everyone, open a pull request.
 
 ## The vault (Mac)
 

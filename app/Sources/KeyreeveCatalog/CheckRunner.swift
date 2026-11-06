@@ -19,6 +19,7 @@ public struct KeyreeveFiles: Sendable {
     public var rules: URL { directory.appendingPathComponent("rules.yaml") }
     public var history: URL { directory.appendingPathComponent("history.jsonl") }
     public var usage: URL { directory.appendingPathComponent("usage.jsonl") }
+    public var details: URL { directory.appendingPathComponent("details.json") }
     public var edits: URL { directory.appendingPathComponent("edits.json") }
     public var ignored: URL { directory.appendingPathComponent("ignored.json") }
     public var words: URL { directory.appendingPathComponent("words.txt") }
@@ -83,6 +84,38 @@ public enum CheckRunner {
         guard verify == 0 || verify == 1 else { throw CheckError(T("The check could not start")) }
 
         try rebuildCatalog(binary: binary, files: files)
+    }
+
+    /// Asks each provider whose key this is. The answer's chosen fields go to a private file.
+    public static func identify(
+        _ items: [CatalogItem], providers: ProviderDirectory, binary: URL, keysFolder: URL, files: KeyreeveFiles
+    ) throws {
+        try files.writePrivate(try plan(for: items.filter(providers.canIdentify)), to: files.plan)
+        defer { try? FileManager.default.removeItem(at: files.plan) }
+        let code = try execute(
+            binary,
+            ["identify", "--plan", files.plan.path, "--keys", keysFolder.path, "--details", files.details.path])
+        guard code == 0 else { throw CheckError(T("The check could not start")) }
+    }
+
+    /// The providers keyreeve knows, from what ships and from your own files.
+    public static func providers(binary: URL) -> ProviderDirectory {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = binary
+        process.arguments = ["recipes", "--json"]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return ProviderDirectory() }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return ProviderDirectory.parse(data)
+    }
+
+    public static func approve(_ provider: String, binary: URL) throws {
+        guard try execute(binary, ["recipes", "approve", provider]) == 0 else {
+            throw CheckError(T("The check could not start"))
+        }
     }
 
     /// Scans the folder again, so names, dates and permissions match what is on disk. The

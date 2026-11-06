@@ -196,7 +196,7 @@ pub struct Item {
     /// Names left out because they could themselves be a secret.
     pub fields_hidden: usize,
     /// Kinds of key recognized by prefix.
-    pub kinds: Vec<&'static str>,
+    pub kinds: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -375,7 +375,7 @@ fn classify(bytes: &[u8], extra: &ExtraWords, item: &mut Item) {
     } else if trimmed.starts_with("-----BEGIN") {
         item.format = "pem";
         if trimmed.contains("PRIVATE KEY") {
-            item.kinds.push("private-key");
+            item.kinds.push("private-key".to_owned());
         }
     } else if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(trimmed) {
         item.format = "json";
@@ -530,8 +530,8 @@ fn safe_field(name: &str) -> bool {
     plain && starts_well && name.len() <= MAX_FIELD_LEN && digits <= 4 && kind_of(name).is_none()
 }
 
-fn kinds_in(text: &str) -> Vec<&'static str> {
-    let mut kinds: Vec<&'static str> = text
+fn kinds_in(text: &str) -> Vec<String> {
+    let mut kinds: Vec<String> = text
         .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
         .filter(|token| token.len() >= MIN_TOKEN_LEN)
         .filter_map(kind_of)
@@ -541,11 +541,14 @@ fn kinds_in(text: &str) -> Vec<&'static str> {
     kinds
 }
 
-fn kind_of(token: &str) -> Option<&'static str> {
-    KINDS
-        .iter()
-        .find(|(prefix, _)| token.starts_with(prefix))
-        .map(|(_, kind)| *kind)
+/// Providers' files come first, so a new provider is recognized with no change here.
+pub(crate) fn kind_of(token: &str) -> Option<String> {
+    crate::providers::kind_from_prefix(token).or_else(|| {
+        KINDS
+            .iter()
+            .find(|(prefix, _)| token.starts_with(prefix))
+            .map(|(_, kind)| (*kind).to_owned())
+    })
 }
 
 #[cfg(test)]

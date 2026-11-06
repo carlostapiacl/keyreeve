@@ -1,13 +1,12 @@
 # Contributing
 
-The most useful contribution is a recipe for a provider you use. New key prefixes and label words for
-`keyreeve inventory` are also welcome, in `KINDS` and `KNOWN_WORDS` in `src/inventory.rs`, with a link to
-where the provider documents the prefix. A label word must be common enough that it cannot be a password.
+The most useful contribution is a recipe for a provider you use. Label words for `keyreeve inventory` are also welcome, in `KNOWN_WORDS` in `src/inventory.rs`. A label word must be common enough that it cannot be a password.
 
 ## Writing a recipe
 
 A recipe that only checks a key needs `verify` and no `create` or `revoke`. See `recipes/hetzner.yaml`. Add it to
-`BUILTIN` in `src/verify.rs` so it ships with the tool. The check must be a GET. Run it with a made-up key first: if
+`BUILTIN` in `src/providers.rs` so it ships with the tool. `name`, `dashboard`, `prefixes`, `identify` and `suggested_name` are
+what the app shows, and a test requires the first two. List in `prefixes` only starts that belong to this provider alone. The check must be a GET. Run it with a made-up key first: if
 the provider answers something other than 401, list that status in `reject`.
 
 To rotate too, copy `examples/recipe.yaml` to `recipes/<provider>.yaml`.
@@ -24,7 +23,8 @@ To rotate too, copy `examples/recipe.yaml` to `recipes/<provider>.yaml`.
 | `verify` | a request that only succeeds with a working key. `reject` lists 4xx statuses that mean a bad key, besides 401 |
 | `revoke` | optional, goes with `create`. Revokes a key by `{id}`. A 404 counts as already revoked |
 
-Each step takes `method`, `path` and, when needed, `host`, `body` and `expect` (a 2xx status).
+`identify` takes a `request`, `fields` to keep, and `format: xml` when the answer is not JSON. Nothing else in the answer is
+stored, so declare only what helps a person recognize the account. Each step takes `method`, `path` and, when needed, `host`, `body` and `expect` (a 2xx status).
 
 `{key_name}` is available in `create`, and `{id}` in `verify` and `revoke`. Paths look like `$.a.b`
 or `$.data.0.id`.

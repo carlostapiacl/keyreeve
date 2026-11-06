@@ -29,6 +29,13 @@ test values.
 method. Provider answers are ignored apart from their status. A provider can still count or log the request, and
 a bad GET endpoint on its side could have effects.
 
+**A provider answer that holds too much.** `identify` keeps only the fields the provider's file declares, drops any that
+look like a credential or contain the key, and writes them to a private file. The command reports how many fields it found,
+and not their values.
+
+**A provider file you added.** It receives no key until you approve the hosts it lists. Editing its hosts undoes the approval,
+and it cannot take the name of a provider that ships.
+
 ## What it does not protect against
 
 - **A recipe that lists a malicious host.** It can send the credential to any host it declares.

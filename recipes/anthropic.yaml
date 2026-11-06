@@ -1,6 +1,8 @@
-# Checks a key. It cannot rotate one yet.
 schema: 1
 provider: anthropic
+name: Anthropic
+dashboard: https://console.anthropic.com/settings/keys
+prefixes: [sk-ant-]
 hosts: [api.anthropic.com]
 auth: { header: x-api-key, prefix: "" }
 headers: { anthropic-version: "2023-06-01" }

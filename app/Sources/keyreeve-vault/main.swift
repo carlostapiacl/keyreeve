@@ -82,29 +82,27 @@ do {
             """)
     case "add":
         guard arguments.count == 2 else { fail(help, code: 2) }
-        var vault = try store.load()
+        guard !VaultFile.isTemporary(arguments[1]) else { fail("that name is kept for a rotation") }
+        guard store.exists else { fail("there is no vault yet: run keyreeve-vault init") }
         let value = readSecret(prompt: "Value for \(arguments[1])")
         guard !value.isEmpty else { fail("the value is empty") }
-        try vault.add(name: arguments[1], value: value)
-        try store.save(vault)
+        try store.update { try $0.add(name: arguments[1], value: value) }
         print("\(arguments[1]) added")
     case "put":
         guard arguments.count == 2 else { fail(help, code: 2) }
-        var vault = try store.load()
+        guard store.exists else { fail("there is no vault yet: run keyreeve-vault init") }
         let value = readSecret(prompt: "Value for \(arguments[1])")
         guard !value.isEmpty else { fail("the value is empty") }
-        // A rotation's temporary copies have no history worth keeping.
-        if arguments[1].hasSuffix("#pending") || arguments[1].hasSuffix("#previous") {
-            vault.entries[arguments[1]] = nil
+        try store.update { vault in
+            // A rotation's temporary copies have no history worth keeping.
+            if VaultFile.isTemporary(arguments[1]) { vault.entries[arguments[1]] = nil }
+            try vault.replace(name: arguments[1], value: value)
         }
-        try vault.replace(name: arguments[1], value: value)
-        try store.save(vault)
     case "drop":
-        guard arguments.count == 2,
-            arguments[1].hasSuffix("#pending") || arguments[1].hasSuffix("#previous")
-        else { fail("only a rotation's temporary copies can be removed") }
-        var vault = try store.load()
-        if vault.entries.removeValue(forKey: arguments[1]) != nil { try store.save(vault) }
+        guard arguments.count == 2, VaultFile.isTemporary(arguments[1]) else {
+            fail("only a rotation's temporary copies can be removed")
+        }
+        try store.update { $0.entries[arguments[1]] = nil }
     case "list":
         for name in try store.load().entries.keys.sorted() { print(name) }
     case "run":
@@ -133,13 +131,14 @@ do {
         for name in vault.entries.keys { _ = try vault.open(name: name, with: recovery) }
         print("The recovery key is right, and it opens all \(vault.entries.count) keys")
     case "recover":
-        var vault = try store.load()
         let text = String(decoding: readSecret(prompt: "Recovery key"), as: UTF8.self)
         let recovery = SoftwareRecipient(key: try RecoveryKey.decode(text))
         let (enclave, blob) = try EnclaveRecipient.create()
-        try vault.moveToNewEnclave(enclave.publicKey, recovery: recovery)
-        try store.saveBlob(blob)
-        try store.save(vault)
+        try store.update { vault in
+            try vault.moveToNewEnclave(enclave.publicKey, recovery: recovery)
+            // Saved inside the lock, and after the move worked, so a bad key changes nothing.
+            try store.saveBlob(blob)
+        }
         print("This vault now opens with this Mac's fingerprint")
     case "--help", "-h", "help":
         print(help)

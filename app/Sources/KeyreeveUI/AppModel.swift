@@ -34,9 +34,11 @@ public final class AppModel: ObservableObject {
     @Published public var places: [String: KeyPlaces] = [:]
     public let files: KeyreeveFiles
     public let vaultStore: VaultStore
-    private let binary: URL?
+    let binary: URL?
     private var lockTask: Task<Void, Never>?
-    private var confirmation = ConfirmationWindow()
+    var confirmation = ConfirmationWindow()
+    private var generation = 0
+    private var rebuilding: Task<Void, Never>?
 
     public init(files: KeyreeveFiles = KeyreeveFiles(), binary: URL? = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli")) {
         self.files = files
@@ -66,6 +68,7 @@ public final class AppModel: ObservableObject {
     }
 
     public func lock() {
+        generation += 1
         lockTask?.cancel()
         confirmation.close()
         vaultDraft = nil
@@ -87,7 +90,7 @@ public final class AppModel: ObservableObject {
 
     public func windowGotFocus() { lockTask?.cancel() }
 
-    private func confirm(reason: String, then: @escaping @MainActor (Bool) -> Void) {
+    func confirm(reason: String, then: @escaping @MainActor (Bool) -> Void) {
         let context = LAContext()
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
@@ -102,35 +105,30 @@ public final class AppModel: ObservableObject {
 
     // MARK: Data
 
-    public func load() {
-        let ignored = files.ignoredKeys()
-        let details = files.allDetails()
-        let text = try? String(contentsOf: files.catalog, encoding: .utf8)
-        hasCatalog = text != nil
-        var parsed = (try? CatalogParser.parse(text ?? "")) ?? []
-        for index in parsed.indices {
-            parsed[index].ignoredUntil = ignored[parsed[index].path]
-            parsed[index].details = details[parsed[index].path]
-        }
-        // Reading the names and dates needs no fingerprint.
-        hasVault = vaultStore.exists
-        if let vault = try? vaultStore.load() {
-            let folder = keysFolder
-            let moved = movedOriginals.paths
-            for index in parsed.indices {
-                parsed[index].originalMoved = moved.contains(parsed[index].path)
-                guard let entry = vault.entries[parsed[index].path] else { continue }
-                let changed = folder.map { VaultKeeper.isOutdated(entry, path: parsed[index].path, folder: $0) } ?? false
-                parsed[index].vault = changed ? .outdated : .sealed
+    /// Reads the private files away from the screen, then shows them. A newer load or a lock
+    /// discards this one, so a load that ends after locking cannot put keys back on the window.
+    public func load(then done: (@MainActor () -> Void)? = nil) {
+        generation += 1
+        let current = generation
+        let source = Snapshot.Source(files: files, store: vaultStore, binary: binary, keysFolder: keysFolder)
+        Task.detached {
+            let snapshot = Snapshot(reading: source)
+            await MainActor.run {
+                guard current == self.generation else { return }
+                self.apply(snapshot)
+                done?()
             }
         }
-        items = parsed
-        activity = files.activity()
-        places = files.allPlaces()
-        if let binary {
-            providers = CheckRunner.providers(binary: binary)
-            rotations = CheckRunner.rotations(binary: binary, files: files)
-        }
+    }
+
+    private func apply(_ snapshot: Snapshot) {
+        hasCatalog = snapshot.hasCatalog
+        hasVault = snapshot.hasVault
+        items = snapshot.items
+        activity = snapshot.activity
+        places = snapshot.places
+        if let providers = snapshot.providers { self.providers = providers }
+        if let rotations = snapshot.rotations { self.rotations = rotations }
     }
 
     public func chooseFolder() {
@@ -166,487 +164,63 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: Checks and identification
-
-    private func gated(_ list: [CatalogItem], reason: String, run: @escaping @MainActor () -> Void) {
-        let minutes = UserDefaults.standard.object(forKey: SettingsKey.fingerprintMinutes) as? Int ?? 5
-        guard list.contains(where: { $0.level == "ask" }), !confirmation.isOpen(minutes: minutes) else {
-            run()
-            return
-        }
-        confirm(reason: reason) { success in
-            if success { self.confirmation.confirm() }
-            if success { run() } else { self.message = T("Not checked: it was not confirmed") }
-        }
-    }
-
-    /// Gets what these keys need before they can run. Keys in the vault ask for one fingerprint
-    /// for the whole list, and that also answers for the "Ask me" keys in it. A file that changed
-    /// after sealing is read from disk, because the sealed copy may be an old key.
-    private func withKeys(
-        _ list: [CatalogItem], reason: String, by command: String,
-        run: @escaping @MainActor (_ sealed: [String: String]) -> Void
-    ) {
-        let names = list.filter { $0.vault == .sealed }.map(\.path)
-        guard !names.isEmpty else {
-            gated(list, reason: reason) { run([:]) }
-            return
-        }
-        openVault(reason: reason) { unlocked in
-            guard let unlocked else {
-                self.message = T("Not checked: it was not confirmed")
-                return
-            }
-            self.confirmation.confirm()
-            let store = self.vaultStore
-            self.busy = true
-            self.message = T("Opening the vault…")
-            Task.detached {
-                let result = Result {
-                    try VaultKeeper.open(names: names, recipient: try unlocked.recipient(store), store: store, by: command)
-                }
-                await MainActor.run {
-                    self.busy = false
-                    switch result {
-                    case .success(let sealed): run(sealed)
-                    case .failure: self.message = T("The vault could not be opened")
-                    }
-                }
-            }
-        }
-    }
-
-    /// Asks for the finger once. The chip accepts this same confirmation for each key that follows.
-    private func openVault(reason: String, then: @escaping @MainActor (UnlockedVault?) -> Void) {
-        let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            message = T("The fingerprint sensor is not available. Open the lid, or check your Mac's settings.")
-            return
-        }
-        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, _ in
-            let unlocked = UnlockedVault(context: context)
-            Task { @MainActor in then(success ? unlocked : nil) }
-        }
-    }
-
-    public func check(_ chosen: [CatalogItem], then done: (@MainActor () -> Void)? = nil) {
-        let list = chosen.filter(providers.canCheck)
-        guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
-        let reason =
-            list.count == 1
-            ? T("check 1 key with its provider") : T("check %d keys with their providers", list.count)
-        withKeys(list, reason: reason, by: "check") { sealed in
-            self.busy = true
-            self.lastRun = nil
-            self.progress = (0, list.count)
-            self.message = T("Checking…")
-            let files = self.files
-            Task.detached {
-                let result = Result {
-                    try CheckRunner.run(list, binary: binary, keysFolder: folder, files: files, sealed: sealed) { finished, total in
-                        Task { @MainActor in self.progress = (finished, total) }
-                    }
-                }
-                await MainActor.run {
-                    self.busy = false
-                    self.progress = nil
-                    self.load()
-                    switch result {
-                    case .success:
-                        let paths = Set(list.map(\.path))
-                        let summary = RunSummary(items: self.items, checked: paths)
-                        if list.count > 1 { self.lastRun = summary }
-                        self.message = T("%d checked: %d work", list.count, summary.works)
-                        done?()
-                    case .failure(let error):
-                        self.message = (error as? CheckError)?.description ?? T("The check did not finish")
-                    }
-                }
-            }
-        }
-    }
-
-    public func identify(_ chosen: [CatalogItem]) {
-        let list = chosen.filter(providers.canIdentify)
-        guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
-        withKeys(list, reason: T("identify %d keys with their providers", list.count), by: "identify") { sealed in
-            self.busy = true
-            self.message = T("Identifying…")
-            let files = self.files
-            let providers = self.providers
-            Task.detached {
-                let result = Result {
-                    try CheckRunner.identify(list, providers: providers, binary: binary, keysFolder: folder, files: files, sealed: sealed)
-                }
-                await MainActor.run {
-                    self.busy = false
-                    self.load()
-                    switch result {
-                    case .success:
-                        let paths = Set(list.map(\.path))
-                        let found = self.items.filter { paths.contains($0.path) && $0.details != nil }.count
-                        self.message = T("Identified %d", found)
-                    case .failure(let error):
-                        self.message = (error as? CheckError)?.description ?? T("The check did not finish")
-                    }
-                }
-            }
-        }
-    }
-
-    /// You typed this address, for a provider you run, so approving it is part of saving it.
-    public func setHost(_ host: String, on item: CatalogItem) {
-        let host = host.trimmingCharacters(in: .whitespaces)
-        guard let binary, let provider = item.recipes.first else { return }
-        do {
-            if !host.isEmpty { try CheckRunner.approveHost(host, for: provider, binary: binary) }
-            save(KeyEdit(host: host), for: item)
-        } catch {
-            message = (error as? CheckError)?.description
-        }
-    }
-
-    public func run(_ custom: CustomAction, provider: String, on item: CatalogItem) {
-        if let page = custom.open.flatMap(URL.init(string:)) {
-            NSWorkspace.shared.open(page)
-            return
-        }
-        guard !busy, let binary else { return }
-        let folder = keysFolder
-        let start: @MainActor ([String: String]) -> Void = { sealed in
-            self.busy = true
-            self.message = custom.title
-            Task.detached {
-                let result = Result {
-                    try CheckRunner.runAction(
-                        provider: provider, action: custom, item: item, binary: binary, keysFolder: folder,
-                        sealed: sealed[item.path])
-                }
-                await MainActor.run {
-                    self.busy = false
-                    switch result {
-                    case .success(let text): self.message = text.isEmpty ? T("Done") : text
-                    case .failure: self.message = T("The action did not finish")
-                    }
-                }
-            }
-        }
-        if custom.needs_key {
-            var asking = item
-            asking.level = "ask"
-            withKeys([asking], reason: custom.title, by: custom.id, run: start)
-        } else {
-            start([:])
-        }
-    }
-
-    public func approve(_ provider: ProviderInfo) {
+    /// Rebuilds the list off the screen, one at a time, so quick edits end with the last of them.
+    func rebuildCatalog() {
         guard let binary else { return }
-        try? CheckRunner.approve(provider.id, binary: binary)
-        load()
-    }
-
-    // MARK: Vault
-
-    /// Makes the chip's key and the recovery key, and keeps both in memory for the next screen.
-    public func startVault() {
-        guard !vaultStore.exists else { return }
-        do {
-            let (enclave, blob) = try EnclaveRecipient.create()
-            vaultDraft = VaultDraft(enclave: enclave, blob: blob, recovery: P256.KeyAgreement.PrivateKey())
-        } catch {
-            message = T("This Mac could not create a key in its chip")
-        }
-    }
-
-    public func finishVault() {
-        guard let draft = vaultDraft else { return }
-        do {
-            try draft.save(to: vaultStore)
-            message = T("Your vault is ready")
-        } catch {
-            message = T("The vault could not be saved")
-        }
-        vaultDraft = nil
-        load()
-    }
-
-    public func cancelVault() { vaultDraft = nil }
-
-    /// Seals the changed files again. Their old copies stay sealed, so nothing is lost.
-    public func sealAgain(_ chosen: [CatalogItem]) {
-        guard !busy, !chosen.isEmpty, let folder = keysFolder else { return }
-        let store = vaultStore
-        let paths = chosen.map(\.path)
-        do {
-            let report = try VaultKeeper.sealAgain(paths: paths, folder: folder, store: store)
-            message = report.sealed.count == 1 ? T("1 key sealed") : T("%d keys sealed", report.sealed.count)
-        } catch {
-            message = T("The vault could not be saved")
-        }
-        load()
-    }
-
-    var movedOriginals: MovedOriginals {
-        let format = DateFormatter()
-        format.locale = Locale(identifier: "en_US_POSIX")
-        format.dateFormat = "yyyy-MM-dd"
-        return MovedOriginals(
-            ledger: files.moved, destination: files.originals.appendingPathComponent(format.string(from: Date())))
-    }
-
-    /// Moves the files that the last comparison proved match their sealed copies, and only those.
-    public func moveOriginals() {
-        guard !busy, let folder = keysFolder, let report = vaultComparison, !report.same.isEmpty else { return }
-        do {
-            let moved = try movedOriginals.move(report.same, from: folder, inventory: files.inventory)
-            vaultComparison = nil
-            message = T("%d originals moved to %@", moved.count, files.originals.path)
-            refresh()
-        } catch {
-            message = T("The files could not be moved")
-        }
-    }
-
-    public func putOriginalsBack(_ chosen: [CatalogItem]) {
-        guard !busy, let folder = keysFolder else { return }
-        do {
-            let restored = try movedOriginals.putBack(chosen.map(\.path), to: folder)
-            message = T("%d originals put back", restored.count)
-            refresh()
-        } catch {
-            message = T("The files could not be moved")
-        }
-    }
-
-    public func showOriginals() { NSWorkspace.shared.open(files.originals) }
-
-    // MARK: Rotation
-
-    public func savePlaces(_ value: KeyPlaces, for item: CatalogItem) {
-        try? files.savePlaces(value, for: item.path)
-        places[item.path] = value
-    }
-
-    public func chooseFile(then: (String) -> Void) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.showsHiddenFiles = true
-        panel.message = T("Choose a file that holds this key")
-        panel.prompt = T("Choose")
-        if panel.runModal() == .OK, let url = panel.url { then(url.path) }
-    }
-
-    private var vaultTool: URL? {
-        binary.map { $0.deletingLastPathComponent().appendingPathComponent("keyreeve-vault") }
-    }
-
-    /// A task the journal asked of you stays listed until you say it is done. The journal keeps it.
-    func isDismissed(_ status: RotationStatus) -> Bool {
-        let done = UserDefaults.standard.dictionary(forKey: SettingsKey.doneRotations) as? [String: Double]
-        return done?[status.key] == status.at
-    }
-
-    func dismiss(_ status: RotationStatus) {
-        var done = UserDefaults.standard.dictionary(forKey: SettingsKey.doneRotations) as? [String: Double] ?? [:]
-        done[status.key] = status.at
-        UserDefaults.standard.set(done, forKey: SettingsKey.doneRotations)
-        objectWillChange.send()
-    }
-
-    public func rotate(_ item: CatalogItem) { runRotation(item, resume: false) }
-
-    public func finishRotation(of key: String) {
-        guard let item = items.first(where: { $0.path == key }) else { return }
-        runRotation(item, resume: true)
-    }
-
-    private func runRotation(_ item: CatalogItem, resume: Bool) {
-        guard !busy, let binary, let vaultTool, item.vault != .none else { return }
-        let places = self.places[item.path] ?? KeyPlaces()
-        let admin = places.admin.flatMap { name in items.first { $0.path == name } }
-        let original = keysFolder?.appendingPathComponent(item.path).path
-        let plan = RotationPlan(
-            item: item, places: places, admin: admin,
-            original: original.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil })
-        let reason = resume ? T("finish rotating a key") : T("rotate a key with its provider")
-        openVault(reason: reason) { unlocked in
-            guard let unlocked else {
-                self.message = T("Not rotated: it was not confirmed")
-                return
-            }
-            self.confirmation.confirm()
-            self.busy = true
-            self.message = T("Rotating…")
-            let store = self.vaultStore
-            let files = self.files
-            Task.detached {
-                let result = Result { () throws -> RotationReport in
-                    let vault = try store.load()
-                    let wanted = [item.path, admin?.path, "\(item.path)#pending", "\(item.path)#previous"]
-                        .compactMap { $0 }.filter { vault.entries[$0] != nil }
-                    let sealed = try VaultKeeper.open(
-                        names: wanted, recipient: try unlocked.recipient(store), store: store, by: "rotate")
-                    return try CheckRunner.rotate(
-                        plan: plan, resume: resume, sealed: sealed, binary: binary, vaultTool: vaultTool, files: files)
-                }
-                await MainActor.run {
-                    self.busy = false
-                    self.load()
-                    switch result {
-                    case .success(let report): self.message = rotationMessage(report)
-                    case .failure(let error):
-                        self.message = (error as? CheckError)?.description ?? T("The vault could not be opened")
-                    }
-                }
-            }
-        }
-    }
-
-    /// Copies the chosen files into the vault. This needs no fingerprint, and originals stay.
-    public func seal(_ chosen: [CatalogItem]) {
-        guard !busy, !chosen.isEmpty, let folder = keysFolder else { return }
-        busy = true
-        vaultComparison = nil
-        let store = vaultStore
-        let paths = chosen.map(\.path)
-        Task.detached {
-            let result = Result { try VaultKeeper.seal(paths: paths, folder: folder, store: store) }
+        let files = self.files
+        let previous = rebuilding
+        rebuilding = Task.detached {
+            await previous?.value
+            let failure = Result { try CheckRunner.rebuildCatalog(binary: binary, files: files) }
             await MainActor.run {
-                self.busy = false
+                if case .failure(let error) = failure { self.message = (error as? CheckError)?.description }
                 self.load()
-                switch result {
-                case .success(let report):
-                    self.message =
-                        report.skipped.isEmpty
-                        ? (report.sealed.count == 1 ? T("1 key sealed") : T("%d keys sealed", report.sealed.count))
-                        : T("%d keys sealed, %d could not be read as text", report.sealed.count, report.skipped.count)
-                case .failure:
-                    self.message = T("The vault could not be saved")
-                }
             }
         }
-    }
-
-    /// Opens each sealed copy and compares it with its file, so you can trust the vault.
-    public func compareVault() {
-        let names = items.filter { $0.vault != .none && !$0.originalMoved }.map(\.path)
-        guard !busy, !names.isEmpty, let folder = keysFolder else { return }
-        openVault(reason: T("compare %d sealed keys with their files", names.count)) { unlocked in
-            guard let unlocked else {
-                self.message = T("Not checked: it was not confirmed")
-                return
-            }
-            self.busy = true
-            let store = self.vaultStore
-            Task.detached {
-                let result = Result {
-                    try VaultKeeper.compare(names: names, folder: folder, recipient: try unlocked.recipient(store), store: store)
-                }
-                await MainActor.run {
-                    self.busy = false
-                    switch result {
-                    case .success(let report):
-                        self.vaultComparison = report
-                        self.message = nil
-                    case .failure:
-                        self.message = T("The vault could not be opened")
-                    }
-                    self.load()
-                }
-            }
-        }
-    }
-
-    // MARK: Actions and edits
-
-    public func actionsFor(_ item: CatalogItem) -> [KeyAction] { actions(for: item, providers: providers) }
-
-    public func perform(_ action: KeyAction, on item: CatalogItem) {
-        switch action {
-        case .openProvider(let url):
-            NSWorkspace.shared.open(url)
-        case .confirmRevoked:
-            check([item]) { self.finishRevocation(of: item) }
-        case .markRevoked:
-            setDone(item, tag: "status:revoked")
-            message = T("You marked it as revoked")
-        case .checkAgain:
-            check([item])
-        case .notInUse:
-            setDone(item, tag: "status:retired")
-        case .fixPermissions:
-            guard let folder = keysFolder else { return }
-            do {
-                try files.fixPermissions(of: item.path, in: folder)
-                message = T("Permissions fixed")
-                refresh()
-            } catch {
-                message = T("The scan did not finish")
-            }
-        case .ignore:
-            try? files.ignore(item.path, until: Date().addingTimeInterval(30 * 86_400))
-            load()
-        }
-    }
-
-    public func archive(_ item: CatalogItem) {
-        save(KeyEdit(tags: item.tags + ["status:archived"]), for: item)
-    }
-
-    public func restore(_ item: CatalogItem) {
-        save(KeyEdit(tags: item.tags.filter { $0 != "status:archived" }), for: item)
-    }
-
-    private func finishRevocation(of item: CatalogItem) {
-        guard let fresh = items.first(where: { $0.path == item.path }) else { return }
-        if fresh.lastResult == "rejected" {
-            setDone(fresh, tag: "status:revoked")
-            message = T("Revoked: the provider rejects it now")
-        } else {
-            message = T("It still works: revoke it at the provider")
-        }
-    }
-
-    private func setDone(_ item: CatalogItem, tag: String) {
-        let tags = item.tags.filter { $0 != "revoke" } + [tag]
-        save(KeyEdit(tags: tags), for: item)
-    }
-
-    public func save(_ edit: KeyEdit, for item: CatalogItem) {
-        guard let binary else { return }
-        try? files.saveEdit(edit, for: item.path)
-        do {
-            try CheckRunner.rebuildCatalog(binary: binary, files: files)
-        } catch {
-            message = (error as? CheckError)?.description
-        }
-        load()
     }
 }
 
-/// A fingerprint already given, carried to where the chip is used.
-private struct UnlockedVault: @unchecked Sendable {
-    let context: LAContext
-
-    func recipient(_ store: VaultStore) throws -> EnclaveRecipient {
-        try EnclaveRecipient.load(blob: try store.loadBlob(), context: context)
+/// Everything the window shows, read together.
+struct Snapshot: Sendable {
+    struct Source: Sendable {
+        let files: KeyreeveFiles
+        let store: VaultStore
+        let binary: URL?
+        let keysFolder: URL?
     }
-}
 
-/// The result of a rotation in a person's words.
-public func rotationMessage(_ report: RotationReport) -> String {
-    switch report.outcome {
-    case "completed":
-        return report.manual.isEmpty
-            ? T("Rotated. The old key is revoked.")
-            : T("Rotated. The old key still works: revoke it at the provider.")
-    case "waiting": return T("The new key is in place. The old one keeps working until you finish.")
-    case "revoke_pending": return T("The new key is in place, but the provider refused to revoke the old one. Try again.")
-    case "rolled_back": return T("Nothing changed: the rotation was undone (%@).", report.reason ?? "")
-    case "rollback_blocked": return T("Stopped: %@ could not go back to the old key.", report.reason ?? "")
-    default: return T("Nothing to do")
+    let hasCatalog: Bool
+    let hasVault: Bool
+    let items: [CatalogItem]
+    let activity: [ActivityItem]
+    let places: [String: KeyPlaces]
+    let providers: ProviderDirectory?
+    let rotations: [RotationStatus]?
+
+    init(reading source: Source) {
+        let files = source.files
+        let ignored = files.ignoredKeys()
+        let details = files.allDetails()
+        let text = try? String(contentsOf: files.catalog, encoding: .utf8)
+        hasCatalog = text != nil
+        var parsed = (try? CatalogParser.parse(text ?? "")) ?? []
+        // Reading the names and dates needs no fingerprint.
+        hasVault = source.store.exists
+        let vault = try? source.store.load()
+        let moved = MovedOriginals(ledger: files.moved, destination: files.originals).paths
+        for index in parsed.indices {
+            let path = parsed[index].path
+            parsed[index].ignoredUntil = ignored[path]
+            parsed[index].details = details[path]
+            parsed[index].originalMoved = moved.contains(path)
+            guard let entry = vault?.entries[path] else { continue }
+            let changed = source.keysFolder.map { VaultKeeper.isOutdated(entry, path: path, folder: $0) } ?? false
+            parsed[index].vault = changed ? .outdated : .sealed
+        }
+        items = parsed
+        activity = files.activity()
+        places = files.allPlaces()
+        providers = source.binary.map { CheckRunner.providers(binary: $0) }
+        rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }
     }
 }

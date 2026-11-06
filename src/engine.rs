@@ -323,6 +323,10 @@ impl Engine<'_> {
             .as_deref()
             .and_then(|path| extract(&json, path));
         match (id, value) {
+            // The id goes in the journal in plain text, so it must not hold the key.
+            (Some(id), Some(value)) if id.contains(&value) || value.contains(&id) => {
+                Create::Unknown("create_id_looks_like_the_key".into())
+            }
             (Some(id), Some(value)) => Create::Issued {
                 id,
                 value: Secret::new(value),

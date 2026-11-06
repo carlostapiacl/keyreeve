@@ -172,6 +172,11 @@ public struct VaultFile: Codable, Equatable {
             outputByteCount: 32)
     }
 
+    /// Names a rotation keeps for itself, so a key can never be overwritten by one.
+    public static func isTemporary(_ name: String) -> Bool {
+        name.hasSuffix("#pending") || name.hasSuffix("#previous")
+    }
+
     /// A name can be a file's path, which can hold spaces and accents. It is bound to its value,
     /// so what matters is that it stays on one line when a person reads it.
     public static func check(name: String) throws {

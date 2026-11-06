@@ -14,11 +14,31 @@ static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
 /// removed when this value is dropped. A crash in between leaves it, readable only by you.
 pub struct TempKey(PathBuf);
 
+/// Removes what a crash left. A copy lives for one call to `ssh`, so an hour old is nobody's.
+fn sweep_old_copies(folder: &Path) {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.elapsed().ok())
+            .is_some_and(|age| age.as_secs() > 3600);
+        if stale && name.to_string_lossy().starts_with(".ssh-key-") {
+            drop(TempKey(entry.path()));
+        }
+    }
+}
+
 impl TempKey {
     pub fn write(text: &str) -> Result<Self, String> {
         let folder = crate::providers::home();
         let failed = |_| "could not prepare the key for ssh".to_owned();
         fs::create_dir_all(&folder).map_err(failed)?;
+        sweep_old_copies(&folder);
         let name = format!(
             ".ssh-key-{}-{}",
             std::process::id(),

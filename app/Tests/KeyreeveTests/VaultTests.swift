@@ -253,6 +253,23 @@ struct KeeperTests {
         XCTAssertEqual(moved.paths, [])
     }
 
+    @Test func testWritersAtTheSameTimeLoseNothing() throws {
+        let (root, _, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        DispatchQueue.concurrentPerform(iterations: 24) { index in
+            try? store.update { try $0.add(name: "k\(index)", value: Data("v".utf8)) }
+        }
+        XCTAssertEqual(try store.load().entries.count, 24)
+    }
+
+    @Test func testARotationsNamesCannotHoldARealKey() throws {
+        let (root, keys, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "real".write(to: keys.appendingPathComponent("foo#pending"), atomically: true, encoding: .utf8)
+        let report = try VaultKeeper.seal(paths: ["foo#pending"], folder: keys, store: store)
+        XCTAssertEqual(report.skipped["foo#pending"], .reservedName)
+    }
+
     @Test func testNothingIsSavedUntilTheRecoveryKeyIsConfirmed() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-draft-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

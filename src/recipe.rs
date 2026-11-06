@@ -553,7 +553,14 @@ pub fn extract(json: &Value, path: &str) -> Option<String> {
     for segment in path.split('.').skip(1) {
         current = match current {
             Value::Object(map) => map.get(segment)?,
-            Value::Array(items) => items.get(segment.parse::<usize>().ok()?)?,
+            Value::Array(items) => {
+                // One spelling per place, so two different paths cannot name the same value.
+                let index = segment.parse::<usize>().ok()?;
+                if index.to_string() != segment {
+                    return None;
+                }
+                items.get(index)?
+            }
             _ => return None,
         };
     }
@@ -831,5 +838,6 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
         assert_eq!(extract(&json, "$.data.id").as_deref(), Some("7"));
         assert_eq!(extract(&json, "$.data.list.0").as_deref(), Some("a"));
         assert_eq!(extract(&json, "$.data.missing"), None);
+        assert_eq!(extract(&json, "$.data.list.00"), None);
     }
 }

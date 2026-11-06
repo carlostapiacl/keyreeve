@@ -102,10 +102,11 @@ fn xml_tag(body: &str, tag: &str) -> Option<String> {
 
 /// A provider's answer is not trusted to hold what its name says.
 fn safe_value(value: &str, key: &Secret) -> bool {
-    let is_key_itself = key
-        .expose()
-        .split(':')
-        .any(|part| part.len() >= MIN_KEY_PART && value.contains(part));
+    let whole = key.expose();
+    let is_key_itself = (!whole.is_empty() && value.contains(whole))
+        || whole
+            .split(':')
+            .any(|part| part.len() >= MIN_KEY_PART && value.contains(part));
     !value.is_empty()
         && value.chars().count() <= MAX_FIELD_CHARS
         && !value.chars().any(char::is_control)

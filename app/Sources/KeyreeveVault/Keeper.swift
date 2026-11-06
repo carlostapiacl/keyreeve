@@ -30,7 +30,7 @@ public struct VaultDraft {
 /// Moves key files into the vault, and proves the copies match. Originals are only ever read.
 public enum VaultKeeper {
     public enum Skip: String, Error, Equatable, Sendable {
-        case unreadable, empty, tooLarge, notText, outsideFolder
+        case unreadable, empty, tooLarge, notText, outsideFolder, reservedName
     }
 
     public struct SealReport: Equatable, Sendable {
@@ -52,43 +52,47 @@ public enum VaultKeeper {
     /// Reads each file and seals it under its path. This needs no fingerprint, and one bad file
     /// does not stop the others. A key that is already there stays as it is.
     public static func seal(paths: [String], folder: URL, store: VaultStore, now: Date = Date()) throws -> SealReport {
-        var vault = try store.load()
-        var report = SealReport()
-        for path in paths {
-            if vault.entries[path] != nil {
-                report.already.append(path)
-                continue
-            }
-            switch read(path, in: folder) {
-            case .failure(let skip):
-                report.skipped[path] = skip
-            case .success(let data):
-                do {
-                    try vault.add(name: path, value: data, now: now)
-                    report.sealed.append(path)
-                } catch {
-                    report.skipped[path] = .outsideFolder
+        try store.update { vault in
+            var report = SealReport()
+            for path in paths {
+                if vault.entries[path] != nil {
+                    report.already.append(path)
+                    continue
+                }
+                if VaultFile.isTemporary(path) {
+                    report.skipped[path] = .reservedName
+                    continue
+                }
+                switch read(path, in: folder) {
+                case .failure(let skip):
+                    report.skipped[path] = skip
+                case .success(let data):
+                    do {
+                        try vault.add(name: path, value: data, now: now)
+                        report.sealed.append(path)
+                    } catch {
+                        report.skipped[path] = .outsideFolder
+                    }
                 }
             }
+            return report
         }
-        if !report.sealed.isEmpty { try store.save(vault) }
-        return report
     }
 
     /// Seals the file's current text over its old copy, which stays sealed under `replaced`.
     public static func sealAgain(paths: [String], folder: URL, store: VaultStore, now: Date = Date()) throws -> SealReport {
-        var vault = try store.load()
-        var report = SealReport()
-        for path in paths {
-            switch read(path, in: folder) {
-            case .failure(let skip): report.skipped[path] = skip
-            case .success(let data):
-                try vault.replace(name: path, value: data, now: now)
-                report.sealed.append(path)
+        try store.update { vault in
+            var report = SealReport()
+            for path in paths {
+                switch read(path, in: folder) {
+                case .failure(let skip): report.skipped[path] = skip
+                case .success(let data):
+                    try vault.replace(name: path, value: data, now: now)
+                    report.sealed.append(path)
+                }
             }
+            return report
         }
-        if !report.sealed.isEmpty { try store.save(vault) }
-        return report
     }
 
     /// Opens these keys for one use, and notes the use. Values stay in the returned memory only.
@@ -103,7 +107,7 @@ public enum VaultKeeper {
                 throw VaultError("\(name) is not text")
             }
             opened[name] = text
-            if !name.hasSuffix("#pending"), !name.hasSuffix("#previous") {
+            if !VaultFile.isTemporary(name) {
                 store.recordUse(of: name, by: command)
             }
         }

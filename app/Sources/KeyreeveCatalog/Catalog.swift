@@ -283,12 +283,20 @@ public func projectTags(in items: [CatalogItem]) -> [(tag: String, count: Int)] 
 }
 
 
+/// Reads `yyyy-MM-dd` as UTC midnight. Lists call this for every key on every draw, so it does no
+/// date formatting, which costs far more than this arithmetic.
 private func catalogDate(_ text: String) -> Date? {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd"
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(identifier: "UTC")
-    return formatter.date(from: text)
+    let parts = text.split(separator: "-")
+    guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+        (1...12).contains(month), (1...31).contains(day)
+    else { return nil }
+    // Days from the civil calendar, by Howard Hinnant's published algorithm.
+    let y = month <= 2 ? year - 1 : year
+    let era = (y >= 0 ? y : y - 399) / 400
+    let yearOfEra = y - era * 400
+    let dayOfYear = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1
+    let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
+    return Date(timeIntervalSince1970: Double((era * 146_097 + dayOfEra - 719_468) * 86_400))
 }
 
 /// The figures on the home screen, worked out from the catalog alone.

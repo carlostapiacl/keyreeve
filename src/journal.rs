@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +166,29 @@ impl FileBackend {
     }
 }
 
+/// A crash can leave half a line at the end. Writing after it would bury it in the middle, and the
+/// journal refuses damage in the middle, so the half line goes first. A whole line missing only its
+/// break keeps its content.
+fn repair_torn_end(path: &Path) -> io::Result<()> {
+    let mut text = Vec::new();
+    File::open(path)?.read_to_end(&mut text)?;
+    if text.is_empty() || text.ends_with(b"\n") {
+        return Ok(());
+    }
+    let start = text
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |at| at + 1);
+    let mut file = OpenOptions::new().write(true).open(path)?;
+    if serde_json::from_slice::<Entry>(&text[start..]).is_ok() {
+        file.seek(SeekFrom::End(0))?;
+        file.write_all(b"\n")?;
+    } else {
+        file.set_len(start as u64)?;
+    }
+    file.sync_all()
+}
+
 impl Backend for FileBackend {
     fn read_lines(&self) -> io::Result<Vec<String>> {
         let mut text = String::new();
@@ -189,6 +212,7 @@ impl Backend for FileBackend {
             options.mode(0o600);
         }
         let mut file = options.open(&self.path)?;
+        repair_torn_end(&self.path)?;
         file.write_all(format!("{line}\n").as_bytes())?;
         file.sync_all()?;
         if created {
@@ -228,6 +252,25 @@ mod tests {
         let journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
         assert_eq!(journal.entries().len(), 2);
         assert_eq!(journal.phase("k"), Phase::PendingStored);
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn writing_after_a_torn_line_leaves_a_journal_that_opens() {
+        let path = temp_path("torn-append");
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal
+            .append("k", 1, Event::Started { old_id: None })
+            .unwrap();
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b"{\"rotation\":1,\"ke").unwrap();
+
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal.append("k", 2, Event::PendingStored).unwrap();
+        journal.append("k", 3, Event::Verified).unwrap();
+        let journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        assert_eq!(journal.entries().len(), 3);
+        assert_eq!(journal.phase("k"), Phase::Verified);
         fs::remove_file(&path).unwrap();
     }
 

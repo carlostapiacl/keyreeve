@@ -5,11 +5,11 @@
 //! it on stdin. Writing needs no fingerprint, so each write goes straight to the vault's own tool
 //! and is durable before the engine records the step.
 
-use crate::engine::{Engine, KeyConfig, Outcome, Sink, SinkError};
+use crate::engine::{Engine, KeyConfig, Outcome, Sink};
 use crate::journal::{Event, FileBackend, Journal, Phase};
-use crate::providers;
+use crate::keys::{holds_key, swap_key, MIN_SWAP_CHARS};
+use crate::places::{action_sink, FileSink};
 use crate::recipe::Recipe;
-use crate::script;
 use crate::secret::Secret;
 use crate::store::{Store, StoreError};
 use crate::transport::HttpTransport;
@@ -121,7 +121,7 @@ impl Store for VaultStore {
 
     fn put(&mut self, name: &str, value: &Secret) -> Result<(), StoreError> {
         if name == self.key {
-            let text = Zeroizing::new(self.text.replace(self.current.expose(), value.expose()));
+            let text = Zeroizing::new(swap_key(&self.text, self.current.expose(), value.expose()));
             self.write(name, &text)?;
             self.text = text;
             self.current = value.clone();
@@ -139,123 +139,17 @@ impl Store for VaultStore {
     }
 }
 
-/// A file on disk that holds the key. Whichever value of this rotation it has is replaced.
-pub struct FileSink {
-    label: String,
-    path: PathBuf,
-    known: Vec<Secret>,
-}
-
-impl FileSink {
-    fn replace(&self, text: &str, value: &Secret) -> Option<String> {
-        if self.known.iter().any(|k| text.contains(k.expose())) {
-            let mut out = text.to_owned();
-            for known in &self.known {
-                if known != value {
-                    out = out.replace(known.expose(), value.expose());
-                }
-            }
-            return Some(out);
-        }
-        text.contains(value.expose()).then(|| text.to_owned())
-    }
-}
-
-/// Writes next to the file and renames it, so a crash leaves the old file or the new one.
-fn write_in_place(path: &Path, text: &str) -> std::io::Result<()> {
-    let meta = fs::metadata(path)?;
-    let mut name = path.file_name().unwrap_or_default().to_owned();
-    name.push(format!(".keyreeve-{}", std::process::id()));
-    let temp = path.with_file_name(name);
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let result = (|| {
-        let mut file = options.open(&temp)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        fs::set_permissions(&temp, meta.permissions())?;
-        fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
-}
-
-impl Sink for FileSink {
-    fn name(&self) -> &str {
-        &self.label
-    }
-
-    fn update(&mut self, value: &Secret) -> Result<(), SinkError> {
-        let text = Zeroizing::new(fs::read_to_string(&self.path).map_err(|_| SinkError)?);
-        // A file holding none of these values is the wrong file, and it stays untouched.
-        let new_text = Zeroizing::new(self.replace(&text, value).ok_or(SinkError)?);
-        if *new_text != *text {
-            write_in_place(&self.path, &new_text).map_err(|_| SinkError)?;
-        }
-        if !self.known.contains(value) {
-            self.known.push(value.clone());
-        }
-        Ok(())
-    }
-}
-
-/// A button of yours, from a provider file you approved, that receives the new key on stdin.
-pub struct ActionSink {
-    label: String,
-    run: crate::recipe::CustomRun,
-    action: String,
-}
-
-impl Sink for ActionSink {
-    fn name(&self) -> &str {
-        &self.label
-    }
-
-    fn update(&mut self, value: &Secret) -> Result<(), SinkError> {
-        script::run(
-            &providers::programs_folder(),
-            &self.run,
-            &self.action,
-            Some(value),
-        )
-        .map(|_| ())
-        .map_err(|_| SinkError)
-    }
-}
-
-fn action_sink(place: &str) -> Result<ActionSink, String> {
-    let (provider, action) = place
-        .split_once('/')
-        .ok_or_else(|| format!("{place} is not provider/action"))?;
-    let recipe = providers::load(provider)?;
-    let found = recipe
-        .actions
-        .iter()
-        .find(|candidate| candidate.id == action)
-        .ok_or_else(|| format!("{provider} has no action {action}"))?;
-    let run = found
-        .run
-        .clone()
-        .ok_or_else(|| format!("{place} runs no program"))?;
-    Ok(ActionSink {
-        label: format!("action:{place}"),
-        run,
-        action: action.to_owned(),
-    })
-}
-
 fn load_sealed_key(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<Secret, String> {
     let key = read_key_for(text, field, recipe)?;
     // A key joined from two fields cannot be swapped inside the file.
     if !text.contains(key.expose()) {
         return Err("this key is made of two fields, and that cannot rotate yet".into());
+    }
+    if key.expose().chars().count() < MIN_SWAP_CHARS {
+        return Err("this key is too short to find safely in a file".into());
+    }
+    if !holds_key(text, key.expose()) {
+        return Err("this key is part of a longer value in its file".into());
     }
     Ok(key)
 }
@@ -314,6 +208,18 @@ pub fn run(
 ) -> Result<Report, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
     let plan: Plan = serde_json::from_str(&text).map_err(|e| format!("the plan: {e}"))?;
+    if plan.key.ends_with("#pending") || plan.key.ends_with("#previous") {
+        return Err("that name is kept for a rotation's temporary copies".into());
+    }
+    // Two rotations at once would each trust a journal the other is changing.
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(journal.with_extension("lock"))
+        .map_err(|e| format!("the journal: {e}"))?;
+    lock.try_lock()
+        .map_err(|_| "another rotation is running".to_owned())?;
     let recipe = resolve(&plan.recipe, plan.host.as_deref())?;
     if !recipe.can_rotate() {
         return Err(format!(
@@ -404,7 +310,7 @@ fn prepare(plan: &Plan, recipe: &Recipe, tool: &Path, sealed: &Sealed) -> Result
         let held = fs::read_to_string(&sink.path)
             .map(Zeroizing::new)
             .map_err(|_| format!("{path} could not be read"))?;
-        if !known.iter().any(|value| held.contains(value.expose())) {
+        if !known.iter().any(|value| holds_key(&held, value.expose())) {
             return Err(format!("{path} does not hold this key"));
         }
         sinks.push(Box::new(sink));
@@ -491,10 +397,6 @@ pub fn statuses_json(journal: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    fn secret(value: &str) -> Secret {
-        Secret::new(value)
-    }
-
     fn folder(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "keyreeve-rotate-{name}-{}-{:?}",
@@ -504,64 +406,6 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[test]
-    fn a_file_keeps_everything_but_the_key_and_can_go_back() {
-        let dir = folder("file");
-        let path = dir.join("app.env");
-        fs::write(&path, "# note\nTOKEN=old-value\nOTHER=stays\n").unwrap();
-        let mut sink = FileSink {
-            label: "file".into(),
-            path: path.clone(),
-            known: vec![secret("old-value")],
-        };
-        sink.update(&secret("new-value")).unwrap();
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            "# note\nTOKEN=new-value\nOTHER=stays\n"
-        );
-        sink.update(&secret("new-value")).unwrap();
-        sink.update(&secret("old-value")).unwrap();
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            "# note\nTOKEN=old-value\nOTHER=stays\n"
-        );
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_file_without_the_key_is_refused_and_untouched() {
-        let dir = folder("wrong");
-        let path = dir.join("other.env");
-        fs::write(&path, "NOTHING=here\n").unwrap();
-        let mut sink = FileSink {
-            label: "file".into(),
-            path: path.clone(),
-            known: vec![secret("old-value")],
-        };
-        assert!(sink.update(&secret("new-value")).is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "NOTHING=here\n");
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_file_keeps_its_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = folder("mode");
-        let path = dir.join("key");
-        fs::write(&path, "old-value").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-        let mut sink = FileSink {
-            label: "file".into(),
-            path: path.clone(),
-            known: vec![secret("old-value")],
-        };
-        sink.update(&secret("new-value")).unwrap();
-        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o640);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     use crate::transport::{Request, Response, Transport, TransportError};
@@ -617,9 +461,9 @@ mod tests {
         let dir = folder(name);
         let tool = tool(&dir);
         let place = dir.join("service.env");
-        fs::write(&place, "TOKEN=CANARY-old\nOTHER=stays\n").unwrap();
+        fs::write(&place, "TOKEN=CANARY-old-0123456\nOTHER=stays\n").unwrap();
         let original = dir.join("key.env");
-        fs::write(&original, "# note\nTOKEN=CANARY-old\n").unwrap();
+        fs::write(&original, "# note\nTOKEN=CANARY-old-0123456\n").unwrap();
         let recipe = Recipe::parse(RECIPE).unwrap();
         let plan = Plan {
             key: "dir/key.env".into(),
@@ -635,7 +479,8 @@ mod tests {
             place_files: vec![place.to_string_lossy().into_owned()],
             place_actions: Vec::new(),
         };
-        let input = serde_json::json!({ "dir/key.env": "# note\nTOKEN=CANARY-old\n" }).to_string();
+        let input =
+            serde_json::json!({ "dir/key.env": "# note\nTOKEN=CANARY-old-0123456\n" }).to_string();
         let sealed = Sealed::read(input.as_bytes()).unwrap();
         let (mut store, mut sinks) = prepare(&plan, &recipe, &tool, &sealed).unwrap();
         let mut record = Journal::open(Box::new(FileBackend::new(dir.join("journal")))).unwrap();
@@ -701,16 +546,16 @@ mod tests {
         assert!(matches!(outcome, Outcome::RolledBack { .. }));
         assert_eq!(
             fs::read_to_string(dir.join("key.env")).unwrap(),
-            "# note\nTOKEN=CANARY-old\n"
+            "# note\nTOKEN=CANARY-old-0123456\n"
         );
         assert_eq!(
             fs::read_to_string(dir.join("service.env")).unwrap(),
-            "TOKEN=CANARY-old\nOTHER=stays\n"
+            "TOKEN=CANARY-old-0123456\nOTHER=stays\n"
         );
         assert!(!dir.join("vault/dir_key.env_pending").exists());
         let revoke = fake.calls.last().unwrap();
         assert!(revoke.1.ends_with("/keys/new-id"));
-        assert_eq!(revoke.2, "Bearer CANARY-old");
+        assert_eq!(revoke.2, "Bearer CANARY-old-0123456");
         assert!(!journal.contains("CANARY"));
         fs::remove_dir_all(dir).unwrap();
     }
@@ -734,7 +579,7 @@ mod tests {
             place_files: vec![place.to_string_lossy().into_owned()],
             place_actions: Vec::new(),
         };
-        let sealed = Sealed::read(r#"{"k":"CANARY-old"}"#.as_bytes()).unwrap();
+        let sealed = Sealed::read(r#"{"k":"CANARY-old-0123456"}"#.as_bytes()).unwrap();
         let recipe = Recipe::parse(RECIPE).unwrap();
         let error = prepare(&plan, &recipe, &dir.join("tool"), &sealed)
             .err()
@@ -742,6 +587,15 @@ mod tests {
         assert!(error.contains("does not hold this key"));
         assert!(!error.contains("CANARY"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_short_or_embedded_key_is_refused_before_the_provider() {
+        let recipe = Recipe::parse(RECIPE).unwrap();
+        let short = load_sealed_key("abc", None, &recipe).err().unwrap();
+        assert!(short.contains("too short"));
+        let text = "TOKEN=abcdefghijklmnopqrstuvwx\nOTHER=abcdefghijklmnopqrstuvwx-2\n";
+        assert!(load_sealed_key(text, Some("TOKEN"), &recipe).is_ok());
     }
 
     #[test]

@@ -139,6 +139,50 @@ fn a_program_of_yours_decides_the_result_of_a_check() {
 }
 
 #[test]
+fn a_path_in_a_plan_cannot_skip_an_approval() {
+    let home = setup();
+    let recipe = home.0.join("elsewhere.yaml");
+    fs::write(
+        &recipe,
+        "schema: 1\nprovider: elsewhere\nhosts: [evil.example.com]\nauth: { header: Authorization }\nverify: { method: GET, path: / }\n",
+    )
+    .unwrap();
+    fs::write(
+        home.0.join("plan.json"),
+        format!(
+            r#"{{"keys":[{{"file":"a.txt","recipe":"{}"}}]}}"#,
+            recipe.display()
+        ),
+    )
+    .unwrap();
+    let output = verify(&home.0, &format!(r#"{{"a.txt":"{CANARY}"}}"#), true);
+    assert!(!output.status.success());
+    let history = fs::read_to_string(home.0.join("history.jsonl")).unwrap();
+    assert!(history.contains("no_result"));
+    assert!(!history.contains("works"));
+}
+
+#[test]
+fn a_recipe_path_typed_at_the_command_cannot_run_a_program() {
+    let home = setup();
+    let copy = home.0.join("elsewhere.yaml");
+    fs::copy(home.0.join("providers/local-check.yaml"), &copy).unwrap();
+    fs::write(home.0.join("key"), CANARY).unwrap();
+    let output = program(
+        &home.0,
+        &[
+            "verify",
+            copy.to_str().unwrap(),
+            "--key-file",
+            home.0.join("key").to_str().unwrap(),
+        ],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert_no_value(&output, &home.0);
+}
+
+#[test]
 fn bad_input_on_stdin_stops_without_quoting_it() {
     let home = setup();
     let output = verify(&home.0, CANARY, true);

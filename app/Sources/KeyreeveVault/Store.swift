@@ -40,7 +40,7 @@ public struct EnclaveRecipient: VaultRecipient {
 }
 
 /// The vault's folder: `vault.json`, which is sealed, and `enclave.blob`.
-public struct VaultStore {
+public struct VaultStore: Sendable {
     public let directory: URL
     var vaultURL: URL { directory.appendingPathComponent("vault.json") }
     var blobURL: URL { directory.appendingPathComponent("enclave.blob") }
@@ -94,13 +94,55 @@ public struct VaultStore {
 
     public func loadBlob() throws -> Data { try Data(contentsOf: blobURL) }
 
-    private func write(_ data: Data, to url: URL) throws {
+    /// Changes the vault with no other process in the middle. Without this, two writers that loaded
+    /// the same file would each save it, and the first one's key would vanish.
+    @discardableResult
+    public func update<T>(_ change: (inout VaultFile) throws -> T) throws -> T {
+        try prepareDirectory()
+        let descriptor = open(directory.appendingPathComponent(".lock").path, O_RDWR | O_CREAT, 0o600)
+        guard descriptor >= 0 else { throw VaultError("the vault could not be locked") }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_EX) == 0 else { throw VaultError("the vault could not be locked") }
+        var vault = try load()
+        let result = try change(&vault)
+        try save(vault)
+        return result
+    }
+
+    private func prepareDirectory() throws {
         let previous = umask(0o077)
         defer { umask(previous) }
         try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        try data.write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    }
+
+    /// Reaches the disk before it returns: a rotation records a step only after this. The new file
+    /// is private from its first byte, and the rename leaves the old file or the new one.
+    private func write(_ data: Data, to url: URL) throws {
+        try prepareDirectory()
+        let temp = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+        let descriptor = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard descriptor >= 0 else { throw VaultError("the vault could not be saved") }
+        var saved = false
+        defer {
+            close(descriptor)
+            if !saved { unlink(temp.path) }
+        }
+        try data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            var offset = 0
+            while offset < bytes.count {
+                let written = Darwin.write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+                guard written > 0 else { throw VaultError("the vault could not be saved") }
+                offset += written
+            }
+        }
+        guard fsync(descriptor) == 0, rename(temp.path, url.path) == 0 else {
+            throw VaultError("the vault could not be saved")
+        }
+        saved = true
+        let folder = open(directory.path, O_RDONLY)
+        guard folder >= 0 else { throw VaultError("the vault could not be saved") }
+        defer { close(folder) }
+        guard fsync(folder) == 0 else { throw VaultError("the vault could not be saved") }
     }
 }

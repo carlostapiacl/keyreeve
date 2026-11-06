@@ -34,7 +34,8 @@ look like a credential or contain the key, and writes them to a private file. Th
 and not their values.
 
 **A provider file you added.** It receives no key until you approve the hosts it lists. Editing its hosts undoes the approval,
-and it cannot take the name of a provider that ships.
+and it cannot take the name of a provider that ships. A plan, your rules and your edits can only name a provider. A path to a
+recipe is accepted only when typed at the `verify` command for one run, and such a recipe cannot run a program.
 
 ## What it does not protect against
 

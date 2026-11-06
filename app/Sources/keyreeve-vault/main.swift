@@ -84,11 +84,16 @@ let auditLog = AuditLog(url: home.appendingPathComponent("audit.jsonl"))
 let socketPath = home.appendingPathComponent("run/keys.sock").path
 
 /// Reaches the service, starting it the first time. It stops on its own once idle.
+/// This program's real place. It is often reached through a link, and its helper lives beside the real file.
+func ownPath() -> URL {
+    URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath()
+}
+
 func askService(_ request: KeyService.Request) throws -> KeyService.Response {
     if let answer = try? KeySocket.send(request, path: socketPath) { return answer }
     guard request.op == "use" else { return KeyService.Response(ok: true, grants: []) }
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0])
+    process.executableURL = ownPath()
     process.arguments = ["serve"]
     process.standardInput = FileHandle.nullDevice
     process.standardOutput = FileHandle.nullDevice
@@ -224,8 +229,7 @@ do {
     case "serve":
         let descriptor = try KeySocket.listen(path: socketPath)
         // Beside this program, in the app's bundle.
-        let command = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0])
-            .deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
+        let command = ownPath().deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
         let proxy = try? ProxyProcess(binary: command, runFolder: home.appendingPathComponent("run"))
         let service = KeyService(
             index: { try KeyIndex.load(from: keysFile) },

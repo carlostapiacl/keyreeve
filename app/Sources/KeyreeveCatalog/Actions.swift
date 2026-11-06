@@ -22,6 +22,37 @@ public enum KeyAction: Hashable, Sendable {
     }
 }
 
+/// A button of your own, declared in a provider file of yours.
+public struct CustomAction: Codable, Hashable, Identifiable, Sendable {
+    public struct Run: Codable, Hashable, Sendable {
+        public let program: String
+    }
+
+    public let id: String
+    public let label: String
+    public let label_es: String?
+    public let open: String?
+    public let run: Run?
+    public let needs_key: Bool
+
+    public init(
+        id: String, label: String, label_es: String? = nil, open: String? = nil, run: Run? = nil,
+        needs_key: Bool = false
+    ) {
+        self.id = id
+        self.label = label
+        self.label_es = label_es
+        self.open = open
+        self.run = run
+        self.needs_key = needs_key
+    }
+
+    /// The label in the chosen language, as the file wrote it.
+    public var title: String {
+        Language.current.resolved == .spanish ? (label_es ?? label) : label
+    }
+}
+
 /// What keyreeve knows about providers, read from their files through the command. Nothing about
 /// any provider is written in this app, so a new file needs no new app.
 public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
@@ -35,11 +66,13 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let can_identify: Bool
     public let self_hosted: Bool
     public let problem: String?
+    public let programs: [String]?
+    public let actions: [CustomAction]?
 
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
         approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, self_hosted: Bool = false,
-        problem: String? = nil
+        problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil
     ) {
         self.id = id
         self.name = name
@@ -51,6 +84,8 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         self.can_identify = can_identify
         self.self_hosted = self_hosted
         self.problem = problem
+        self.programs = programs
+        self.actions = actions
     }
 
     public var needsApproval: Bool { source == "local" && !approved && problem == nil }
@@ -77,6 +112,14 @@ public struct ProviderDirectory: Sendable {
         names(for: item).lazy
             .compactMap { id in self.all.first { $0.id == id }?.dashboard }
             .first.flatMap(URL.init(string:))
+    }
+
+    /// Buttons of your own for this key, from an approved file of yours.
+    public func customActions(for item: CatalogItem) -> [(provider: String, action: CustomAction)] {
+        item.recipes.flatMap { id -> [(provider: String, action: CustomAction)] in
+            guard let info = usable.first(where: { $0.id == id }) else { return [] }
+            return (info.actions ?? []).map { (provider: id, action: $0) }
+        }
     }
 
     /// A provider each person runs needs the address of your server before it can be asked.
@@ -154,6 +197,22 @@ public struct KeyEdit: Codable, Equatable, Sendable {
         self.description = description
         self.criticality = criticality
         self.host = host
+    }
+}
+
+/// What a batch of checks found.
+public struct RunSummary: Equatable, Sendable {
+    public let checked: Int
+    public let works: Int
+    public let rejected: Int
+    public let noAnswer: Int
+
+    public init(items: [CatalogItem], checked paths: Set<String>) {
+        let done = items.filter { paths.contains($0.path) }
+        checked = paths.count
+        works = done.filter { $0.lastResult == "works" }.count
+        rejected = done.filter { $0.lastResult == "rejected" }.count
+        noAnswer = done.filter { $0.lastResult == "no_result" || $0.lastResult == "forbidden" }.count
     }
 }
 

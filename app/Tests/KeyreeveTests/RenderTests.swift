@@ -43,7 +43,7 @@ struct RenderTests {
             binary: nil)
         model.items = Self.sample
         model.providers = ProviderDirectory([
-            ProviderInfo(id: "aws", name: "AWS", dashboard: "https://console.aws.amazon.com/iam/home", hosts: ["sts.amazonaws.com"], can_identify: true),
+            ProviderInfo(id: "aws", name: "AWS", dashboard: "https://console.aws.amazon.com/iam/home", hosts: ["sts.amazonaws.com"], can_identify: true, actions: [CustomAction(id: "runbook", label: "Open the runbook", label_es: "Abrir el runbook", open: "https://example.com")]),
             ProviderInfo(id: "github", name: "GitHub", dashboard: "https://github.com/settings/tokens", hosts: ["api.github.com"], can_identify: true),
             ProviderInfo(id: "acme", name: "Acme", hosts: ["api.acme.com"], source: "local", approved: false),
         ])
@@ -56,7 +56,16 @@ struct RenderTests {
             ActivityItem(at: at.addingTimeInterval(-90_000), key: "hosting-token", kind: .used(by: "deploy.sh")),
         ]
         model.message = "Up to date"
+        model.lastRun = RunSummary(items: Self.sample, checked: Set(Self.sample.map(\.path)))
         return model
+    }
+
+    @Test func testAWeeklyScheduleIsAValidPlist() throws {
+        let data = try WeeklySchedule.plist(binary: URL(fileURLWithPath: "/Applications/K.app/keyreeve-cli"), spanish: true)
+        let parsed = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        let arguments = try #require(parsed?["ProgramArguments"] as? [String])
+        XCTAssertEqual(arguments, ["/Applications/K.app/keyreeve-cli", "check-free", "--notify", "--spanish"])
+        XCTAssertEqual((parsed?["StartCalendarInterval"] as? [String: Int])?["Weekday"], 1)
     }
 
     @Test func testTheViewsDrawInEachLanguageAndAppearance() throws {

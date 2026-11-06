@@ -27,6 +27,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var rotateDays: Int
     /// The server, for a provider each person runs themselves.
     public var host: String
+    /// Why the last check gave no answer, in the tool's own words.
+    public var lastReason: String
     public var id: String { path }
 
     /// A secret with no provider, such as a signing key, so there is nowhere to check it.
@@ -48,7 +50,7 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         lastResult: String = "", lastChecked: String = "", recipes: [String] = [], field: String = "",
         labels: [String] = [], ignoredUntil: Date? = nil, name: String = "", description: String = "",
         details: KeyDetails? = nil, criticality: Int = 0, criticalitySuggested: Bool = false,
-        rotateDays: Int = 0, host: String = ""
+        rotateDays: Int = 0, host: String = "", lastReason: String = ""
     ) {
         self.path = path
         self.level = level
@@ -70,6 +72,7 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         self.criticalitySuggested = criticalitySuggested
         self.rotateDays = rotateDays
         self.host = host
+        self.lastReason = lastReason
     }
 
     /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
@@ -141,6 +144,7 @@ public enum CatalogParser {
         let suggested = header.firstIndex(of: "criticality_suggested")
         let rotateDays = header.firstIndex(of: "rotate_days")
         let host = header.firstIndex(of: "host")
+        let reason = header.firstIndex(of: "last_reason")
         return rows.dropFirst().compactMap { row in
             guard row.count == header.count else { return nil }
             return CatalogItem(
@@ -161,7 +165,8 @@ public enum CatalogParser {
                 criticality: criticality.flatMap { Int(row[$0]) } ?? 0,
                 criticalitySuggested: suggested.map { row[$0] == "true" } ?? false,
                 rotateDays: rotateDays.flatMap { Int(row[$0]) } ?? 0,
-                host: host.map { row[$0] } ?? "")
+                host: host.map { row[$0] } ?? "",
+                lastReason: reason.map { row[$0] } ?? "")
         }
     }
 
@@ -222,6 +227,7 @@ public enum Sidebar: Hashable, Sendable {
     case critical
     case stale
     case internalOnly
+    case result(String)
     case level(String)
     case tag(String)
 }
@@ -236,6 +242,10 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()
         case .internalOnly: return item.isInternal && !item.isArchived
+        case .result(let result):
+            guard !item.isArchived, item.isSecret else { return false }
+            if result == "no_answer" { return item.lastResult == "no_result" || item.lastResult == "forbidden" }
+            return item.lastResult == result
         case .level(let level): return item.level == level && !item.isArchived
         case .tag(let tag): return item.tags.contains(tag) && !item.isArchived
         }

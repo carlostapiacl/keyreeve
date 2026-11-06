@@ -12,6 +12,15 @@ func levelName(_ level: String) -> String {
     }
 }
 
+func resultName(_ result: String) -> String {
+    switch result {
+    case "works": return T("Works")
+    case "rejected": return T("Rejected")
+    case "no_answer": return T("No answer")
+    default: return T("Never checked")
+    }
+}
+
 /// The app once unlocked: a sidebar, then the overview or a list.
 public struct MainView: View {
     @ObservedObject var model: AppModel
@@ -75,7 +84,9 @@ public struct MainView: View {
                 chosenRows = path.map { [$0] } ?? []
             }
         } else {
-            HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                filterBar
+                HStack(spacing: 0) {
                 if shown.isEmpty {
                     emptyList.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -85,9 +96,51 @@ public struct MainView: View {
                     Rectangle().fill(Theme.border).frame(width: 1)
                     KeyDetail(item: chosenItem, model: model).frame(width: 300)
                 }
+                }
             }
             .searchable(text: $search, prompt: T("Search by name or tag"))
         }
+    }
+
+    /// One click to the views people use most.
+    private var filterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                filterChip(T("All"), .all)
+                filterChip(T("Can be checked"), .checkable)
+                filterChip(T("Critical keys"), .critical)
+                filterChip(T("Rejected"), .result("rejected"))
+                filterChip(T("Works"), .result("works"))
+                filterChip(T("No answer"), .result("no_answer"))
+                filterChip(T("Never checked"), .result(""))
+                filterChip(T("Older than suggested"), .stale)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        }
+        .background(Theme.surface)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
+
+    private func filterChip(_ title: String, _ target: Sidebar) -> some View {
+        let on = selection == target
+        let count = filter(items, by: target, search: "").count
+        return Button {
+            selection = target
+            chosenRows = []
+        } label: {
+            HStack(spacing: 5) {
+                Text(title).lineLimit(1)
+                Text("\(count)").monospacedDigit().foregroundStyle(on ? Theme.onAccent.opacity(0.8) : Theme.faint)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(on ? Theme.onAccent : Theme.text)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(on ? Theme.accent : Theme.raised, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var title: String {
@@ -100,6 +153,7 @@ public struct MainView: View {
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")
         case .internalOnly: return T("Internal secrets")
+        case .result(let result): return resultName(result)
         case .level(let level): return levelName(level)
         case .tag(let tag): return tag
         }
@@ -200,7 +254,9 @@ public struct MainView: View {
     private var statusBar: some View {
         HStack(spacing: 8) {
             if model.busy { ProgressView().controlSize(.mini) }
-            if let message = model.message { Text(message).foregroundStyle(Theme.text) }
+            if let progress = model.progress {
+                Text(T("%d of %d keys", progress.done, progress.total)).monospacedDigit()
+            } else if let message = model.message { Text(message).foregroundStyle(Theme.text) }
             Spacer()
             if selection != .home { Text(T("%d of %d", shown.count, active.count)).monospacedDigit() }
         }
@@ -307,6 +363,7 @@ struct KeyDetail: View {
                     }
                 }
                 checkButton
+                customActions
                 identity
                 naming
                 criticality
@@ -415,6 +472,25 @@ struct KeyDetail: View {
                 }
             }
             .padding(.top, 4)
+            if !item.lastReason.isEmpty {
+                Text(item.lastReason).font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder private var customActions: some View {
+        let list = model.providers.customActions(for: item)
+        if !list.isEmpty {
+            fact(T("Your actions")) {
+                FlowRow(spacing: 6) {
+                    ForEach(list, id: \.action.id) { entry in
+                        Button(entry.action.title) { model.run(entry.action, provider: entry.provider, on: item) }
+                            .buttonStyle(KRButtonStyle())
+                            .disabled(model.busy)
+                    }
+                }
+            }
         }
     }
 
@@ -723,6 +799,7 @@ public struct SettingsView: View {
     @AppStorage(SettingsKey.lockMinutes) private var lockMinutes = 5
     @AppStorage(SettingsKey.scanOnOpen) private var scanOnOpen = true
     @AppStorage(SettingsKey.fingerprintMinutes) private var fingerprintMinutes = 5
+    @State private var weekly = WeeklySchedule.isOn
 
     public init(model: AppModel) { self.model = model }
 
@@ -762,6 +839,13 @@ public struct SettingsView: View {
                 Text(T("While this lasts, the app can check keys without asking. Locking it ends the period, and the vault always asks."))
                     .font(.caption)
             }
+            Section {
+                Toggle(T("Weekly check"), isOn: $weekly)
+                    .onChange(of: weekly) { WeeklySchedule.set(weekly, binary: model.commandURL) }
+            } footer: {
+                Text(T("Check keys set to Agents can use it every Monday, and notify me if one stops working. It needs no fingerprint, so it covers only those."))
+                    .font(.caption)
+            }
             Section(T("Files")) {
                 LabeledContent(T("Folder")) {
                     HStack {
@@ -782,6 +866,29 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    private func providerLine(_ provider: ProviderInfo) -> String {
+        if let problem = provider.problem { return problem }
+        if let programs = provider.programs, !programs.isEmpty {
+            return T("Runs %@", programs.joined(separator: ", "))
+        }
+        return T("Sent only to %@", provider.hosts.joined(separator: ", "))
+    }
+
+    /// A file that runs a program gets a plain warning, because this is the one thing that runs code.
+    private func approve(_ provider: ProviderInfo) {
+        guard let programs = provider.programs, !programs.isEmpty else {
+            model.approve(provider)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = T("This file runs programs on your Mac")
+        alert.informativeText = T("Approve only if you wrote it or read it. Programs: %@", programs.joined(separator: ", "))
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: T("Approve"))
+        alert.addButton(withTitle: T("Cancel"))
+        if alert.runModal() == .alertFirstButtonReturn { model.approve(provider) }
+    }
+
     private var providers: some View {
         Form {
             Section {
@@ -789,14 +896,14 @@ public struct SettingsView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(provider.name.isEmpty ? provider.id : provider.name)
-                            Text(provider.problem ?? T("Sent only to %@", provider.hosts.joined(separator: ", ")))
+                            Text(providerLine(provider))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
                         Spacer()
                         if provider.needsApproval {
-                            Button(T("Approve")) { model.approve(provider) }
+                            Button(T("Approve")) { approve(provider) }
                         } else if provider.source == "local" {
                             Text(T("Your file")).font(.caption).foregroundStyle(.secondary)
                         }

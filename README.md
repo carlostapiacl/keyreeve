@@ -125,6 +125,9 @@ app/build-app.sh
 open app/dist/Keyreeve.app
 ```
 
+Check all sends each key to its own provider, at most six at a time, with progress and a summary. In Settings you can
+also check keys set to "Agents can use it" every week, which needs no fingerprint and notifies you if one stops working.
+
 The first time, choose your keys folder. No Terminal is needed after building. The app scans the folder each time it
 opens, and shows what to do first, with a button on each item. To revoke a key, open the provider's page, revoke it, and
 press "I already revoked it": the app checks the key again, and the warning goes away only if the provider rejects it.
@@ -179,6 +182,29 @@ A file can also declare:
 | `fields` in `identify` | `$.path`, `header:name`, `token:name` or `reply:`. Name them `scopes` or `expires` to say what a key can do and when it ends |
 | `rotate_every_days` | a suggested age, shown as "older than suggested" |
 | `criticality_hint` | a rating from 1 to 5, shown faded until you confirm yours |
+
+### Your own checks and buttons
+
+For what a file cannot describe, a file of yours can run a program of yours. See
+[`examples/providers`](examples/providers). Everyone shares the generic files, and your own stay in your folder:
+
+```yaml
+auth:
+  type: command
+  run: { program: my-service-check.sh }
+actions:
+  - id: open-runbook
+    label: Open the runbook
+    open: https://example.com/runbook
+  - id: restart-worker
+    label: Restart the worker
+    run: { program: my-service-check.sh, args: [--restart] }
+    needs_key: true
+```
+
+The program gets the key on stdin and answers in JSON, such as `{"result":"works","fields":{"account":"me"}}`. It runs with a
+clean environment and a time limit, and only after you approve it. Changing the file or the program by even a byte undoes
+the approval. A file that ships with keyreeve can never run a program.
 
 A secret with no provider, such as a signing key, is marked as internal, and no check is offered. Secrets for your own
 products go the same way: a file of yours, in that folder, never in a repository.

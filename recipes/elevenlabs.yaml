@@ -7,7 +7,8 @@ rotate_every_days: 365
 criticality_hint: 2
 hosts: [api.elevenlabs.io]
 auth: { header: xi-api-key }
-verify: { method: GET, path: /v1/user }
+# A key limited to other permissions is alive, and the answer says so.
+verify: { method: GET, path: /v1/user, alive_if: { status: 401, contains: missing_permissions } }
 identify:
   request: { method: GET, path: /v1/user }
   fields: { account: $.first_name, id: $.user_id }

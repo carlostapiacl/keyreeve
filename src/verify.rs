@@ -4,6 +4,7 @@
 use crate::inventory::{split_label, strip_comment};
 use crate::providers;
 use crate::recipe::{extract, Recipe};
+use crate::script;
 use crate::secret::Secret;
 use crate::ssh;
 use crate::transport::{exchange_token, HttpTransport, Request, Transport, TransportError};
@@ -12,6 +13,9 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
@@ -42,6 +46,15 @@ impl Verdict {
             Self::NoResult(_) => "no_result",
         }
     }
+
+    /// Why a check gave no answer. It is written by this tool, and never quotes a key or a reply.
+    pub fn reason(&self) -> Option<String> {
+        match self {
+            Self::NoResult(why) => Some(why.clone()),
+            Self::Forbidden => Some("HTTP 403".to_owned()),
+            _ => None,
+        }
+    }
 }
 
 /// One line of the history: which file, which recipe, when and the result.
@@ -51,6 +64,8 @@ pub struct HistoryEntry {
     pub file: String,
     pub recipe: String,
     pub result: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Adds lines to a private file. A check that ran stays on record even if a later one fails.
@@ -171,6 +186,29 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
         Ok(response) => Verdict::NoResult(format!("HTTP {}", response.status)),
         Err(error) => failed(error),
     }
+}
+
+/// Runs a button of your own. A program that needs the key gets it on stdin.
+pub fn run_action(
+    provider: &str,
+    action: &str,
+    file: Option<&Path>,
+    field: Option<&str>,
+) -> Result<String, String> {
+    let recipe = load_recipe(provider)?;
+    let action = recipe
+        .actions
+        .iter()
+        .find(|candidate| candidate.id == action)
+        .ok_or_else(|| format!("{provider} has no action {action}"))?;
+    let run = action.run.as_ref().ok_or("this action opens a page")?;
+    let key = match (action.needs_key, file) {
+        (true, Some(file)) => Some(load_key(file, field, &recipe)?),
+        (true, None) => return Err("this action needs a key".into()),
+        (false, _) => None,
+    };
+    let answer = script::run(&providers::programs_folder(), run, &action.id, key.as_ref())?;
+    Ok(answer.message)
 }
 
 fn failed(error: TransportError) -> Verdict {
@@ -340,37 +378,68 @@ pub(crate) fn run_at(
     ))
 }
 
+/// How many checks run at once. Providers see few requests, and a slow one holds up no others.
+const WORKERS: usize = 6;
+
 /// A problem with one key is reported on its line, so it does not hide the others.
 pub fn run_plan(
     plan: &Path,
     keys: &Path,
     history: Option<&Path>,
 ) -> Result<Vec<(String, Verdict)>, String> {
+    run_plan_with(plan, keys, history, &|_, _| {})
+}
+
+/// The same, and it reports each finished key with how many are done and how many there are.
+pub fn run_plan_with(
+    plan: &Path,
+    keys: &Path,
+    history: Option<&Path>,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<Vec<(String, Verdict)>, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
     let plan: Plan =
         serde_norway::from_str(&text).map_err(|e| format!("{}: {e}", plan.display()))?;
     let at = now();
-    let mut records = Vec::with_capacity(plan.keys.len());
-    let lines = plan
-        .keys
-        .iter()
-        .map(|entry| {
-            let label = format!("{} [{}]", entry.file, entry.recipe);
-            let verdict = run_entry(entry, keys).unwrap_or_else(|why| {
-                let why = why
-                    .strip_prefix(&format!("{}: ", keys.join(&entry.file).display()))
-                    .map_or(why.clone(), str::to_owned);
-                Verdict::NoResult(why)
+    let total = plan.keys.len();
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let verdicts: Vec<Mutex<Option<Verdict>>> =
+        plan.keys.iter().map(|_| Mutex::new(None)).collect();
+    thread::scope(|scope| {
+        for _ in 0..WORKERS.min(total.max(1)) {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::SeqCst);
+                let Some(entry) = plan.keys.get(index) else {
+                    return;
+                };
+                let verdict = run_entry(entry, keys).unwrap_or_else(|why| {
+                    let why = why
+                        .strip_prefix(&format!("{}: ", keys.join(&entry.file).display()))
+                        .map_or(why.clone(), str::to_owned);
+                    Verdict::NoResult(why)
+                });
+                *verdicts[index].lock().unwrap_or_else(|e| e.into_inner()) = Some(verdict);
+                progress(done.fetch_add(1, Ordering::SeqCst) + 1, total);
             });
-            records.push(HistoryEntry {
-                at,
-                file: entry.file.clone(),
-                recipe: entry.recipe.clone(),
-                result: verdict.code().to_owned(),
-            });
-            (label, verdict)
-        })
-        .collect();
+        }
+    });
+    let mut records = Vec::with_capacity(total);
+    let mut lines = Vec::with_capacity(total);
+    for (entry, slot) in plan.keys.iter().zip(verdicts) {
+        let verdict = slot
+            .into_inner()
+            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(|| Verdict::NoResult("the check did not run".into()));
+        records.push(HistoryEntry {
+            at,
+            file: entry.file.clone(),
+            recipe: entry.recipe.clone(),
+            result: verdict.code().to_owned(),
+            reason: verdict.reason(),
+        });
+        lines.push((format!("{} [{}]", entry.file, entry.recipe), verdict));
+    }
     if let Some(history) = history {
         append_history(history, &records).map_err(|e| format!("{}: {e}", history.display()))?;
     }
@@ -559,6 +628,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].file, "missing.txt");
         assert_eq!(entries[0].result, "no_result");
+        assert!(entries[0].reason.is_some());
         assert!(!text.contains("CANARY"));
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -570,6 +640,29 @@ mod tests {
         assert_eq!(key.expose(), "AKIACANARY:CANARYsecret");
         let error = read_key(text, Some("Access key ID+Missing")).unwrap_err();
         assert!(!error.contains("CANARY"), "{error}");
+    }
+
+    #[test]
+    fn a_plan_keeps_its_order_and_reports_each_key() {
+        let dir = std::env::temp_dir().join(format!("keyreeve-batch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut text = String::from("keys:\n");
+        for index in 0..20 {
+            text.push_str(&format!(
+                "  - {{ file: missing-{index}.txt, recipe: hetzner }}\n"
+            ));
+        }
+        fs::write(dir.join("plan.yaml"), text).unwrap();
+        let seen = AtomicUsize::new(0);
+        let lines = run_plan_with(&dir.join("plan.yaml"), &dir, None, &|_, total| {
+            assert_eq!(total, 20);
+            seen.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+        assert_eq!(seen.load(Ordering::SeqCst), 20);
+        assert_eq!(lines[7].0, "missing-7.txt [hetzner]");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

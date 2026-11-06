@@ -3,8 +3,9 @@ use keyreeve::inventory::{self, parse_words, ExtraWords};
 use keyreeve::recipe::Recipe;
 use keyreeve::simulate;
 use keyreeve::verify;
-use keyreeve::{identify, providers};
+use keyreeve::{identify, providers, schedule};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 use std::{env, fs};
@@ -23,8 +24,12 @@ Usage:
       Give each file tags and an access level, from your rules.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
       Check whether a key still works, with one read-only request.
-  keyreeve verify --plan <plan.yaml> --keys <folder> [--history <file>]
-      Check several keys, and keep the results.
+  keyreeve verify --plan <plan.yaml> --keys <folder> [--history <file>] [--progress]
+      Check several keys at once, and keep the results.
+  keyreeve action <provider> <action> [--key-file <file>] [--field <name>]
+      Run a button of your own, from a provider file of yours.
+  keyreeve check-free [--notify] [--spanish]
+      Check the keys agents can use, which need no fingerprint. For a weekly schedule.
   keyreeve identify --plan <plan.yaml> --keys <folder> --details <file>
       Ask each provider whose key this is, and keep only the fields its file declares.
   keyreeve recipes [--json]
@@ -147,6 +152,12 @@ fn run_verify(args: &[String]) -> ExitCode {
         else {
             return usage();
         };
+        let show_progress = rest.iter().any(|arg| arg == "--progress");
+        let rest: Vec<String> = rest
+            .iter()
+            .filter(|arg| *arg != "--progress")
+            .cloned()
+            .collect();
         let mut found = HashMap::new();
         for pair in rest.chunks(2) {
             let [name, value] = pair else {
@@ -161,10 +172,24 @@ fn run_verify(args: &[String]) -> ExitCode {
             return usage();
         };
         let history = found.get("--history").map(Path::new);
-        return match verify::run_plan(Path::new(plan), Path::new(keys), history) {
+        // One line per key, flushed, so a window can show how far it got. It holds counts alone.
+        let report = |done: usize, total: usize| {
+            if show_progress {
+                let mut out = std::io::stdout().lock();
+                let _ = writeln!(out, "progress {done} {total}");
+                let _ = out.flush();
+            }
+        };
+        return match verify::run_plan_with(Path::new(plan), Path::new(keys), history, &report) {
             Ok(lines) => {
                 let mut code = ExitCode::SUCCESS;
                 for (label, verdict) in lines {
+                    if show_progress {
+                        if !verdict.works() {
+                            code = ExitCode::FAILURE;
+                        }
+                        continue;
+                    }
                     println!("{label}: {verdict}");
                     if !verdict.works() {
                         code = ExitCode::FAILURE;
@@ -196,6 +221,54 @@ fn run_verify(args: &[String]) -> ExitCode {
         Err(error) => {
             eprintln!("verify: {error}");
             ExitCode::from(2)
+        }
+    }
+}
+
+fn run_custom_action(args: &[String]) -> ExitCode {
+    let [provider, action, rest @ ..] = args else {
+        return usage();
+    };
+    let mut found = HashMap::new();
+    for pair in rest.chunks(2) {
+        let [name, value] = pair else {
+            return usage();
+        };
+        if name != "--key-file" && name != "--field" {
+            return usage();
+        }
+        found.insert(name.as_str(), value.as_str());
+    }
+    let file = found.get("--key-file").map(Path::new);
+    match verify::run_action(provider, action, file, found.get("--field").copied()) {
+        Ok(message) => {
+            println!("{message}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("action: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_check_free(args: &[String]) -> ExitCode {
+    let notify = args.iter().any(|arg| arg == "--notify");
+    let spanish = args.iter().any(|arg| arg == "--spanish");
+    match schedule::run(&schedule::default_home()) {
+        Ok(summary) => {
+            println!(
+                "{} checked, {} work, {} stopped working",
+                summary.checked, summary.works, summary.stopped
+            );
+            if notify {
+                schedule::notify(&summary, spanish);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("check-free: {error}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -247,7 +320,11 @@ fn run_recipes(args: &[String]) -> ExitCode {
         }
         [approve, name] if approve == "approve" => match providers::approve(name) {
             Ok(hosts) => {
-                println!("{name} may now receive keys at {}", hosts.join(", "));
+                if hosts.is_empty() {
+                    println!("{name} is approved");
+                } else {
+                    println!("{name} may now receive keys at {}", hosts.join(", "));
+                }
                 ExitCode::SUCCESS
             }
             Err(error) => {
@@ -288,6 +365,8 @@ fn main() -> ExitCode {
         "catalog" => return run_catalog(paths),
         "verify" => return run_verify(paths),
         "identify" => return run_identify(paths),
+        "check-free" => return run_check_free(paths),
+        "action" => return run_custom_action(paths),
         "recipes" => return run_recipes(paths),
         "check" | "simulate" if !paths.is_empty() => {}
         _ => {

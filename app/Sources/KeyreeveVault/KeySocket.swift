@@ -126,14 +126,25 @@ public enum KeySocket {
         let previous = umask(0o077)
         defer { umask(previous) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        // A refused connection means nothing is serving, so what is there is a leftover.
-        if let existing = try? send(KeyService.Request(op: "grants"), path: path, timeout: 1), existing.ok {
+        // The system lets one process hold this and frees it when that process ends, so a busy service
+        // is never mistaken for a dead one. It stays open on purpose, for as long as this process runs.
+        let holder = open(path + ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard holder >= 0 else { throw VaultError("the service could not start") }
+        guard flock(holder, LOCK_EX | LOCK_NB) == 0 else {
+            close(holder)
             throw VaultError("the service is already running")
         }
         return try bound(path: path)
     }
 
-    /// Serves until `shouldStop` says so. Requests are answered one at a time by the service's lock.
+    /// Whether something is listening, whatever it answers or fails to answer.
+    public static func isListening(path: String) -> Bool {
+        guard let descriptor = try? connected(path: path) else { return false }
+        close(descriptor)
+        return true
+    }
+
+    /// Serves until `shouldStop` says so.
     public static func serve(descriptor: Int32, service: KeyService, shouldStop: @escaping () -> Bool = { false }) {
         var pollFD = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
         while !shouldStop() {
@@ -141,6 +152,9 @@ public enum KeySocket {
             let client = accept(descriptor, nil, nil)
             guard client >= 0 else { continue }
             _ = fcntl(client, F_SETFD, FD_CLOEXEC)
+            // A request is one short line, so a client that says nothing does not keep a thread.
+            var patience = timeval(tv_sec: 10, tv_usec: 0)
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &patience, socklen_t(MemoryLayout<timeval>.size))
             Thread.detachNewThread {
                 defer { close(client) }
                 guard let pid = CallerIdentity.peer(of: client), let line = readLine(client),

@@ -59,15 +59,13 @@ extension AppModel {
     /// Asks for the finger once. The chip accepts this same confirmation for each key that follows.
     func openVault(reason: String, then: @escaping @MainActor (UnlockedVault?) -> Void) {
         let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            message = T("The fingerprint sensor is not available. Open the lid, or check your Mac's settings.")
-            return
-        }
         let epoch = lockEpoch
-        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, _ in
-            let unlocked = UnlockedVault(context: context)
-            Task { @MainActor in then(success && epoch == self.lockEpoch ? unlocked : nil) }
+        let unlocked = UnlockedVault(context: context)
+        let started = askFinger(context, .deviceOwnerAuthenticationWithBiometrics, reason) { success in
+            then(success && epoch == self.lockEpoch ? unlocked : nil)
+        }
+        if !started {
+            message = T("The fingerprint sensor is not available. Open the lid, or check your Mac's settings.")
         }
     }
 

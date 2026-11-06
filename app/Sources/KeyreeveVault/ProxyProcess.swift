@@ -81,6 +81,8 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
 
     public var endpoint: KeyService.ProxyEndpoint {
         get throws {
+            lock.lock()
+            defer { lock.unlock() }
             guard let ready else { throw VaultError("the proxy stopped") }
             return ready
         }

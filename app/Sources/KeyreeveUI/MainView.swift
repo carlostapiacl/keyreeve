@@ -26,6 +26,7 @@ public struct MainView: View {
     @ObservedObject var model: AppModel
     @State private var selection: Sidebar?
     @State private var search = ""
+    @State private var pressedChip: Sidebar?
     @State private var chosenRows: Set<CatalogItem.ID>
 
     public init(model: AppModel, initial: Sidebar = .home, chosen: CatalogItem.ID? = nil) {
@@ -126,24 +127,19 @@ public struct MainView: View {
     }
 
     private func filterChip(_ title: String, _ target: Sidebar) -> some View {
-        let on = selection == target
-        let count = filter(items, by: target, search: "").count
-        return Button {
-            selection = target
-            chosenRows = []
-        } label: {
-            HStack(spacing: 5) {
-                Text(title).lineLimit(1)
-                Text("\(count)").monospacedDigit().foregroundStyle(on ? Theme.onAccent.opacity(0.8) : Theme.faint)
+        FilterChip(
+            title: title, count: filter(items, by: target, search: "").count,
+            isOn: (pressedChip ?? selection) == target
+        ) {
+            // Filtering a long list takes a moment, so the chip answers first and the list follows.
+            pressedChip = target
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(30))
+                selection = target
+                chosenRows = []
+                pressedChip = nil
             }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(on ? Theme.onAccent : Theme.text)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(on ? Theme.accent : Theme.raised, in: Capsule())
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
     }
 
     private var title: String {
@@ -270,5 +266,36 @@ public struct MainView: View {
         .frame(height: 26)
         .background(Theme.surface)
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
+}
+
+/// One filter above the list. It shows it can be pressed before anything is pressed.
+struct FilterChip: View {
+    let title: String
+    let count: Int
+    let isOn: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title).lineLimit(1)
+                Text("\(count)").monospacedDigit().foregroundStyle(isOn ? Theme.onAccent.opacity(0.8) : Theme.faint)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(isOn ? Theme.onAccent : Theme.text)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(isOn ? Theme.accent : hovering ? Theme.border : Theme.raised, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            hovering = inside
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .onDisappear { if hovering { NSCursor.pop() } }
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 }

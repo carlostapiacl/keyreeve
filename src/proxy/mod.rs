@@ -272,6 +272,9 @@ impl Proxy {
         client.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")?;
         client.set_read_timeout(Some(TUNNEL_IDLE))?;
         upstream.set_read_timeout(Some(TUNNEL_IDLE))?;
+        // A side that stops reading must not hold this thread for good.
+        client.set_write_timeout(Some(TUNNEL_IDLE))?;
+        upstream.set_write_timeout(Some(TUNNEL_IDLE))?;
         // What the client sent past its CONNECT is already in the reader, so it goes first.
         let mut reader = reader;
         let mut up_write = upstream.try_clone()?;
@@ -394,6 +397,12 @@ impl Proxy {
         socket.set_read_timeout(Some(IO_TIMEOUT))?;
         socket.set_write_timeout(Some(IO_TIMEOUT))?;
         let mut upstream = StreamOwned::new(connection, socket);
+        // Connecting takes a moment, and the permission can end during it.
+        if let Some(grant) = &grant {
+            if !self.grants_for(host).iter().any(|live| live.id == grant.id) {
+                return answer(stream.get_mut(), 403, "that permission has ended");
+            }
+        }
         let sent = (|| -> io::Result<()> {
             upstream.write_all(out.as_bytes())?;
             copy_body(&framing, &mut stream, &mut upstream)?;

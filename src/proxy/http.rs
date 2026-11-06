@@ -90,8 +90,15 @@ impl Scrubber {
             out.extend_from_slice(&self.with);
             at += found + self.needle.len();
         }
-        let keep = self.needle.len().saturating_sub(1);
-        let flush_to = self.held.len().saturating_sub(keep).max(at);
+        // Only what could still become the value waits. Anything else goes now, or a tool that sends a
+        // little and waits for an answer would wait forever.
+        let rest = &self.held[at..];
+        let longest = self.needle.len().saturating_sub(1).min(rest.len());
+        let keep = (0..=longest)
+            .rev()
+            .find(|count| rest[rest.len() - count..] == self.needle[..*count])
+            .unwrap_or(0);
+        let flush_to = self.held.len() - keep;
         out.extend_from_slice(&self.held[at..flush_to]);
         self.held.drain(..flush_to);
         out
@@ -123,31 +130,46 @@ pub(super) fn relay_reply(
     scrub: &mut Scrubber,
 ) -> io::Result<u16> {
     let mut from = io::BufReader::new(EndIsEnd(from));
-    let Some(first) = read_line_capped(&mut from)? else {
-        return Ok(0);
-    };
-    let status = status_of(first.as_bytes());
-    let mut head = format!("{first}\r\n");
-    let mut chunked = false;
+    // A 103 or 100 comes before the real answer, whose head is the one that says how its body is framed.
+    let mut status;
+    let mut chunked;
     loop {
-        let Some(line) = read_line_capped(&mut from)? else {
-            to.write_all(&scrub.push(head.as_bytes()))?;
-            to.write_all(&scrub.finish())?;
-            return Ok(status);
+        let Some(first) = read_line_capped(&mut from)? else {
+            return Ok(0);
         };
-        chunked |= line.split_once(':').is_some_and(|(name, value)| {
-            name.eq_ignore_ascii_case("transfer-encoding")
-                && value.to_ascii_lowercase().contains("chunked")
-        });
-        head.push_str(&line);
-        head.push_str("\r\n");
-        if line.is_empty() {
+        status = status_of(first.as_bytes());
+        chunked = false;
+        let mut head = format!("{first}\r\n");
+        let mut count = 0;
+        let ended = loop {
+            let Some(line) = read_line_capped(&mut from)? else {
+                break false;
+            };
+            count += 1;
+            if count > MAX_HEADERS {
+                return Err(io::Error::other("too many headers"));
+            }
+            chunked |= line.split_once(':').is_some_and(|(name, value)| {
+                name.eq_ignore_ascii_case("transfer-encoding")
+                    && value.to_ascii_lowercase().contains("chunked")
+            });
+            head.push_str(&line);
+            head.push_str("\r\n");
+            if line.is_empty() {
+                break true;
+            }
+        };
+        to.write_all(&scrub.push(head.as_bytes()))?;
+        // The head is done, so what is still held back must leave before any chunk frames it.
+        to.write_all(&scrub.finish())?;
+        if !ended {
+            return Ok(status);
+        }
+        if !(100..200).contains(&status) || status == 101 {
             break;
         }
+        to.flush()?;
     }
-    to.write_all(&scrub.push(head.as_bytes()))?;
-    // The head is done, so what is still held back must leave before any chunk frames it.
-    to.write_all(&scrub.finish())?;
     let mut buffer = vec![0u8; 16 * 1024];
     if !chunked {
         loop {
@@ -402,6 +424,37 @@ mod tests {
         let (out, _) =
             relayed("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n9\r\nabc");
         assert!(!text(&out).ends_with("0\r\n\r\n"));
+    }
+
+    #[test]
+    fn an_early_hint_does_not_hide_how_the_real_reply_is_framed() {
+        let (out, status) = relayed(
+            "HTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\nreal-key-\r\na\r\n0123456789\r\n0\r\n\r\n",
+        );
+        assert_eq!(status, 200);
+        let body = text(&out);
+        assert!(!body.contains("0123456789"), "{body}");
+        assert!(body.contains("fake-key-9876543210"), "{body}");
+    }
+
+    #[test]
+    fn a_reply_with_endless_headers_is_stopped() {
+        let mut reply = String::from("HTTP/1.1 200 OK\r\n");
+        for number in 0..(MAX_HEADERS + 2) {
+            reply.push_str(&format!("X-{number}: a\r\n"));
+        }
+        let mut scrub = Scrubber::new("real-key-0123456789", "fake-key-9876543210");
+        assert!(relay_reply(reply.as_bytes(), &mut Vec::new(), &mut scrub).is_err());
+    }
+
+    #[test]
+    fn what_cannot_become_the_key_is_not_held_back() {
+        let mut scrub = Scrubber::new("real-key-0123456789", "fake-key-9876543210");
+        assert_eq!(scrub.push(b"hello"), b"hello");
+        assert_eq!(scrub.push(b"then real-k"), b"then ");
+        assert_eq!(scrub.push(b"ind"), b"real-kind");
+        assert_eq!(scrub.push(b"real-key-012345678"), b"");
+        assert_eq!(scrub.push(b"9!"), b"fake-key-9876543210!");
     }
 
     #[test]

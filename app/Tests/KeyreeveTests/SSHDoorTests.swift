@@ -243,6 +243,19 @@ struct SSHDoorTests {
         #expect(FileManager.default.fileExists(atPath: lab.askpass + ".seen"))
     }
 
+    @Test func testAnAgentWithNoDoorDoesNotStayWithTheKey() throws {
+        let lab = try SSHLab()
+        let key = try String(contentsOf: URL(fileURLWithPath: lab.path("key")), encoding: .utf8)
+        let run = lab.folder.appendingPathComponent("broken")
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        // A folder where the door's socket goes, so opening it fails after the key is loaded.
+        try FileManager.default.createDirectory(atPath: run.appendingPathComponent("s-x.sock").path, withIntermediateDirectories: true)
+        XCTAssertThrowsError(
+            try SSHDoor.open(grant: "x", key: key, seconds: 60, folder: run, check: { _ in true }, signed: { _, _ in }, refused: { _, _ in }))
+        usleep(300_000)
+        #expect(try lab.run("/usr/bin/pgrep", ["-f", run.appendingPathComponent("a-x.sock").path]).status != 0)
+    }
+
     @Test func testAKeyWithAPassphraseIsRefusedPlainly() throws {
         let folder = URL(fileURLWithPath: "/tmp/kr-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -314,6 +327,7 @@ struct SSHDoorTests {
 final class DoorProbe: @unchecked Sendable {
     let folder = URL(fileURLWithPath: "/tmp/kp-\(UUID().uuidString.prefix(8))")
     var bindAccepted = true
+    var signAccepted = true
     var received: [UInt8] = []
     var signatures: [SSHDoor.Signature] = []
     var refusals: [String] = []
@@ -333,8 +347,9 @@ final class DoorProbe: @unchecked Sendable {
                         lock.lock()
                         received.append(kind)
                         let accepted = bindAccepted
+                        let signs = signAccepted
                         lock.unlock()
-                        let reply: [UInt8] = kind == 27 ? [accepted ? 6 : 5] : kind == 13 ? [14, 0, 0, 0, 1, 9] : [12, 0, 0, 0, 0]
+                        let reply: [UInt8] = kind == 27 ? [accepted ? 6 : 5] : kind == 13 ? (signs ? [14, 0, 0, 0, 1, 9] : [5]) : [12, 0, 0, 0, 0]
                         _ = SSHDoor.writeFrame(client, Data(reply))
                     }
                     close(client)
@@ -377,11 +392,22 @@ final class DoorProbe: @unchecked Sendable {
         return out
     }
 
-    static func sign(session: String = "session", service: String = "ssh-connection", kind: UInt8 = 50) -> Data {
+    static func sign(
+        session: String = "session", service: String = "ssh-connection", kind: UInt8 = 50, method: String = "publickey",
+        hostKey: String? = nil, extra: Data = Data(), cutAfterService: Bool = false
+    ) -> Data {
         var blob = string(Data(session.utf8))
         blob.append(kind)
         blob.append(string(Data("root".utf8)))
         blob.append(string(Data(service.utf8)))
+        if !cutAfterService {
+            blob.append(string(Data(method.utf8)))
+            blob.append(1)
+            blob.append(string(Data("ssh-ed25519".utf8)))
+            blob.append(string(Data("public-key".utf8)))
+            if let hostKey { blob.append(string(Data(hostKey.utf8))) }
+            blob.append(extra)
+        }
         var out = Data([13])
         out.append(string(Data("public-key".utf8)))
         out.append(string(blob))
@@ -425,6 +451,43 @@ struct SSHDoorProtocolTests {
         #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(kind: 51)]) == [6, 5])
         #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(service: "something-else")]) == [6, 5])
         #expect(!probe.received.contains(13))
+    }
+
+    @Test func testOnlyAWholeLoginIsALogin() throws {
+        let probe = try DoorProbe()
+        #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(cutAfterService: true)]) == [6, 5])
+        #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(extra: Data("more".utf8))]) == [6, 5])
+        #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(method: "password")]) == [6, 5])
+        #expect(!probe.received.contains(13))
+    }
+
+    @Test func testALoginNamingItsServerMustNameTheBoundOne() throws {
+        let probe = try DoorProbe()
+        let hostbound = "publickey-hostbound-v00@openssh.com"
+        #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(method: hostbound, hostKey: "other")]) == [6, 5])
+        #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(method: hostbound)]) == [6, 5], "that method needs the key")
+        #expect(!probe.received.contains(13))
+        #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign(method: hostbound, hostKey: "host")]) == [6, 14])
+    }
+
+    @Test func testWhatTheAgentRefusedIsNotWrittenDownAsSigned() throws {
+        let probe = try DoorProbe()
+        probe.signAccepted = false
+        #expect(try probe.talk([DoorProbe.bind(), DoorProbe.sign()]) == [6, 5])
+        #expect(probe.signatures.isEmpty)
+    }
+
+    @Test func testClosingEndsThoseStillConnected() throws {
+        let probe = try DoorProbe()
+        let client = try KeySocket.connected(path: probe.door.socket)
+        defer { close(client) }
+        #expect(SSHDoor.writeFrame(client, Data([11])))
+        #expect(SSHDoor.readFrame(client) != nil)
+        probe.door.close()
+        var patience = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &patience, socklen_t(MemoryLayout<timeval>.size))
+        var byte: UInt8 = 0
+        #expect(read(client, &byte, 1) == 0, "the door hung up")
     }
 
     @Test func testAServerTheAgentDidNotAcceptCountsForNothing() throws {

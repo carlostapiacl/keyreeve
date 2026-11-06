@@ -152,7 +152,10 @@ public struct KeyIndex: Equatable, Sendable {
 }
 
 func tomlQuoted(_ text: String) -> String {
-    "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    "\""
+        + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        .replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\r", with: "\\r")
+        + "\""
 }
 
 struct TomlScanner {
@@ -171,8 +174,13 @@ struct TomlScanner {
             switch character {
             case "\"": return out
             case "\\":
-                guard let next = rest.first, next == "\"" || next == "\\" else { throw bad }
-                out.append(next)
+                guard let next = rest.first else { throw bad }
+                switch next {
+                case "\"", "\\": out.append(next)
+                case "n": out.append("\n")
+                case "r": out.append("\r")
+                default: throw bad
+                }
                 rest = rest.dropFirst()
             default: out.append(character)
             }

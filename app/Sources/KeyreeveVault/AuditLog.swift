@@ -26,8 +26,9 @@ public struct AuditLog: Sendable {
         public init(agent: String? = nil, reason: String? = nil, command: String? = nil, cwd: String? = nil) {
             self.agent = agent.map { String($0.prefix(80)) }
             self.reason = reason.map { String($0.prefix(200)) }
-            self.command = command
-            self.cwd = cwd
+            // A line has to fit where the next one looks for the last hash.
+            self.command = command.map { String($0.prefix(1024)) }
+            self.cwd = cwd.map { String($0.prefix(1024)) }
         }
     }
 

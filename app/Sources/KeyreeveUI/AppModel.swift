@@ -5,6 +5,14 @@ import KeyreeveVault
 import LocalAuthentication
 import SwiftUI
 
+/// The system's fingerprint prompt, kept apart so a test can stand in for the sensor.
+struct FingerGate {
+    var canAsk: (LAContext, LAPolicy, inout NSError?) -> Bool = { $0.canEvaluatePolicy($1, error: &$2) }
+    var ask: (LAContext, LAPolicy, String, @escaping @Sendable (Bool) -> Void) -> Void = { context, policy, reason, done in
+        context.evaluatePolicy(policy, localizedReason: reason) { success, _ in done(success) }
+    }
+}
+
 public enum SettingsKey {
     public static let lockMinutes = "lockMinutes"
     public static let scanOnOpen = "scanOnOpen"
@@ -40,6 +48,8 @@ public final class AppModel: ObservableObject {
     public let vaultStore: VaultStore
     let binary: URL?
     private var lockTask: Task<Void, Never>?
+    private var askingFinger = false
+    var fingerGate = FingerGate()
     var confirmation = ConfirmationWindow()
     private var generation = 0
     /// Changes on each lock, so a confirmation that arrives afterwards counts for nothing.
@@ -104,17 +114,33 @@ public final class AppModel: ObservableObject {
     public func windowGotFocus() { lockTask?.cancel() }
 
     func confirm(reason: String, then: @escaping @MainActor (Bool) -> Void) {
-        let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+        let epoch = lockEpoch
+        let started = askFinger(LAContext(), .deviceOwnerAuthentication, reason) { success in
+            then(success && epoch == self.lockEpoch)
+        }
+        if !started {
             lockMessage = T("This Mac has no way to confirm it is you.")
             then(false)
-            return
         }
-        let epoch = lockEpoch
-        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, _ in
-            Task { @MainActor in then(success && epoch == self.lockEpoch) }
+    }
+
+    /// One request for the finger at a time. A second one cancels the first, which reads as a sensor that
+    /// did not take the touch. A request made while one is open has nothing to add, so it is dropped.
+    /// Returns false only if this Mac cannot ask.
+    func askFinger(
+        _ context: LAContext, _ policy: LAPolicy, _ reason: String, done: @escaping @MainActor (Bool) -> Void
+    ) -> Bool {
+        guard !askingFinger else { return true }
+        var error: NSError?
+        guard fingerGate.canAsk(context, policy, &error) else { return false }
+        askingFinger = true
+        fingerGate.ask(context, policy, reason) { success in
+            Task { @MainActor in
+                self.askingFinger = false
+                done(success)
+            }
         }
+        return true
     }
 
     // MARK: Data

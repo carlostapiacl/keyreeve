@@ -378,6 +378,7 @@ A key joined from two fields, such as AWS, cannot rotate yet.
 ## What is missing
 
 - A rotation tried against a real provider
+- Reading a provider's early answer during an upload. A provider that refuses a large body before reading it gets a 502 back from the proxy
 - Using the vault on Linux and Windows, and a chip-free key for them. The file format already works there
 - Other vaults as storage, such as 1Password or the system keychain
 - A scan that finds where each key is used, and which permissions each key has

@@ -30,11 +30,13 @@ public final class SSHDoor: @unchecked Sendable {
     private let refused: RefusalLog
     private let lock = NSLock()
     private var closed = false
+    private var clients: Set<Int32> = []
 
     private enum Message {
         static let failure: UInt8 = 5
         static let identities: UInt8 = 11
         static let sign: UInt8 = 13
+        static let signature: UInt8 = 14
         static let success: UInt8 = 6
         static let extensionRequest: UInt8 = 27
     }
@@ -103,9 +105,17 @@ public final class SSHDoor: @unchecked Sendable {
             throw fail("this SSH key could not be loaded, or its passphrase was not given")
         }
         let identity = writePublicKey(agent: private_, to: folder.appendingPathComponent("s-\(grant).pub").path)
-        return try SSHDoor(
-            socket: folder.appendingPathComponent("s-\(grant).sock").path, identity: identity, upstream: private_, agent: agent,
-            check: check, signed: signed, refused: refused)
+        do {
+            return try SSHDoor(
+                socket: folder.appendingPathComponent("s-\(grant).sock").path, identity: identity, upstream: private_, agent: agent,
+                check: check, signed: signed, refused: refused)
+        } catch {
+            // Nothing will ever close an agent that has no door, and it holds the key.
+            agent.terminate()
+            unlink(private_)
+            if let identity { unlink(identity) }
+            throw error
+        }
     }
 
     private static func writePublicKey(agent: String, to path: String) -> String? {
@@ -144,8 +154,11 @@ public final class SSHDoor: @unchecked Sendable {
         lock.lock()
         let already = closed
         closed = true
+        let open = clients
         lock.unlock()
         guard !already else { return }
+        // Those waiting for their next message end now, and take their sockets with them.
+        for client in open { shutdown(client, SHUT_RDWR) }
         shutdown(listener, SHUT_RDWR)
         Darwin.close(listener)
         agent?.terminate()
@@ -171,8 +184,21 @@ public final class SSHDoor: @unchecked Sendable {
                 continue
             }
             _ = fcntl(client, F_SETFD, FD_CLOEXEC)
+            lock.lock()
+            let admitted = !closed
+            if admitted { clients.insert(client) }
+            lock.unlock()
+            guard admitted else {
+                Darwin.close(client)
+                return
+            }
             Thread.detachNewThread { [self] in
-                defer { Darwin.close(client) }
+                defer {
+                    lock.lock()
+                    clients.remove(client)
+                    lock.unlock()
+                    Darwin.close(client)
+                }
                 serve(client)
             }
         }
@@ -184,7 +210,7 @@ public final class SSHDoor: @unchecked Sendable {
         let caller = CallerIdentity.observe(pid: pid)
         guard let up = try? KeySocket.connected(path: upstream) else { return }
         defer { Darwin.close(up) }
-        var server: (fingerprint: String, session: Data)?
+        var server: BoundServer?
         while !isClosed, let frame = Self.readFrame(client), let kind = frame.first {
             let answer: Data?
             switch kind {
@@ -204,7 +230,7 @@ public final class SSHDoor: @unchecked Sendable {
                         refused("a forwarded agent", caller)
                         answer = Self.failure
                     } else {
-                        server = (Self.fingerprint(bind.hostKey), bind.session)
+                        server = BoundServer(fingerprint: Self.fingerprint(bind.hostKey), hostKey: bind.hostKey, session: bind.session)
                         answer = reply
                     }
                 } else {
@@ -220,14 +246,22 @@ public final class SSHDoor: @unchecked Sendable {
         }
     }
 
+    private struct BoundServer {
+        let fingerprint: String
+        let hostKey: Data
+        let session: Data
+    }
+
     private func sign(
-        _ frame: Data, server: (fingerprint: String, session: Data)?, up: Int32, caller: AuditLog.Observed?
+        _ frame: Data, server: BoundServer?, up: Int32, caller: AuditLog.Observed?
     ) -> Data {
         guard let server else {
             refused("no server named", caller)
             return Self.failure
         }
-        guard let login = Self.login(inSignRequest: frame), login.session == server.session else {
+        guard let login = Self.login(inSignRequest: frame), login.session == server.session,
+            login.hostKey == nil || login.hostKey == server.hostKey
+        else {
             refused("not a login to that server", caller)
             return Self.failure
         }
@@ -236,7 +270,8 @@ public final class SSHDoor: @unchecked Sendable {
             return Self.failure
         }
         guard let reply = Self.relay(frame, to: up) else { return Self.failure }
-        signed(Signature(user: login.user, server: server.fingerprint), caller)
+        // Only a signature counts as signed. The agent can still say no.
+        if reply.first == Message.signature { signed(Signature(user: login.user, server: server.fingerprint), caller) }
         return reply
     }
 
@@ -271,17 +306,28 @@ public final class SSHDoor: @unchecked Sendable {
         return (hostKey, session, forwarding != 0)
     }
 
-    /// What a login signs: the session, then SSH_MSG_USERAUTH_REQUEST with the user. Anything else, such
-    /// as a signature for a file or a commit, is not a login.
-    static func login(inSignRequest frame: Data) -> (user: String, session: Data)? {
+    /// What a login signs, whole: the session, then SSH_MSG_USERAUTH_REQUEST with the user, the service, the
+    /// method, the key, and for the method OpenSSH prefers the server's key too. Anything else, such as a
+    /// signature for a file or a commit, or those words with something added, is not a login.
+    static func login(inSignRequest frame: Data) -> (user: String, session: Data, hostKey: Data?)? {
         var request = Reader(data: Data(frame.dropFirst()))
         guard request.string() != nil, let blob = request.string() else { return nil }
         var reader = Reader(data: blob)
         guard let session = reader.string(), reader.byte() == 50, let user = reader.string(),
             let service = reader.string(), service == Data("ssh-connection".utf8),
-            let name = String(data: user, encoding: .utf8)
+            let name = String(data: user, encoding: .utf8), let method = reader.string(),
+            reader.byte() == 1, reader.string() != nil, reader.string() != nil
         else { return nil }
-        return (name, session)
+        var hostKey: Data?
+        switch String(data: method, encoding: .utf8) {
+        case "publickey": break
+        case "publickey-hostbound-v00@openssh.com":
+            guard let bound = reader.string() else { return nil }
+            hostKey = bound
+        default: return nil
+        }
+        guard reader.data.isEmpty else { return nil }
+        return (name, session, hostKey)
     }
 
     /// As `ssh-keygen -l` writes it, so it can be compared with what a server shows.

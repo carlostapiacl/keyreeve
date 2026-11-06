@@ -30,7 +30,7 @@ func useKey() throws {
     let command = Array(arguments[(dash + 1)...])
     var seconds: Int?
     if let text = options["--for"] {
-        guard let parsed = parseDuration(text) else { fail("--for takes a time like 90s, 5m or 2h") }
+        guard let parsed = KeyService.seconds(from: text) else { fail("--for takes a time like 90s, 5m or 2h") }
         seconds = parsed
     }
     let shown = command.joined(separator: " ")
@@ -93,7 +93,7 @@ func grantKey() throws {
     }
     var seconds: Int?
     if let text = options["--for"] {
-        guard let parsed = parseDuration(text) else { fail("--for takes a time like 90s, 5m or 2h") }
+        guard let parsed = KeyService.seconds(from: text) else { fail("--for takes a time like 90s, 5m or 2h") }
         seconds = parsed
     }
     let isSSH = try KeyIndex.load(from: keysFile).key(id)?.provider == KeyService.sshProvider

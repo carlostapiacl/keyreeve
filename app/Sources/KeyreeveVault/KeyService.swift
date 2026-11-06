@@ -149,6 +149,20 @@ public final class KeyService: @unchecked Sendable {
 
     /// What `provider` says for an SSH key that belongs to no provider's file, such as a server's.
     public static let sshProvider = "ssh"
+    /// "90s", "5m" or "2h". Nil for what it cannot read, including a number too large to hold.
+    public static func seconds(from text: String) -> Int? {
+        guard let unit = text.last, let number = Int(text.dropLast()), number > 0 else { return Int(text) }
+        let scale: Int
+        switch unit {
+        case "s": scale = 1
+        case "m": scale = 60
+        case "h": scale = 3600
+        default: return nil
+        }
+        let (result, overflow) = number.multipliedReportingOverflow(by: scale)
+        return overflow ? nil : result
+    }
+
     public static let defaultSeconds = 5 * 60
     public static let maxSeconds = 24 * 60 * 60
 
@@ -160,7 +174,11 @@ public final class KeyService: @unchecked Sendable {
     private let log: AuditLog
     private let now: () -> Date
     private var grants: [Grant] = []
+    /// Guards the list, and is never held while a person is being asked, so `revoke` always gets through.
     private let lock = NSLock()
+    /// One prompt at a time: a second one would cancel the first.
+    private let asking = NSLock()
+    private var revocations = 0
 
     public init(
         index: @escaping () throws -> KeyIndex,
@@ -204,20 +222,24 @@ public final class KeyService: @unchecked Sendable {
     }
 
     public func handle(_ request: Request, caller: AuditLog.Observed?) -> Response {
-        lock.lock()
-        defer { lock.unlock() }
-        dropExpired()
         do {
             switch request.op {
             case "use": return try use(request, caller: caller)
             case "grants":
+                lock.lock()
+                defer { lock.unlock() }
+                dropExpired()
                 return Response(
                     ok: true,
                     grants: grants.map { GrantInfo(id: $0.id, key: $0.key, program: $0.program, expires: $0.expires) })
             case "revoke":
+                lock.lock()
+                dropExpired()
+                revocations += 1
                 let closing = grants.filter { request.key == nil || $0.key == request.key }
                 for grant in closing { end(grant) }
                 grants.removeAll { request.key == nil || $0.key == request.key }
+                lock.unlock()
                 for grant in closing {
                     try? log.append(event: "closed", key: grant.key, grant: grant.id, observed: caller)
                 }
@@ -231,6 +253,21 @@ public final class KeyService: @unchecked Sendable {
             // Errors from the system say nothing useful, and could quote what they were given.
             return Response(ok: false, error: "the fingerprint was not accepted, or the key could not be opened")
         }
+    }
+
+    /// An SSH key's permission covers every program. Any other covers one key with one program, so one
+    /// for `netlify` does not also cover something else without showing you that it asked.
+    private func grantInForce(key: String, program: String) -> Grant? {
+        lock.lock()
+        defer { lock.unlock() }
+        dropExpired()
+        return grants.first { $0.key == key && ($0.door != nil || $0.program == program) }
+    }
+
+    private func answer(for grant: Grant, variable: String?) throws -> Response {
+        if let door = grant.door { return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity) }
+        guard let proxy else { throw VaultError("the proxy is not available") }
+        return Response(ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable)
     }
 
     private func use(_ request: Request, caller: AuditLog.Observed?) throws -> Response {
@@ -250,6 +287,8 @@ public final class KeyService: @unchecked Sendable {
         let account = key.account.map { " (\($0))" } ?? ""
         if request.real == true {
             // Asked every time and never remembered: past this point nothing protects the value.
+            asking.lock()
+            defer { asking.unlock() }
             let sealed: Data
             do {
                 sealed = try open(key.source, "give the real key \(id)\(account) to \(name)")
@@ -261,60 +300,74 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "handed", key: id, observed: caller, declared: declared, detail: "real key")
             return Response(ok: true, value: value, variable: key.variable)
         }
-        if let existing = grants.first(where: { $0.key == id && $0.door != nil }), let door = existing.door {
-            try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
-            return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity)
-        }
         // No finger is spent on a key that could not be used anyway.
-        guard key.provider != nil else {
+        guard let provider = key.provider else {
             throw VaultError(
                 "\(id) has no provider, so nothing says where it may go. Set one (`ssh` for an SSH key), or use --real")
         }
+        if let existing = grantInForce(key: id, program: name) {
+            try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
+            return try answer(for: existing, variable: key.variable)
+        }
+        asking.lock()
+        defer { asking.unlock() }
+        // While this waited, the prompt ahead of it may have given what this needs.
+        if let existing = grantInForce(key: id, program: name) {
+            try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
+            return try answer(for: existing, variable: key.variable)
+        }
+        lock.lock()
+        let revocationsBefore = revocations
+        lock.unlock()
+        let sealed: Data
+        do {
+            sealed = try open(key.source, (request.prompt ?? "run \(name) with the key \(id)") + account)
+        } catch {
+            try log.append(event: "denied", key: id, observed: caller, declared: declared)
+            throw error
+        }
+        let seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
+        let expires = now().addingTimeInterval(TimeInterval(seconds))
+        let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
+        let text = String(decoding: sealed, as: UTF8.self)
         let granted: Grant
-        if let existing = grants.first(where: { $0.key == id && $0.program == name }) {
-            granted = existing
+        let detail: String
+        if text.contains("PRIVATE KEY-----") {
+            let door = try openDoor(grant: grantID, key: id, account: account, pinned: key.servers ?? [], text: text, seconds: seconds)
+            granted = Grant(id: grantID, key: id, program: name, expires: expires, standIn: "", door: door)
+            detail = "\(seconds) seconds, ssh"
         } else {
-            // A permission covers one key with one program, so one for `netlify` does not also cover
-            // something else without showing you that it asked.
-            let prompt = (request.prompt ?? "run \(name) with the key \(id)") + account
-            let sealed: Data
-            do {
-                sealed = try open(key.source, prompt)
-            } catch {
-                try log.append(event: "denied", key: id, observed: caller, declared: declared)
-                throw error
-            }
-            let seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
-            let expires = now().addingTimeInterval(TimeInterval(seconds))
-            let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
-            let text = String(decoding: sealed, as: UTF8.self)
-            if text.contains("PRIVATE KEY-----") {
-                let door = try openDoor(
-                    grant: grantID, key: id, account: account, pinned: key.servers ?? [], text: text, seconds: seconds)
-                grants.append(Grant(id: grantID, key: id, program: name, expires: expires, standIn: "", door: door))
-                try log.append(
-                    event: "granted", key: id, grant: grantID, observed: caller, declared: declared, detail: "\(seconds) seconds, ssh")
-                try log.append(event: "used", key: id, grant: grantID, observed: caller, declared: declared)
-                return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity)
-            }
-            guard let provider = key.provider, provider != Self.sshProvider else {
+            guard provider != Self.sshProvider else {
                 throw VaultError("\(id) says it is an SSH key, and what is sealed is not a private key")
             }
             guard let proxy else { throw VaultError("the proxy is not available") }
             // From here the value lives in the proxy, and this process keeps only the stand-in.
             let standIn = try proxy.add(
-                grant: grantID, key: id, provider: provider, text: text,
-                field: key.field, expires: expires)
+                grant: grantID, key: id, provider: provider, text: text, field: key.field, expires: expires)
             granted = Grant(id: grantID, key: id, program: name, expires: expires, standIn: standIn, door: nil)
-            grants.append(granted)
-            try log.append(
-                event: "granted", key: id, grant: granted.id, observed: caller, declared: declared,
-                detail: "\(seconds) seconds")
+            detail = "\(seconds) seconds"
         }
-        try log.append(event: "used", key: id, grant: granted.id, observed: caller, declared: declared)
-        guard let proxy else { throw VaultError("the proxy is not available") }
-        return Response(
-            ok: true, standIn: granted.standIn, proxy: try proxy.endpoint, variable: key.variable)
+        lock.lock()
+        // Locking the app while your finger was on its way ends this too.
+        guard revocations == revocationsBefore else {
+            end(granted)
+            lock.unlock()
+            throw VaultError("this was revoked while it was being opened")
+        }
+        grants.append(granted)
+        lock.unlock()
+        // A use that cannot be written down does not happen.
+        do {
+            try log.append(event: "granted", key: id, grant: grantID, observed: caller, declared: declared, detail: detail)
+            try log.append(event: "used", key: id, grant: grantID, observed: caller, declared: declared)
+            return try answer(for: granted, variable: key.variable)
+        } catch {
+            lock.lock()
+            grants.removeAll { $0.id == grantID }
+            end(granted)
+            lock.unlock()
+            throw error
+        }
     }
 
     /// The first server is the one you just approved with your finger, unless the key names its servers.
@@ -326,9 +379,13 @@ public final class KeyService: @unchecked Sendable {
         let servers = ServerList(pinned: pinned)
         let log = self.log
         let confirm = self.confirm
+        let asking = self.asking
         return try agents.open(
             grant: grant, name: key, key: text, seconds: seconds,
             check: { fingerprint in
+                if servers.note(fingerprint, firstIsFree: false) == .known { return true }
+                asking.lock()
+                defer { asking.unlock() }
                 switch servers.note(fingerprint) {
                 case .known: return true
                 case .first:
@@ -365,11 +422,11 @@ final class ServerList: @unchecked Sendable {
         firstIsFree = pinned.isEmpty
     }
 
-    func note(_ fingerprint: String) -> Note {
+    func note(_ fingerprint: String, firstIsFree useFirst: Bool = true) -> Note {
         lock.lock()
         defer { lock.unlock() }
         if servers.contains(fingerprint) { return .known }
-        if firstIsFree {
+        if useFirst && firstIsFree {
             firstIsFree = false
             servers.insert(fingerprint)
             return .first

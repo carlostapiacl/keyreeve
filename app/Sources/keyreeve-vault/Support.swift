@@ -94,6 +94,8 @@ func ownPath() -> URL {
 /// Reaches the service, starting it the first time. It stops on its own once idle.
 func askService(_ request: KeyService.Request) throws -> KeyService.Response {
     if let answer = try? KeySocket.send(request, path: socketPath) { return answer }
+    // It is there and gave no answer. Saying "done" here could be false, and starting another would ask twice.
+    if KeySocket.isListening(path: socketPath) { throw VaultError("the key service did not answer, so nothing changed") }
     guard request.op == "use" else { return KeyService.Response(ok: true, grants: []) }
     let process = Process()
     process.executableURL = ownPath()
@@ -111,12 +113,3 @@ func askService(_ request: KeyService.Request) throws -> KeyService.Response {
     throw VaultError("the key service did not start")
 }
 
-func parseDuration(_ text: String) -> Int? {
-    guard let unit = text.last, let number = Int(text.dropLast()), number > 0 else { return Int(text) }
-    switch unit {
-    case "s": return number
-    case "m": return number * 60
-    case "h": return number * 3600
-    default: return nil
-    }
-}

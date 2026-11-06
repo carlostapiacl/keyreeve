@@ -257,6 +257,79 @@ struct KeyServiceTests {
         #expect(f.agents.door.closed)
     }
 
+    /// `revoke` must get through while your finger is being waited for, and must also stop what comes of it.
+    @Test func testRevokingDoesNotWaitForAPromptAndEndsWhatItOpens() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let touching = DispatchSemaphore(value: 0)
+        let touched = DispatchSemaphore(value: 0)
+        let proxy = FakeProxy()
+        let service = KeyService(
+            index: { try KeyIndex.parse("[[key]]\nid = \"n\"\nsource = \"s\"\nprovider = \"netlify\"\n") },
+            open: { _, _ in
+                touching.signal()
+                touched.wait()
+                return Data("CANARY\n".utf8)
+            },
+            proxy: proxy, log: AuditLog(url: folder.appendingPathComponent("a.jsonl")))
+        let using = Task.detached { service.handle(.init(op: "use", key: "n", program: "/bin/x"), caller: nil) }
+        touching.wait()
+        let started = Date()
+        #expect(service.handle(.init(op: "revoke"), caller: nil).ok)
+        #expect(service.handle(.init(op: "grants"), caller: nil).grants?.isEmpty == true)
+        #expect(Date().timeIntervalSince(started) < 1)
+        touched.signal()
+        let answer = await using.value
+        #expect(!answer.ok)
+        #expect(answer.standIn == nil)
+        #expect(service.isIdle)
+    }
+
+    @Test func testAUseThatCannotBeLoggedLeavesNoPermission() throws {
+        let f = Fixture()
+        _ = f.service
+        // A folder where the log goes, so nothing can be written.
+        try FileManager.default.createDirectory(at: f.log.url, withIntermediateDirectories: true)
+        #expect(!f.use("vps", "/usr/bin/ssh").ok)
+        #expect(f.agents.door.closed)
+        #expect(f.service.isIdle)
+        #expect(!f.use("netlify").ok)
+        #expect(f.service.isIdle)
+    }
+
+    @Test func testALongDirectoryDoesNotJamTheLog() throws {
+        let f = Fixture()
+        _ = f.service
+        let long = String(repeating: "d", count: 70_000)
+        #expect(f.service.handle(.init(op: "use", key: "netlify", program: "/bin/x", cwd: long), caller: nil).ok)
+        #expect(f.use("netlify").ok)
+        #expect(f.log.firstBrokenLine() == nil)
+    }
+
+    @Test func testADurationTooLargeIsRefusedAndNotACrash() {
+        #expect(KeyService.seconds(from: "9223372036854775807h") == nil)
+        #expect(KeyService.seconds(from: "90s") == 90)
+        #expect(KeyService.seconds(from: "5m") == 300)
+        #expect(KeyService.seconds(from: "2h") == 7200)
+        #expect(KeyService.seconds(from: "5x") == nil)
+    }
+
+    @Test func testAKeyIndexSurvivesANewlineInAFileName() throws {
+        let index = KeyIndex(keys: [KeyIndex.Key(id: "a", source: "odd\nname\"\\.txt")])
+        #expect(try KeyIndex.parse(index.toml) == index)
+    }
+
+    @Test func testOnlyOneServiceHoldsTheSocket() throws {
+        let folder = URL(fileURLWithPath: "/tmp/kl-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appendingPathComponent("k.sock").path
+        let first = try KeySocket.listen(path: path)
+        defer { close(first) }
+        #expect(throws: VaultError.self) { try KeySocket.listen(path: path) }
+        #expect(KeySocket.isListening(path: path))
+    }
+
     @Test func testThePromptNamesTheAccount() throws {
         let f = Fixture()
         _ = f.use("netlify")

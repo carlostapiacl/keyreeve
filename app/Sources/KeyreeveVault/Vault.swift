@@ -28,6 +28,8 @@ public struct VaultFile: Codable, Equatable {
     public var enclavePublicKey: Data
     public var recoveryPublicKey: Data
     public var entries: [String: Entry] = [:]
+    /// Copies that a newer one replaced, oldest first. Nothing in the vault is ever lost by replacing.
+    public var replaced: [String: [Entry]]?
 
     public struct Entry: Codable, Equatable {
         public var added: Date
@@ -62,8 +64,32 @@ public struct VaultFile: Codable, Equatable {
         )
     }
 
+    /// Seals a new value under this name, and keeps the old one where it can still be opened.
+    public mutating func replace(name: String, value: Data, now: Date = Date()) throws {
+        let old = entries.removeValue(forKey: name)
+        do {
+            try add(name: name, value: value, now: now)
+        } catch {
+            entries[name] = old
+            throw error
+        }
+        if let old { replaced = (replaced ?? [:]).merging([name: [old]]) { $0 + $1 } }
+    }
+
+    /// Opens a copy that was replaced. Index 0 is the oldest.
+    public func openReplaced(name: String, index: Int, with recipient: VaultRecipient) throws -> Data {
+        guard let list = replaced?[name], list.indices.contains(index) else {
+            throw VaultError("\(name) has no such old copy")
+        }
+        return try open(entry: list[index], name: name, with: recipient)
+    }
+
     public func open(name: String, with recipient: VaultRecipient) throws -> Data {
         guard let entry = entries[name] else { throw VaultError("\(name) is not in the vault") }
+        return try open(entry: entry, name: name, with: recipient)
+    }
+
+    private func open(entry: Entry, name: String, with recipient: VaultRecipient) throws -> Data {
         let valueKey = try unwrap(entry: entry, name: name, recipient: recipient)
         do {
             let box = try AES.GCM.SealedBox(combined: entry.sealedValue)
@@ -88,6 +114,18 @@ public struct VaultFile: Codable, Equatable {
             let keyBytes = valueKey.withUnsafeBytes { Data($0) }
             moved[name]?.enclaveWrap = try Self.wrap(keyBytes, for: target, name: name)
         }
+        // Old copies move too, or a recovery would leave them readable only by the recovery key.
+        var movedOld = replaced
+        for (name, list) in replaced ?? [:] {
+            movedOld?[name] = try list.map { entry in
+                var entry = entry
+                let valueKey = try unwrap(entry: entry, name: name, recipient: recovery)
+                let keyBytes = valueKey.withUnsafeBytes { Data($0) }
+                entry.enclaveWrap = try Self.wrap(keyBytes, for: target, name: name)
+                return entry
+            }
+        }
+        replaced = movedOld
         entries = moved
         enclavePublicKey = target
     }

@@ -394,6 +394,8 @@ impl World {
                 key: KEY.to_owned(),
                 admin: if self_admin { KEY } else { ADMIN }.to_owned(),
                 overlap_secs,
+                issued_name: KEY.to_owned(),
+                known_id: None,
             },
             mock: Rc::new(RefCell::new(mock)),
             values: Rc::new(RefCell::new(values)),

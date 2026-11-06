@@ -8,3 +8,11 @@ criticality_hint: 2
 hosts: [api.smith.langchain.com]
 auth: { header: x-api-key, prefix: "" }
 verify: { method: GET, path: "/api/v1/sessions?limit=1", reject: [403] }
+# An organization can forbid a key from creating keys. It answers 403, and nothing changes.
+create:
+  method: POST
+  path: /api/v1/api-key
+  body: { description: "{key_name}" }
+  value_from: $.key
+  id_from: $.id
+revoke: { method: DELETE, path: "/api/v1/api-key/{id}" }

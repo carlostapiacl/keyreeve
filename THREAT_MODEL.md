@@ -77,6 +77,12 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
   or variables. Swift strings are not wiped.
 - **An SSH key from the vault touches the disk.** `ssh` reads keys from files, so the sealed copy spends the call in a file
   only you can read, overwritten and removed afterwards. A crash in between leaves it there.
+- **A rotation writes where you pointed it.** `places.json` names files and buttons that receive the new key, and a program
+  running as you could add one. A file must already hold the key, and a button must come from a file you approved, but a
+  program that can edit your files could meet both.
+- **A moved original is still a key.** It stays in plain text in `~/.keyreeve/originals` until you delete it, and a rotation does
+  not update it.
+- **Replacing keeps the old value.** Old copies stay sealed in the vault, including keys already revoked.
 - **Sealing is not moving.** Until you remove an original, the file is as readable as before, and anything that reads it
   gets the key with no fingerprint. The weekly check still reads files.
 - **The screen shows the recovery key.** Anything recording your screen can see it, and the app cannot tell.
@@ -92,3 +98,4 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
 It tests the engine against a fake built from the recipe, so it cannot catch a recipe that is wrong
 about the real provider. It also assumes a new key works as soon as it is created. A provider that
 takes time to activate a key would fail `verify` and roll back, and there are no retries yet.
+No rotation has run against a real provider yet.

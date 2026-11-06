@@ -9,3 +9,11 @@ hosts: [api.resend.com]
 auth: { header: Authorization, prefix: "Bearer " }
 # A send-only key is alive but may not list domains, and the answer says so.
 verify: { method: GET, path: /domains, reject: [400], alive_if: { status: 401, contains: restricted_api_key } }
+# Only a full-access key may do this. A send-only key is refused, and nothing changes.
+create:
+  method: POST
+  path: /api-keys
+  body: { name: "{key_name}" }
+  value_from: $.token
+  id_from: $.id
+revoke: { method: DELETE, path: "/api-keys/{id}" }

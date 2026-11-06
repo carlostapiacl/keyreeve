@@ -3,7 +3,7 @@ use keyreeve::inventory::{self, parse_words, ExtraWords};
 use keyreeve::recipe::Recipe;
 use keyreeve::simulate;
 use keyreeve::verify;
-use keyreeve::{identify, providers, schedule};
+use keyreeve::{identify, providers, rotate, schedule};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -20,7 +20,7 @@ Usage:
       Run recipes through failures and crashes, offline.
   keyreeve inventory <folder> --out <file.json> [--words <file>]
       Describe a folder of keys, without their values.
-  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>] [--edits <file>]
+  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>] [--edits <file>] [--moved <file>]
       Give each file tags and an access level, from your rules.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
       Check whether a key still works, with one read-only request.
@@ -33,6 +33,10 @@ Usage:
       Check the keys agents can use, which need no fingerprint. For a weekly schedule.
   keyreeve identify --plan <plan.yaml> --keys <folder> --details <file> [--sealed-stdin]
       Ask each provider whose key this is, and keep only the fields its file declares.
+  keyreeve rotate --plan <plan.json> --vault-tool <program> --journal <file> [--resume]
+      Rotate one key held in the vault, with the opened copies as JSON on stdin. The Mac app sends this.
+  keyreeve rotations --journal <file>
+      Show where each rotation stands, as JSON. It holds ids and step names, never values.
   keyreeve recipes [--json]
       List the providers keyreeve knows, from what ships and from ~/.keyreeve/providers.
   keyreeve recipes approve <provider>
@@ -101,7 +105,10 @@ fn run_inventory(args: &[String]) -> ExitCode {
 }
 
 fn run_catalog(args: &[String]) -> ExitCode {
-    let Some((input, found)) = options(args, &["--out", "--rules", "--history", "--edits"]) else {
+    let Some((input, found)) = options(
+        args,
+        &["--out", "--rules", "--history", "--edits", "--moved"],
+    ) else {
         return usage();
     };
     let Some(out) = found.get("--out").copied() else {
@@ -109,7 +116,23 @@ fn run_catalog(args: &[String]) -> ExitCode {
     };
     let result = (|| -> Result<Vec<catalog::Row>, String> {
         let text = fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
-        let items = catalog::parse_inventory(&text).map_err(|e| format!("{input}: {e}"))?;
+        let mut items = catalog::parse_inventory(&text).map_err(|e| format!("{input}: {e}"))?;
+        // Files moved out after sealing stay on the list, since the vault still holds them.
+        if let Some(path) = found.get("--moved") {
+            match fs::read_to_string(path) {
+                Ok(text) => {
+                    let moved =
+                        catalog::parse_inventory(&text).map_err(|e| format!("{path}: {e}"))?;
+                    for item in moved {
+                        if !items.iter().any(|known| known.path == item.path) {
+                            items.push(item);
+                        }
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{path}: {e}")),
+            }
+        }
         let mut rules = match found.get("--rules") {
             Some(path) => {
                 let text = fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
@@ -316,6 +339,66 @@ fn run_check_free(args: &[String]) -> ExitCode {
     }
 }
 
+fn run_rotate(args: &[String]) -> ExitCode {
+    let resume = args.iter().any(|arg| arg == "--resume");
+    let rest: Vec<&String> = args.iter().filter(|arg| *arg != "--resume").collect();
+    let mut found = HashMap::new();
+    for pair in rest.chunks(2) {
+        let [name, value] = pair else {
+            return usage();
+        };
+        if !["--plan", "--vault-tool", "--journal"].contains(&name.as_str()) {
+            return usage();
+        }
+        found.insert(name.as_str(), value.as_str());
+    }
+    let (Some(plan), Some(tool), Some(journal)) = (
+        found.get("--plan"),
+        found.get("--vault-tool"),
+        found.get("--journal"),
+    ) else {
+        return usage();
+    };
+    let result = verify::Sealed::read(std::io::stdin()).and_then(|sealed| {
+        rotate::run(
+            Path::new(plan),
+            Path::new(tool),
+            Path::new(journal),
+            &sealed,
+            resume,
+        )
+    });
+    match result {
+        Ok(report) => {
+            println!("{}", report.json());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("rotate: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_rotations(args: &[String]) -> ExitCode {
+    let [flag, journal] = args else {
+        return usage();
+    };
+    if flag != "--journal" {
+        return usage();
+    }
+    match rotate::statuses_json(Path::new(journal)) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("rotations: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn run_identify(args: &[String]) -> ExitCode {
     let wants_sealed = args.iter().any(|arg| arg == "--sealed-stdin");
     let args: Vec<&String> = args.iter().filter(|arg| *arg != "--sealed-stdin").collect();
@@ -422,6 +505,8 @@ fn main() -> ExitCode {
         "catalog" => return run_catalog(paths),
         "verify" => return run_verify(paths),
         "identify" => return run_identify(paths),
+        "rotate" => return run_rotate(paths),
+        "rotations" => return run_rotations(paths),
         "check-free" => return run_check_free(paths),
         "action" => return run_custom_action(paths),
         "recipes" => return run_recipes(paths),

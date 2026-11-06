@@ -23,6 +23,11 @@ public struct KeyreeveFiles: Sendable {
     public var edits: URL { directory.appendingPathComponent("edits.json") }
     public var ignored: URL { directory.appendingPathComponent("ignored.json") }
     public var words: URL { directory.appendingPathComponent("words.txt") }
+    public var moved: URL { directory.appendingPathComponent("moved.json") }
+    public var originals: URL { directory.appendingPathComponent("originals") }
+    public var rotations: URL { directory.appendingPathComponent("rotations.jsonl") }
+    public var places: URL { directory.appendingPathComponent("places.json") }
+    var rotationPlan: URL { directory.appendingPathComponent(".rotation-plan.json") }
     var plan: URL { directory.appendingPathComponent(".check-plan.json") }
     var settings: URL { directory.appendingPathComponent("app-settings.json") }
 
@@ -152,10 +157,54 @@ public enum CheckRunner {
         if FileManager.default.fileExists(atPath: files.rules.path) {
             arguments += ["--rules", files.rules.path]
         }
-        arguments += ["--edits", files.edits.path]
+        arguments += ["--edits", files.edits.path, "--moved", files.moved.path]
         guard try execute(binary, arguments) == 0 else {
             throw CheckError(T("The list could not be updated"))
         }
+    }
+
+    /// Runs one rotation with the opened copies on stdin, and returns what happened.
+    public static func rotate(
+        plan: RotationPlan, resume: Bool, sealed: [String: String], binary: URL, vaultTool: URL, files: KeyreeveFiles
+    ) throws -> RotationReport {
+        try files.writePrivate(try JSONEncoder().encode(plan), to: files.rotationPlan)
+        defer { try? FileManager.default.removeItem(at: files.rotationPlan) }
+        var arguments = ["rotate", "--plan", files.rotationPlan.path, "--vault-tool", vaultTool.path, "--journal", files.rotations.path]
+        if resume { arguments.append("--resume") }
+        let process = Process()
+        let output = Pipe()
+        let errors = Pipe()
+        let input = Pipe()
+        process.executableURL = binary
+        process.arguments = arguments
+        process.standardOutput = output
+        process.standardError = errors
+        process.standardInput = input
+        try process.run()
+        send(try JSONEncoder().encode(sealed), to: input)
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        let problem = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0, let report = try? JSONDecoder().decode(RotationReport.self, from: data) else {
+            // The command's errors are its own words, and they never quote a value.
+            let why = String(decoding: problem, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw CheckError(why.isEmpty ? T("The rotation did not finish") : why)
+        }
+        return report
+    }
+
+    public static func rotations(binary: URL, files: KeyreeveFiles) -> [RotationStatus] {
+        guard FileManager.default.fileExists(atPath: files.rotations.path) else { return [] }
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = binary
+        process.arguments = ["rotations", "--journal", files.rotations.path]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (try? JSONDecoder().decode([RotationStatus].self, from: data)) ?? []
     }
 
     /// Runs a button of your own, and returns what it says, which the command has already filtered.
@@ -245,5 +294,99 @@ public enum CheckRunner {
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }
         process.waitUntilExit()
         return process.terminationStatus
+    }
+}
+
+public struct RotationPlan: Encodable, Sendable {
+    public var key: String
+    public var recipe: String
+    public var field: String?
+    public var host: String?
+    public var admin: String?
+    public var admin_field: String?
+    public var overlap_secs: Int
+    public var known_id: String?
+    public var issued_name: String
+    public var original: String?
+    public var place_files: [String]
+    public var place_actions: [String]
+
+    public init(
+        item: CatalogItem, places: KeyPlaces, admin: CatalogItem?, original: String?, now: Date = Date()
+    ) {
+        key = item.path
+        recipe = item.recipes.first ?? ""
+        field = item.field.isEmpty ? nil : item.field
+        host = item.host.isEmpty ? nil : item.host
+        self.admin = admin?.path
+        admin_field = admin.flatMap { $0.field.isEmpty ? nil : $0.field }
+        overlap_secs = places.overlapMinutes * 60
+        known_id = item.details?.fields["key_id"]
+        // The provider shows this name, and a file's path is private.
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.dateFormat = "yyyy-MM-dd"
+        issued_name = "keyreeve-\(format.string(from: now))"
+        self.original = original
+        place_files = places.files
+        place_actions = places.actions
+    }
+}
+
+public struct RotationReport: Decodable, Equatable, Sendable {
+    public let outcome: String
+    public let reason: String?
+    public let revoke_after: Double?
+    public let manual: [String]
+}
+
+public struct RotationStatus: Decodable, Equatable, Identifiable, Sendable {
+    public let key: String
+    public let phase: String
+    public let at: Double
+    public let revoke_after: Double?
+    public let reason: String?
+    public let manual: [String]
+    public var id: String { key }
+
+    public init(key: String, phase: String, at: Double = 0, revoke_after: Double? = nil, reason: String? = nil, manual: [String] = []) {
+        self.key = key
+        self.phase = phase
+        self.at = at
+        self.revoke_after = revoke_after
+        self.reason = reason
+        self.manual = manual
+    }
+
+    public var isOpen: Bool { ["waiting", "unfinished", "rolling_back"].contains(phase) }
+}
+
+/// Where a key is used, chosen by you. The rotation updates each place before the old key goes.
+public struct KeyPlaces: Codable, Equatable, Sendable {
+    public var files: [String] = []
+    /// `provider/action`, from a provider file you approved.
+    public var actions: [String] = []
+    /// You said nothing else holds this key, so it is safe with no places.
+    public var nothingElse = false
+    /// How long the old key keeps working after the new one is in place.
+    public var overlapMinutes = 1440
+    /// Another key that creates and revokes, when this one cannot.
+    public var admin: String?
+
+    public init() {}
+
+    public var isDecided: Bool { nothingElse || !files.isEmpty || !actions.isEmpty }
+}
+
+extension KeyreeveFiles {
+    public func allPlaces() -> [String: KeyPlaces] {
+        guard let data = try? Data(contentsOf: places) else { return [:] }
+        return (try? JSONDecoder().decode([String: KeyPlaces].self, from: data)) ?? [:]
+    }
+
+    public func savePlaces(_ value: KeyPlaces, for path: String) throws {
+        var all = allPlaces()
+        all[path] = value
+        try writePrivate(try JSONEncoder().encode(all), to: places)
     }
 }

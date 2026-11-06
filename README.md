@@ -237,14 +237,37 @@ refuses to run outside a terminal so the recovery key does not land in a log. Th
 A copy sealed from the app holds the whole file, so `run` hands a program everything in it. For a file with several values,
 add the one key by hand under its own name.
 
+If a file changes, **Seal the changed files again** replaces the copy, and the old one stays sealed. After a comparison, you can
+move the files that matched out of the keys folder to `~/.keyreeve/originals`. They stay readable there, the list keeps showing
+them and you can put them back. keyreeve never deletes them, so that step is yours once you trust the vault.
+
 The vault format is mine and has had no outside review, so keep your old copies until it has.
+
+## Rotate a key
+
+Open a sealed key in the app. If its provider can rotate, you say where else the key is used and how long the old key should last,
+then press **Rotate this key**. One fingerprint, and keyreeve:
+
+1. Creates the new key at the provider, under a name like `keyreeve-2026-11-06`, and seals it.
+2. Tries it. If it fails, the new key is revoked and everything stays as it was.
+3. Updates every place: files where the old value is replaced, and buttons of your own that receive the new key on stdin.
+4. Revokes the old key, right away or later when you press the button in **Vault**.
+
+A crash at any step resumes from a journal in `~/.keyreeve/rotations.jsonl`, which holds ids and no values.
+
+Most providers give no way to learn the id of a key you already have, so the first rotation may ask you to revoke the old key by
+hand. Later ones know the id. Resend and LangSmith can rotate today, and neither has yet been tried against the real service. To add
+a provider, give its file `create` and `revoke`, and `keyreeve simulate` will test it against failures and crashes.
+
+A key joined from two fields, such as AWS, cannot rotate yet. A provider that rotates by replacing the key in one call, such as GitLab,
+does not fit these steps yet.
 
 ## What is missing
 
-- `keyreeve rotate` and `resume` as commands, and a test against a real provider
-- Connecting the vault to rotation, replacing a sealed copy, moving originals away, and storage for Linux and Windows
-- Places to update: `.env`, GitHub, Netlify
-- Recipes that can rotate a real provider
+- A rotation tried against a real provider
+- Storage for Linux and Windows
+- More places to update, such as GitHub and Netlify. Today a button of yours can reach them
+- Recipes for more providers that can rotate, and rotation written as a program of yours
 - Approvals that expire
 - Integration with [seisin](https://github.com/carlostapiacl/seisin), which gives each agent its own keys
 

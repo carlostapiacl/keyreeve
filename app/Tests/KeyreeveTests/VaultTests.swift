@@ -200,6 +200,59 @@ struct KeeperTests {
         #expect(VaultKeeper.isOutdated(entry, path: "changed.txt", folder: keys))
     }
 
+    @Test func testSealingAgainKeepsTheOldCopyAndTheRecoveryMovesIt() throws {
+        let (root, keys, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = keys.appendingPathComponent("a.txt")
+        try "first".write(to: file, atomically: true, encoding: .utf8)
+        _ = try VaultKeeper.seal(paths: ["a.txt"], folder: keys, store: store)
+        try "second".write(to: file, atomically: true, encoding: .utf8)
+        _ = try VaultKeeper.sealAgain(paths: ["a.txt"], folder: keys, store: store)
+        var vault = try store.load()
+        XCTAssertEqual(try vault.open(name: "a.txt", with: chip), Data("second".utf8))
+        XCTAssertEqual(try vault.openReplaced(name: "a.txt", index: 0, with: chip), Data("first".utf8))
+        let newChip = SoftwareRecipient()
+        try vault.moveToNewEnclave(newChip.publicKey, recovery: recovery)
+        XCTAssertEqual(try vault.openReplaced(name: "a.txt", index: 0, with: newChip), Data("first".utf8))
+    }
+
+    @Test func testAFileJustBeforeSealingIsNotOutdated() throws {
+        let (root, keys, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = keys.appendingPathComponent("a.txt")
+        try "first".write(to: file, atomically: true, encoding: .utf8)
+        _ = try VaultKeeper.seal(paths: ["a.txt"], folder: keys, store: store)
+        let entry = try XCTUnwrap(store.load().entries["a.txt"])
+        XCTAssertFalse(VaultKeeper.isOutdated(entry, path: "a.txt", folder: keys))
+    }
+
+    @Test func testMovingAndPuttingBackOriginals() throws {
+        let (root, keys, _) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "CANARY".write(to: keys.appendingPathComponent("sub dir/a.txt"), atomically: true, encoding: .utf8)
+        try "kept".write(to: keys.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        let inventory = root.appendingPathComponent("inventory.json")
+        try #"{"schema":1,"items":[{"path":"sub dir/a.txt","modified":1,"mode":"600","format":"text","fields":[],"kinds":[]}]}"#
+            .write(to: inventory, atomically: true, encoding: .utf8)
+        let ledger = root.appendingPathComponent("moved.json")
+        let moved = MovedOriginals(ledger: ledger, destination: root.appendingPathComponent("originals/2026"))
+        // A file the inventory does not describe stays, and so does a path out of the folder.
+        XCTAssertEqual(try moved.move(["sub dir/a.txt", "b.txt", "../x"], from: keys, inventory: inventory), ["sub dir/a.txt"])
+        let target = root.appendingPathComponent("originals/2026/sub dir/a.txt")
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "CANARY")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: keys.appendingPathComponent("sub dir/a.txt").path))
+        XCTAssertEqual(moved.paths, ["sub dir/a.txt"])
+        XCTAssertFalse(try String(contentsOf: ledger, encoding: .utf8).contains("CANARY"))
+
+        // A file that took the old place is not overwritten.
+        try "newer".write(to: keys.appendingPathComponent("sub dir/a.txt"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(try moved.putBack(["sub dir/a.txt"], to: keys), [])
+        XCTAssertEqual(try String(contentsOf: keys.appendingPathComponent("sub dir/a.txt"), encoding: .utf8), "newer")
+        try FileManager.default.removeItem(at: keys.appendingPathComponent("sub dir/a.txt"))
+        XCTAssertEqual(try moved.putBack(["sub dir/a.txt"], to: keys), ["sub dir/a.txt"])
+        XCTAssertEqual(moved.paths, [])
+    }
+
     @Test func testNothingIsSavedUntilTheRecoveryKeyIsConfirmed() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-draft-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

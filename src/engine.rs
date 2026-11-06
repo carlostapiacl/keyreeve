@@ -30,6 +30,10 @@ pub struct KeyConfig {
     pub admin: String,
     /// How long old and new keys stay valid together, in seconds.
     pub overlap_secs: u64,
+    /// The name the provider shows for the new key. A key's own name can be a private file path.
+    pub issued_name: String,
+    /// The id of the current key, when it is known from outside this record.
+    pub known_id: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -123,7 +127,10 @@ impl Engine<'_> {
             .get(&key)?
             .ok_or_else(|| Error::KeyMissing(key.clone()))?;
         let admin = self.admin()?;
-        let old_id = self.journal.current_id(&key);
+        let old_id = self
+            .journal
+            .current_id(&key)
+            .or_else(|| self.config.known_id.clone());
 
         // Recorded first: a copy saved before the record exists could never be cleaned up.
         self.record(Event::Started { old_id })?;
@@ -289,7 +296,7 @@ impl Engine<'_> {
 
     fn create(&mut self, admin: &Secret) -> Create {
         let recipe = self.recipe;
-        let vars = [("key_name", self.config.key.as_str())];
+        let vars = [("key_name", self.config.issued_name.as_str())];
         let response = match self.send(recipe.create_step(), &vars, admin) {
             Ok(response) => response,
             Err(_) => return Create::Unknown("create_failed".into()),

@@ -343,6 +343,11 @@ impl Sealed {
         ))
     }
 
+    /// The text sent for this name, if any.
+    pub(crate) fn text(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(|text| text.as_str())
+    }
+
     pub(crate) fn source(&self, keys: &Path, file: &str) -> KeySource<'_> {
         match self.0.get(file) {
             Some(text) => KeySource::Text(text),

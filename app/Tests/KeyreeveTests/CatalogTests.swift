@@ -1,4 +1,5 @@
 import Foundation
+import KeyreeveUI
 import Testing
 
 @testable import KeyreeveCatalog
@@ -473,6 +474,26 @@ struct SealedRunTests {
         XCTAssertEqual(try read(root, "stdin"), "CANARY-value")
         XCTAssertFalse(try read(root, "args").contains("CANARY"))
         XCTAssertFalse(try read(root, "args").contains("a.txt"))
+    }
+
+    @Test @MainActor func testACompletedRotationDoesNotClaimARevocationItDidNotDo() throws {
+        let manual = try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"completed","manual":["x"]}"#.utf8))
+        let clean = try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"completed","manual":[]}"#.utf8))
+        XCTAssertFalse(rotationMessage(manual) == rotationMessage(clean))
+    }
+
+    @Test func testARotationPlanHidesThePathFromTheProvider() throws {
+        var places = KeyPlaces()
+        places.files = ["/a/.env"]
+        places.overlapMinutes = 60
+        let item = CatalogItem(path: "private/client.env", recipes: ["resend"], field: "TOKEN")
+        let plan = RotationPlan(item: item, places: places, admin: nil, original: nil)
+        XCTAssertEqual(plan.overlap_secs, 3600)
+        XCTAssertEqual(plan.field, "TOKEN")
+        XCTAssertFalse(plan.issued_name.contains("client"))
+        XCTAssertFalse(KeyPlaces().isDecided)
+        XCTAssertNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate: false)]).rotator(of: item))
+        XCTAssertNotNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate: true)]).rotator(of: item))
     }
 
     @Test func testTheFirstKeysOfferedAreLiveAndLeastCritical() {

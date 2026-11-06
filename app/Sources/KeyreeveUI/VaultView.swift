@@ -10,6 +10,10 @@ struct VaultView: View {
     private var sealed: [CatalogItem] { filter(model.items, by: .vault, search: "") }
     private var candidates: [CatalogItem] { vaultCandidates(model.items) }
     private var outdated: Int { sealed.filter { $0.vault == .outdated }.count }
+    private var moved: [CatalogItem] { model.items.filter(\.originalMoved) }
+    private var openRotations: [RotationStatus] {
+        model.rotations.filter { $0.isOpen || (!$0.manual.isEmpty && !model.isDismissed($0)) }
+    }
 
     var body: some View {
         Group {
@@ -47,7 +51,9 @@ struct VaultView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 summary
+                if !openRotations.isEmpty { rotationsCard }
                 if let report = model.vaultComparison { comparison(report) }
+                if !moved.isEmpty { movedCard }
                 addKeys
             }
             .padding(Theme.pagePadding)
@@ -77,6 +83,11 @@ struct VaultView: View {
                             : T("%d files changed after they were sealed. Checks use those files.", outdated),
                         systemImage: "exclamationmark.triangle.fill")
                         .font(Theme.caption).foregroundStyle(Theme.warn)
+                    Button(T("Seal the changed files again")) {
+                        model.sealAgain(sealed.filter { $0.vault == .outdated })
+                    }
+                    .buttonStyle(KRButtonStyle())
+                    .disabled(model.busy)
                 }
             }
             .padding(14)
@@ -97,9 +108,70 @@ struct VaultView: View {
                 ForEach(report.noFile, id: \.self) { name in
                     Label(T("No file to compare: %@", name), systemImage: "questionmark.circle").foregroundStyle(Theme.muted)
                 }
+                if !report.same.isEmpty {
+                    Button(T("Move these originals out of the folder")) { model.moveOriginals() }
+                        .buttonStyle(KRButtonStyle(primary: true))
+                        .disabled(model.busy)
+                    Text(T("They go to a private folder, still readable, and you can put them back. Delete them yourself once you trust the vault."))
+                        .font(Theme.caption).foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .font(Theme.body)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+        }
+    }
+
+    private var rotationsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionTitle(T("Rotations"))
+                ForEach(openRotations) { status in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(status.key).font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            if status.isOpen {
+                                Button(status.phase == "waiting" ? T("Revoke the old key now") : T("Finish")) {
+                                    model.finishRotation(of: status.key)
+                                }
+                                .buttonStyle(KRButtonStyle(primary: true))
+                                .disabled(model.busy)
+                            } else {
+                                Button(T("I did it")) { model.dismiss(status) }.buttonStyle(KRButtonStyle())
+                            }
+                        }
+                        if status.phase == "waiting" {
+                            Text(T("New key in place. Revoke the old one when your services use the new one."))
+                                .font(Theme.caption).foregroundStyle(Theme.muted)
+                        }
+                        ForEach(status.manual, id: \.self) { line in
+                            Label(T(line), systemImage: "hand.raised").font(Theme.caption).foregroundStyle(Theme.warn)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    private var movedCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    SectionTitle(T("Originals moved: %d", moved.count))
+                    Spacer()
+                    Button(T("Show in Finder")) { model.showOriginals() }.buttonStyle(KRButtonStyle())
+                    Button(T("Put them back")) { model.putOriginalsBack(moved) }
+                        .buttonStyle(KRButtonStyle())
+                        .disabled(model.busy)
+                }
+                Text(T("Those files are still plain text in that folder until you delete them. After a rotation they hold an old key."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             .padding(14)
         }
     }

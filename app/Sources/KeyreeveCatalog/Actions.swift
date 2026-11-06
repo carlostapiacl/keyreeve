@@ -64,6 +64,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let approved: Bool
     public let can_check: Bool
     public let can_identify: Bool
+    public let can_rotate: Bool
     public let self_hosted: Bool
     public let problem: String?
     public let programs: [String]?
@@ -71,7 +72,8 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
 
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
-        approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, self_hosted: Bool = false,
+        approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, can_rotate: Bool = false,
+        self_hosted: Bool = false,
         problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil
     ) {
         self.id = id
@@ -82,6 +84,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         self.approved = approved
         self.can_check = can_check
         self.can_identify = can_identify
+        self.can_rotate = can_rotate
         self.self_hosted = self_hosted
         self.problem = problem
         self.programs = programs
@@ -106,6 +109,12 @@ public struct ProviderDirectory: Sendable {
 
     private func names(for item: CatalogItem) -> [String] {
         item.recipes + item.tags.filter { $0.hasPrefix("provider:") }.map { String($0.dropFirst(9)) }
+    }
+
+    /// The provider that can rotate this key, when the key names exactly one.
+    public func rotator(of item: CatalogItem) -> ProviderInfo? {
+        guard item.recipes.count == 1 else { return nil }
+        return usable.first { $0.id == item.recipes[0] && $0.can_rotate }
     }
 
     public func page(for item: CatalogItem) -> URL? {

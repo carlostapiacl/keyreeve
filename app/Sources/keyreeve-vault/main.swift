@@ -10,6 +10,10 @@ let help = """
           Create the vault and show its recovery key, once. Needs a terminal.
       keyreeve-vault add <name>
           Add a key, read from stdin. Needs no fingerprint.
+      keyreeve-vault put <name>
+          Add a key or replace it, read from stdin. The old value stays sealed. Needs no fingerprint.
+      keyreeve-vault drop <name#pending|name#previous>
+          Remove a temporary copy of a rotation. Real keys cannot be removed.
       keyreeve-vault list
           Show the names. Needs no fingerprint.
       keyreeve-vault run <name> --as <VARIABLE> -- <command> [args...]
@@ -84,6 +88,23 @@ do {
         try vault.add(name: arguments[1], value: value)
         try store.save(vault)
         print("\(arguments[1]) added")
+    case "put":
+        guard arguments.count == 2 else { fail(help, code: 2) }
+        var vault = try store.load()
+        let value = readSecret(prompt: "Value for \(arguments[1])")
+        guard !value.isEmpty else { fail("the value is empty") }
+        // A rotation's temporary copies have no history worth keeping.
+        if arguments[1].hasSuffix("#pending") || arguments[1].hasSuffix("#previous") {
+            vault.entries[arguments[1]] = nil
+        }
+        try vault.replace(name: arguments[1], value: value)
+        try store.save(vault)
+    case "drop":
+        guard arguments.count == 2,
+            arguments[1].hasSuffix("#pending") || arguments[1].hasSuffix("#previous")
+        else { fail("only a rotation's temporary copies can be removed") }
+        var vault = try store.load()
+        if vault.entries.removeValue(forKey: arguments[1]) != nil { try store.save(vault) }
     case "list":
         for name in try store.load().entries.keys.sorted() { print(name) }
     case "run":

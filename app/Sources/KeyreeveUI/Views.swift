@@ -377,6 +377,7 @@ struct KeyDetail: View {
                 }
                 checkButton
                 if item.vault != .none { vaultNote }
+                if model.hasVault, item.isSecret, !item.isArchived { RotationPanel(item: item, model: model) }
                 customActions
                 identity
                 naming
@@ -412,13 +413,20 @@ struct KeyDetail: View {
     }
 
     private var vaultNote: some View {
-        Label(
-            T(item.vault == .sealed ? "In the vault. Checks use the sealed copy." : "The file changed after it was sealed. Checks use the file."),
-            systemImage: "lock.shield"
-        )
-        .font(Theme.caption)
-        .foregroundStyle(item.vault == .sealed ? Theme.muted : Theme.warn)
-        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            Label(
+                T(item.vault == .sealed ? "In the vault. Checks use the sealed copy." : "The file changed after it was sealed. Checks use the file."),
+                systemImage: "lock.shield"
+            )
+            .font(Theme.caption)
+            .foregroundStyle(item.vault == .sealed ? Theme.muted : Theme.warn)
+            .fixedSize(horizontal: false, vertical: true)
+            if item.vault == .outdated {
+                Button(T("Seal it again")) { model.sealAgain([item]) }
+                    .buttonStyle(KRButtonStyle())
+                    .disabled(model.busy)
+            }
+        }
     }
 
     /// Tests this one key. A key with no place to check says why, instead of hiding the button.

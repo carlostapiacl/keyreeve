@@ -6,6 +6,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public enum VaultCopy: Hashable, Sendable { case none, sealed, outdated }
 
     public var vault: VaultCopy = .none
+    /// The file was moved out of the keys folder, so the vault's copy is the one in use.
+    public var originalMoved = false
     public var path: String
     public var level: String
     public var tags: [String]
@@ -412,7 +414,7 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
 public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
     let rank = { (item: CatalogItem) in item.criticality == 0 ? 6 : item.criticality }
     return items
-        .filter { $0.vault == .none && $0.isSecret && !$0.isArchived && $0.format != "binary" }
+        .filter { $0.vault == .none && !$0.originalMoved && $0.isSecret && !$0.isArchived && $0.format != "binary" }
         .sorted {
             let first = ($0.lastResult == "works" ? 0 : 1, rank($0), $0.path)
             let second = ($1.lastResult == "works" ? 0 : 1, rank($1), $1.path)

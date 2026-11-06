@@ -10,6 +10,7 @@ pub mod inventory;
 pub mod journal;
 pub mod providers;
 pub mod recipe;
+pub mod rotate;
 pub mod schedule;
 pub mod script;
 pub mod secret;

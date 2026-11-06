@@ -75,6 +75,22 @@ public enum VaultKeeper {
         return report
     }
 
+    /// Seals the file's current text over its old copy, which stays sealed under `replaced`.
+    public static func sealAgain(paths: [String], folder: URL, store: VaultStore, now: Date = Date()) throws -> SealReport {
+        var vault = try store.load()
+        var report = SealReport()
+        for path in paths {
+            switch read(path, in: folder) {
+            case .failure(let skip): report.skipped[path] = skip
+            case .success(let data):
+                try vault.replace(name: path, value: data, now: now)
+                report.sealed.append(path)
+            }
+        }
+        if !report.sealed.isEmpty { try store.save(vault) }
+        return report
+    }
+
     /// Opens these keys for one use, and notes the use. Values stay in the returned memory only.
     public static func open(
         names: [String], recipient: VaultRecipient, store: VaultStore, by command: String
@@ -87,7 +103,9 @@ public enum VaultKeeper {
                 throw VaultError("\(name) is not text")
             }
             opened[name] = text
-            store.recordUse(of: name, by: command)
+            if !name.hasSuffix("#pending"), !name.hasSuffix("#previous") {
+                store.recordUse(of: name, by: command)
+            }
         }
         return opened
     }
@@ -115,7 +133,8 @@ public enum VaultKeeper {
         let attributes = try? FileManager.default.attributesOfItem(
             atPath: folder.appendingPathComponent(path).path)
         guard let modified = attributes?[.modificationDate] as? Date else { return false }
-        return modified > entry.added
+        // The vault stores whole seconds, so a file written just before sealing is not newer.
+        return modified.timeIntervalSince1970.rounded(.down) > entry.added.timeIntervalSince1970
     }
 
     private static func read(_ path: String, in folder: URL) -> Result<Data, Skip> {
@@ -130,5 +149,91 @@ public enum VaultKeeper {
         guard !data.isEmpty else { return .failure(.empty) }
         guard String(data: data, encoding: .utf8) != nil else { return .failure(.notText) }
         return .success(data)
+    }
+}
+
+/// Originals taken out of the keys folder after their sealed copies were compared. Moving is the
+/// only thing done to them: nothing here deletes a file.
+public struct MovedOriginals {
+    public let ledger: URL
+    public let destination: URL
+
+    public init(ledger: URL, destination: URL) {
+        self.ledger = ledger
+        self.destination = destination
+    }
+
+    /// The inventory's own form, so the catalog keeps listing these keys. It holds no value.
+    struct Ledger: Codable {
+        var schema = 1
+        var items: [Item] = []
+    }
+
+    struct Item: Codable {
+        var path: String
+        var modified: Double
+        var mode: String?
+        var format: String
+        var fields: [String]
+        var kinds: [String]
+        var moved_to: String?
+    }
+
+    func read() -> Ledger {
+        guard let data = try? Data(contentsOf: ledger) else { return Ledger() }
+        return (try? JSONDecoder().decode(Ledger.self, from: data)) ?? Ledger()
+    }
+
+    func write(_ value: Ledger) throws {
+        let previous = umask(0o077)
+        defer { umask(previous) }
+        try JSONEncoder().encode(value).write(to: ledger, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ledger.path)
+    }
+
+    public var paths: Set<String> { Set(read().items.map(\.path)) }
+
+    /// Moves each file, keeping its place inside the destination. Its line goes in the ledger
+    /// first, so a crash cannot lose track of a file. A file with no description stays where it is.
+    public func move(_ paths: [String], from folder: URL, inventory: URL) throws -> [String] {
+        struct Inventory: Decodable { let items: [Item] }
+        let known = (try? JSONDecoder().decode(Inventory.self, from: Data(contentsOf: inventory)))?.items ?? []
+        var ledgerValue = read()
+        var moved: [String] = []
+        let manager = FileManager.default
+        for path in paths {
+            guard var item = known.first(where: { $0.path == path }), !path.hasPrefix("/"), !path.contains("..") else { continue }
+            let source = folder.appendingPathComponent(path)
+            let target = destination.appendingPathComponent(path)
+            guard manager.fileExists(atPath: source.path), !manager.fileExists(atPath: target.path) else { continue }
+            let previous = umask(0o077)
+            defer { umask(previous) }
+            try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            item.moved_to = target.path
+            ledgerValue.items.removeAll { $0.path == path }
+            ledgerValue.items.append(item)
+            try write(ledgerValue)
+            try manager.moveItem(at: source, to: target)
+            moved.append(path)
+        }
+        return moved
+    }
+
+    /// Puts files back. One whose old place is taken stays moved, and stays in the ledger.
+    public func putBack(_ paths: [String], to folder: URL) throws -> [String] {
+        var ledgerValue = read()
+        var restored: [String] = []
+        let manager = FileManager.default
+        for path in paths {
+            guard let item = ledgerValue.items.first(where: { $0.path == path }), let from = item.moved_to else { continue }
+            let target = folder.appendingPathComponent(path)
+            guard !manager.fileExists(atPath: target.path), manager.fileExists(atPath: from) else { continue }
+            try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try manager.moveItem(atPath: from, toPath: target.path)
+            ledgerValue.items.removeAll { $0.path == path }
+            try write(ledgerValue)
+            restored.append(path)
+        }
+        return restored
     }
 }

@@ -101,6 +101,12 @@ struct RenderTests {
                 return report
             }()
             try render(MainView(model: ready, initial: .vault), named: "vault-ready-\(code)", appearance: .darkAqua)
+            ready.items[3].originalMoved = true
+            ready.rotations = [RotationStatus(key: "mail-token.txt", phase: "waiting", manual: ["the id of the previous key is unknown: revoke it by hand"])]
+            try render(MainView(model: ready, initial: .vault), named: "vault-rotations-\(code)", appearance: .aqua)
+            ready.providers = ProviderDirectory([ProviderInfo(id: "aws", name: "AWS", can_rotate: true)])
+            ready.items[0].vault = .sealed
+            try render(MainView(model: ready, initial: .all, chosen: "old-cloud.csv"), named: "rotate-\(code)", appearance: .aqua)
         }
     }
 }

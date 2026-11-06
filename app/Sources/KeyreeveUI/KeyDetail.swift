@@ -97,7 +97,14 @@ struct KeyDetail: View {
             }
             .buttonStyle(KRButtonStyle(primary: item.attention == nil))
             .disabled(model.busy || !model.providers.canCheck(item))
-            if let why = item.whyNoCheck {
+            if let likely = model.providers.likelyProvider(of: item) {
+                Button(T("Check it with %@", likely.name)) {
+                    model.save(KeyEdit(tags: item.tags, recipes: [likely.id]), for: item)
+                }
+                .buttonStyle(KRButtonStyle(primary: true))
+                .disabled(model.busy)
+                .help(T("The key is sent to this company to check it. Choose only the company it belongs to."))
+            } else if let why = item.whyNoCheck {
                 Text(why).font(Theme.caption).foregroundStyle(Theme.muted)
             } else if model.providers.needsHost(item) {
                 Text(T("Add your server's address first")).font(Theme.caption).foregroundStyle(Theme.muted)

@@ -57,6 +57,21 @@ struct ActionTests {
         ProviderInfo(id: "acme", name: "Acme", hosts: ["a.co"], source: "local", approved: false, can_identify: true),
     ])
 
+    @Test func testAKeyWithNoProviderIsOfferedTheOneItsTagsPointTo() {
+        let list = ProviderDirectory([
+            ProviderInfo(id: "github", name: "GitHub"), ProviderInfo(id: "aws", name: "AWS"),
+            ProviderInfo(id: "acme", name: "Acme", source: "local", approved: false),
+        ])
+        let offer = { (item: CatalogItem) in list.likelyProvider(of: item)?.id }
+        #expect(offer(CatalogItem(path: "a", tags: ["kind:github", "provider:aws"])) == "github")
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:github"])) == "github")
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:github", "provider:aws"])) == nil)
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:acme"])) == nil, "not approved")
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:unknown"])) == nil)
+        #expect(offer(CatalogItem(path: "a", level: "never", tags: ["provider:github"])) == nil)
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:github"], recipes: ["aws"])) == nil)
+    }
+
     @Test func testProvidersComeFromTheirFiles() {
         let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"can_rotate_by_hand":false,"single_rotation":false,"tested":{},"self_hosted":false,"suggested_name":null,"problem":null,"programs":[],"actions":[]}]"#.utf8)
         XCTAssertEqual(ProviderDirectory.parse(data).name(of: "x"), "X")

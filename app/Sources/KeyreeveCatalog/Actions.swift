@@ -157,6 +157,18 @@ public struct ProviderDirectory: Sendable {
 
     public func canCheck(_ item: CatalogItem) -> Bool { item.canCheck && !needsHost(item) }
 
+    /// The provider a key with none probably belongs to: what its prefix proved first, then what your
+    /// tags say, if they name just one. It is only an offer, since a wrong one would send the key to
+    /// the wrong company, and a person presses the button.
+    public func likelyProvider(of item: CatalogItem) -> ProviderInfo? {
+        guard item.recipes.isEmpty, item.whyNoCheck == T("Choose where to check it") else { return nil }
+        let names = { (prefix: String) in item.tags.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) } }
+        for list in [names("kind:"), names("provider:")] where list.count == 1 {
+            if let found = usable.first(where: { $0.id == list[0] && $0.can_check }) { return found }
+        }
+        return nil
+    }
+
     public func canIdentify(_ item: CatalogItem) -> Bool {
         guard canCheck(item) else { return false }
         return item.recipes.contains { id in usable.contains { $0.id == id && $0.can_identify } }

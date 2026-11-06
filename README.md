@@ -113,8 +113,8 @@ keys:
 A recipe with only `verify` is enough to check a key, and it is the easiest way to contribute. A rejected key may
 still be alive for other uses: a restricted token can fail a check it has no permission for. Cloudflare's check
 only covers user tokens, so an account token reads as rejected. A pass says the key works, and not what it may do.
-Only the `hetzner` recipe has been run against a real key. The others have only seen fake keys, which each provider
-rejected.
+The `hetzner` and `langsmith` recipes have passed with a real key. The others have only been shown to reject a
+fake one, except `meta`, `instagram` and `cloudflare`, which have also rejected old real keys.
 
 ## What is missing
 

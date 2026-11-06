@@ -48,6 +48,117 @@ struct CatalogTests {
     }
 }
 
+struct ActionTests {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    @Test func testALiveKeyToRevokeOffersTheProviderThenAConfirmedRevocation() {
+        let item = CatalogItem(path: "a", tags: ["revoke"], lastResult: "works", recipes: ["langsmith"])
+        let list = actions(for: item, at: now)
+        XCTAssertEqual(list.first, .openProvider(URL(string: "https://smith.langchain.com/settings")!))
+        XCTAssertEqual(list.contains(.confirmRevoked), true)
+        XCTAssertEqual(list.contains(.markRevoked), false)
+        XCTAssertEqual(list.last, .ignore)
+    }
+
+    @Test func testAKeyThatCannotBeCheckedIsMarkedByHand() {
+        let item = CatalogItem(path: "a", tags: ["revoke", "provider:aws"], lastResult: "works")
+        let list = actions(for: item, at: now)
+        XCTAssertEqual(list.contains(.markRevoked), true)
+        XCTAssertEqual(list.contains(.confirmRevoked), false)
+    }
+
+    @Test func testEachProblemGetsItsOwnActions() {
+        XCTAssertEqual(actions(for: CatalogItem(path: "a", mode: "644"), at: now), [.fixPermissions, .ignore])
+        XCTAssertEqual(
+            actions(for: CatalogItem(path: "a", lastResult: "rejected"), at: now), [.checkAgain, .notInUse, .ignore])
+        XCTAssertEqual(actions(for: CatalogItem(path: "a", reviewed: false), at: now), [.ignore])
+        XCTAssertEqual(actions(for: CatalogItem(path: "a"), at: now), [])
+    }
+
+    @Test func testIgnoringLastsUntilItsDate() {
+        var item = CatalogItem(path: "a", tags: ["revoke"], lastResult: "works")
+        item.ignoredUntil = now.addingTimeInterval(86_400)
+        XCTAssertNil(item.attentionRanked(at: now))
+        XCTAssertNotNil(item.attentionRanked(at: now.addingTimeInterval(90_000)))
+    }
+
+    @Test func testADoneKeyAsksForNothing() {
+        let item = CatalogItem(path: "a", tags: ["status:revoked"], lastResult: "rejected")
+        XCTAssertNil(item.attentionRanked(at: now))
+    }
+
+    @Test func testEditsMergeAndFixingPermissionsStaysInTheFolder() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent("keyreeve-edit-\(UUID().uuidString)")
+        defer { try? manager.removeItem(at: root) }
+        let files = KeyreeveFiles(directory: root.appendingPathComponent("private"))
+        try files.saveEdit(KeyEdit(level: "free"), for: "a")
+        try files.saveEdit(KeyEdit(tags: ["x"]), for: "a")
+        let saved = try JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: files.edits))
+        XCTAssertEqual(saved["a"], KeyEdit(tags: ["x"], level: "free"))
+        let mode = try manager.attributesOfItem(atPath: files.edits.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(mode?.intValue, 0o600)
+
+        try files.ignore("a", until: Date(timeIntervalSince1970: 1_900_000_000))
+        XCTAssertEqual(files.ignoredKeys()["a"], Date(timeIntervalSince1970: 1_900_000_000))
+
+        let keys = root.appendingPathComponent("keys")
+        try manager.createDirectory(at: keys, withIntermediateDirectories: true)
+        let inside = keys.appendingPathComponent("k.txt")
+        let outside = root.appendingPathComponent("outside.txt")
+        for file in [inside, outside] {
+            try "x".write(to: file, atomically: true, encoding: .utf8)
+            try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        }
+        try manager.createSymbolicLink(at: keys.appendingPathComponent("link"), withDestinationURL: outside)
+        try files.fixPermissions(of: "k.txt", in: keys)
+        XCTAssertEqual((try manager.attributesOfItem(atPath: inside.path)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        XCTAssertThrowsError(try files.fixPermissions(of: "../outside.txt", in: keys))
+        XCTAssertThrowsError(try files.fixPermissions(of: "link", in: keys))
+        XCTAssertEqual((try manager.attributesOfItem(atPath: outside.path)[.posixPermissions] as? NSNumber)?.intValue, 0o644)
+    }
+}
+
+struct LanguageTests {
+    /// Reads the app's own source, so a new text without a translation fails here.
+    @Test func testEveryTextOnScreenHasASpanishTranslation() throws {
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources")
+        let pattern = try NSRegularExpression(pattern: #"\bT\(\s*"((?:[^"\\]|\\.)*)""#)
+        var missing = Set<String>()
+        var count = 0
+        for case let url as URL in FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)!
+        where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let range = NSRange(text.startIndex..., in: text)
+            for match in pattern.matches(in: text, range: range) {
+                let key = String(text[Range(match.range(at: 1), in: text)!])
+                count += 1
+                if spanish[key] == nil { missing.insert(key) }
+            }
+        }
+        XCTAssertGreaterThan(count, 60)
+        XCTAssertEqual(missing, [])
+    }
+
+    @Test func testTranslationsKeepTheirPlaceholders() {
+        for (english, translated) in spanish {
+            for mark in ["%d", "%@"] {
+                XCTAssertEqual(
+                    english.components(separatedBy: mark).count, translated.components(separatedBy: mark).count,
+                    english)
+            }
+        }
+    }
+
+    @Test func testAMissingWordFallsBackToEnglish() {
+        XCTAssertEqual(translate("Check", to: .spanish), "Probar")
+        XCTAssertEqual(translate("Check", to: .english), "Check")
+        XCTAssertEqual(translate("Not in the table", to: .spanish), "Not in the table")
+    }
+}
+
 struct StatsTests {
     @Test func testStatsCountSecretsAndRankWhatMattersFirst() throws {
         let now = Date(timeIntervalSince1970: 1_793_923_200)  // 2026-11-06
@@ -76,7 +187,8 @@ struct StatsTests {
     @Test func testExtraProjectsFoldIntoOther() {
         let items = (0..<5).map { CatalogItem(path: "k\($0)", tags: ["p\($0)"]) }
         let stats = CatalogStats(items: items, maxProjects: 3)
-        XCTAssertEqual(stats.projects.map(\.label).last, "Other")
+        XCTAssertEqual(stats.projects.count, 4)
+        XCTAssertNil(stats.projects.last?.target)
         XCTAssertEqual(stats.projects.last?.count, 2)
     }
 

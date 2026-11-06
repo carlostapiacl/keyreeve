@@ -5,21 +5,23 @@ import SwiftUI
 struct HomeView: View {
     let stats: CatalogStats
     let activity: [ActivityItem]
+    @ObservedObject var model: AppModel
     let open: (Sidebar, String?) -> Void
 
-    private let shownFirst = 6
+    private let shownFirst = 5
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 28) {
                 summary
-                HStack(alignment: .top, spacing: 32) {
-                    doFirst.frame(maxWidth: .infinity, alignment: .leading)
-                    checks.frame(width: 250, alignment: .leading)
-                }
-                HStack(alignment: .top, spacing: 32) {
-                    bars("Secrets by project", stats.projects).frame(maxWidth: .infinity, alignment: .leading)
-                    bars("Age of the files", stats.ages).frame(width: 250, alignment: .leading)
+                doFirst
+                HStack(alignment: .top, spacing: 36) {
+                    bars(T("Secrets by project"), stats.projects).frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 28) {
+                        checks
+                        bars(T("Age of the files"), stats.ages)
+                    }
+                    .frame(width: 260, alignment: .leading)
                 }
                 recent
             }
@@ -32,10 +34,10 @@ struct HomeView: View {
 
     private var summary: some View {
         HStack(alignment: .firstTextBaseline, spacing: 36) {
-            figure("\(stats.secrets)", "secrets", .all)
-            figure("\(stats.needLook.count)", "need a look", .attention)
-            figure("\(stats.checked) of \(stats.secrets)", "checked", .all)
-            figure("\(stats.canCheck)", "can be checked", .checkable)
+            figure("\(stats.secrets)", T("secrets"), .all)
+            figure("\(stats.needLook.count)", T("need a look"), .attention)
+            figure(T("%d of %d", stats.checked, stats.secrets), T("checked"), .all)
+            figure("\(stats.canCheck)", T("can be checked"), .checkable)
         }
     }
 
@@ -52,49 +54,58 @@ struct HomeView: View {
     }
 
     private var doFirst: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            heading("Do first")
+        VStack(alignment: .leading, spacing: 10) {
+            heading(T("Do first"))
             if stats.needLook.isEmpty {
-                Text("Nothing needs a look.").foregroundStyle(.secondary)
+                Label(T("Everything looks fine."), systemImage: "checkmark.seal.fill").foregroundStyle(.secondary)
             }
-            ForEach(stats.needLook.prefix(shownFirst)) { item in
-                Button {
-                    open(.attention, item.path)
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: icon(for: item)).foregroundStyle(color(for: item)).imageScale(.small)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(item.path).lineLimit(1).truncationMode(.middle)
-                            Text(item.attention ?? "").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .contentShape(Rectangle())
+            VStack(spacing: 0) {
+                ForEach(Array(stats.needLook.prefix(shownFirst).enumerated()), id: \.element.id) { index, item in
+                    if index > 0 { Divider() }
+                    row(item)
                 }
-                .buttonStyle(.plain)
             }
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+            .opacity(stats.needLook.isEmpty ? 0 : 1)
             if stats.needLook.count > shownFirst {
-                Button("All \(stats.needLook.count)") { open(.attention, nil) }
+                Button(T("All %d", stats.needLook.count)) { open(.attention, nil) }
                     .buttonStyle(.link)
                     .font(.callout)
             }
         }
     }
 
-    private func icon(for item: CatalogItem) -> String {
-        (item.attentionRanked?.rank ?? 9) <= 2 ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill"
+    private func row(_ item: CatalogItem) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: urgent(item) ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(urgent(item) ? .red : .orange)
+            Button {
+                open(.attention, item.path)
+            } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.path).lineLimit(1).truncationMode(.middle)
+                    Text(item.attention ?? "").font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            ActionButtons(item: item, model: model).fixedSize()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
     }
 
-    private func color(for item: CatalogItem) -> Color {
-        (item.attentionRanked?.rank ?? 9) <= 2 ? .red : .orange
-    }
+    private func urgent(_ item: CatalogItem) -> Bool { (item.attentionRanked?.rank ?? 9) <= 2 }
 
     private var checks: some View {
         VStack(alignment: .leading, spacing: 8) {
-            heading("Last checks")
-            status("Works", stats.works, "checkmark.circle.fill", .green)
-            status("Rejected", stats.rejected, "xmark.circle.fill", .red)
-            status("No answer", stats.noAnswer, "questionmark.circle", .secondary)
-            status("Never checked", stats.neverChecked, "circle.dashed", .secondary)
+            heading(T("Last checks"))
+            status(T("Works"), stats.works, "checkmark.circle.fill", .green)
+            status(T("Rejected"), stats.rejected, "xmark.circle.fill", .red)
+            status(T("No answer"), stats.noAnswer, "questionmark.circle", .secondary)
+            status(T("Never checked"), stats.neverChecked, "circle.dashed", .secondary)
         }
     }
 
@@ -149,16 +160,16 @@ struct HomeView: View {
 
     private var recent: some View {
         VStack(alignment: .leading, spacing: 6) {
-            heading("Lately")
+            heading(T("Lately"))
             if activity.isEmpty {
-                Text("No checks yet, and no key used through the vault.").foregroundStyle(.secondary)
+                Text(T("No checks yet, and no key used through the vault.")).foregroundStyle(.secondary)
             }
             ForEach(activity) { entry in
                 HStack(spacing: 8) {
                     Text(entry.at, format: .dateTime.day().month(.abbreviated).hour().minute())
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
-                        .frame(width: 120, alignment: .leading)
+                        .frame(width: 130, alignment: .leading)
                     Text(entry.key).lineLimit(1).truncationMode(.middle)
                     Spacer()
                     Text(describe(entry.kind)).foregroundStyle(.secondary).lineLimit(1)
@@ -171,11 +182,11 @@ struct HomeView: View {
         switch kind {
         case .checked(let result):
             switch result {
-            case "works": return "Checked: works"
-            case "rejected": return "Checked: rejected"
-            default: return "Checked: no answer"
+            case "works": return T("Checked: works")
+            case "rejected": return T("Checked: rejected")
+            default: return T("Checked: no answer")
             }
-        case .used(let program): return "Used by \(program)"
+        case .used(let program): return T("Used by %@", program)
         }
     }
 

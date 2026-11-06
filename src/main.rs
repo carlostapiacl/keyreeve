@@ -18,7 +18,7 @@ Usage:
       Run recipes through failures and crashes, offline.
   keyreeve inventory <folder> --out <file.json> [--words <file>]
       Describe a folder of keys, without their values.
-  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>]
+  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>] [--edits <file>]
       Give each file tags and an access level, from your rules.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
       Check whether a key still works, with one read-only request.
@@ -78,7 +78,7 @@ fn run_inventory(args: &[String]) -> ExitCode {
 }
 
 fn run_catalog(args: &[String]) -> ExitCode {
-    let Some((input, found)) = options(args, &["--out", "--rules", "--history"]) else {
+    let Some((input, found)) = options(args, &["--out", "--rules", "--history", "--edits"]) else {
         return usage();
     };
     let Some(out) = found.get("--out").copied() else {
@@ -87,13 +87,23 @@ fn run_catalog(args: &[String]) -> ExitCode {
     let result = (|| -> Result<Vec<catalog::Row>, String> {
         let text = fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
         let items = catalog::parse_inventory(&text).map_err(|e| format!("{input}: {e}"))?;
-        let rules = match found.get("--rules") {
+        let mut rules = match found.get("--rules") {
             Some(path) => {
                 let text = fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
                 catalog::parse_rules(&text).map_err(|e| format!("{path}: {e}"))?
             }
             None => catalog::Rules::default(),
         };
+        if let Some(path) = found.get("--edits") {
+            match fs::read_to_string(path) {
+                Ok(text) => {
+                    rules.edits =
+                        catalog::parse_edits(&text).map_err(|e| format!("{path}: {e}"))?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{path}: {e}")),
+            }
+        }
         let history = match found.get("--history") {
             Some(path) => match fs::read_to_string(path) {
                 Ok(text) => verify::parse_history(&text),

@@ -47,6 +47,23 @@ pub struct Rules {
     /// Exact paths, which replace whatever the rules decided about that file's level.
     #[serde(default)]
     pub files: BTreeMap<String, FileOverride>,
+    /// Edits made in the app. They come last, and they replace rather than add.
+    #[serde(skip)]
+    pub edits: BTreeMap<String, Edit>,
+}
+
+/// What the app saved for one file. A missing part leaves what the rules decided.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Edit {
+    pub tags: Option<Vec<String>>,
+    pub level: Option<Level>,
+    pub recipes: Option<Vec<String>>,
+    pub field: Option<String>,
+}
+
+pub fn parse_edits(text: &str) -> Result<BTreeMap<String, Edit>, String> {
+    serde_norway::from_str(text).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,10 +220,26 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
             }
         }
     }
+    let mut field = file.and_then(|f| f.field.clone()).unwrap_or_default();
+    let mut level = level;
+    let mut tags: Vec<String> = tags.into_iter().collect();
+    if let Some(edit) = rules.edits.get(&item.path) {
+        reviewed = true;
+        if let Some(edited) = &edit.tags {
+            tags = edited.clone();
+        }
+        level = edit.level.unwrap_or(level);
+        if let Some(edited) = &edit.recipes {
+            recipes = edited.clone();
+        }
+        if let Some(edited) = &edit.field {
+            field = edited.clone();
+        }
+    }
     Row {
         path: item.path.clone(),
         level,
-        tags: tags.into_iter().collect(),
+        tags,
         format: item.format.clone(),
         labels: item.fields.clone(),
         modified: date_of(item.modified),
@@ -215,7 +248,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         last_result: String::new(),
         last_checked: String::new(),
         recipes,
-        field: file.and_then(|f| f.field.clone()).unwrap_or_default(),
+        field,
     }
 }
 
@@ -229,7 +262,7 @@ pub fn to_csv(rows: &[Row]) -> String {
             row.level.to_string(),
             csv_cell(&row.tags.join(" ")),
             csv_cell(&row.format),
-            csv_cell(&row.labels.join(" ")),
+            csv_cell(&row.labels.join("|")),
             row.modified.clone(),
             csv_cell(&row.mode),
             row.reviewed.to_string(),
@@ -444,6 +477,32 @@ files: { e.env: { recipes: [meta, instagram], field: TOKEN } }
         assert!(rows[3].recipes.is_empty(), "two providers in one file");
         assert_eq!(rows[4].recipes, ["meta", "instagram"]);
         assert_eq!(rows[4].field, "TOKEN");
+    }
+
+    #[test]
+    fn an_edit_from_the_app_comes_last_and_replaces() {
+        let mut with_rules = rules(
+            r#"
+rules: [{ match: [deploy], tags: [ops], level: never }]
+files: { deploy.key: { recipes: [github] } }
+"#,
+        );
+        with_rules.edits = parse_edits(
+            r#"{"deploy.key":{"tags":["mine"],"level":"free","recipes":[],"field":"TOKEN"}}"#,
+        )
+        .unwrap();
+        let rows = build(
+            &[item("deploy.key"), item("deploy.other")],
+            &with_rules,
+            &[],
+        );
+        assert_eq!(rows[0].tags, ["mine"]);
+        assert_eq!(rows[0].level, Level::Free);
+        assert!(rows[0].recipes.is_empty());
+        assert_eq!(rows[0].field, "TOKEN");
+        assert_eq!(rows[1].level, Level::Never);
+        assert_eq!(rows[1].tags, ["ops"]);
+        assert!(parse_edits(r#"{"a":{"level":"sometimes"}}"#).is_err());
     }
 
     #[test]

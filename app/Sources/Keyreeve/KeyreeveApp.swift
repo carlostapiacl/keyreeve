@@ -1,169 +1,7 @@
 import AppKit
 import KeyreeveCatalog
 import KeyreeveUI
-import LocalAuthentication
 import SwiftUI
-
-@MainActor
-final class AppModel: ObservableObject {
-    @Published var unlocked = false
-    @Published var lockMessage: String?
-    @Published var items: [CatalogItem] = []
-    @Published var problem: String?
-    @Published var checking = false
-    @Published var message: String?
-    @Published var activity: [ActivityItem] = []
-    private let files = KeyreeveFiles()
-    private var lockTask: Task<Void, Never>?
-
-    static let lockDelay: Duration = .seconds(300)
-
-    var catalogURL: URL { files.catalog }
-
-    func check(_ chosen: [CatalogItem]) {
-        guard !chosen.isEmpty, !checking else { return }
-        guard let keys = keysFolder() else { return }
-        guard let binary = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli") else {
-            message = "This app was built without the keyreeve command"
-            return
-        }
-        if chosen.contains(where: { $0.level == "ask" }) {
-            let count = chosen.count
-            LAContext().evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: "check \(count == 1 ? "1 key" : "\(count) keys") with their providers"
-            ) { success, _ in
-                Task { @MainActor in
-                    if success {
-                        self.runChecks(chosen, binary: binary, keys: keys)
-                    } else {
-                        self.message = "Not checked: the fingerprint was not confirmed"
-                    }
-                }
-            }
-        } else {
-            runChecks(chosen, binary: binary, keys: keys)
-        }
-    }
-
-    /// Keeps what opens on screen true to the disk, without asking anything on the way in.
-    private func refreshIfFolderKnown() {
-        if files.keysFolder() != nil { refresh() }
-    }
-
-    /// Scans the folder again, so what the window says matches the disk.
-    func refresh() {
-        guard !checking else { return }
-        guard let keys = keysFolder() else { return }
-        guard let binary = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli") else {
-            load()
-            return
-        }
-        checking = true
-        message = "Scanning…"
-        let files = self.files
-        Task.detached {
-            let result = Result { try CheckRunner.refresh(binary: binary, keysFolder: keys, files: files) }
-            await MainActor.run {
-                self.checking = false
-                self.load()
-                switch result {
-                case .success: self.message = "Up to date"
-                case .failure(let error):
-                    self.message = (error as? CheckError)?.description ?? "The scan did not finish"
-                }
-            }
-        }
-    }
-
-    private func runChecks(_ chosen: [CatalogItem], binary: URL, keys: URL) {
-        checking = true
-        message = "Checking…"
-        let files = self.files
-        Task.detached {
-            let result = Result { try CheckRunner.run(chosen, binary: binary, keysFolder: keys, files: files) }
-            await MainActor.run {
-                self.checking = false
-                switch result {
-                case .success:
-                    self.load()
-                    let checked = Set(chosen.map(\.path))
-                    let done = self.items.filter { checked.contains($0.path) }
-                    let works = done.filter { $0.lastResult == "works" }.count
-                    self.message = "Checked \(chosen.count): \(works) work"
-                case .failure(let error):
-                    self.message = (error as? CheckError)?.description ?? "The check did not finish"
-                }
-            }
-        }
-    }
-
-    /// The folder of key files. Asked once and remembered, so it is never stored in a repository.
-    private func keysFolder() -> URL? {
-        if let saved = files.keysFolder() { return saved }
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.message = "Choose the folder that holds your key files"
-        panel.prompt = "Choose"
-        guard panel.runModal() == .OK, let url = panel.url else { return nil }
-        try? files.saveKeysFolder(url)
-        return url
-    }
-
-    /// This lock covers the window. The keys themselves are protected by the vault, which asks
-    /// for a fingerprint on its own each time one is used.
-    func unlock() {
-        let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            lockMessage = "This Mac has no way to confirm it is you."
-            return
-        }
-        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "open your key catalog") {
-            success, _ in
-            Task { @MainActor in
-                if success {
-                    self.lockMessage = nil
-                    self.unlocked = true
-                    self.load()
-                    self.refreshIfFolderKnown()
-                } else {
-                    self.lockMessage = "Not unlocked. Try again."
-                }
-            }
-        }
-    }
-
-    func lock() {
-        lockTask?.cancel()
-        unlocked = false
-        items = []
-        message = nil
-    }
-
-    func load() {
-        do {
-            items = try CatalogParser.parse(String(contentsOf: catalogURL, encoding: .utf8))
-            problem = items.isEmpty ? "The catalog is empty" : nil
-            activity = files.activity()
-        } catch CocoaError.fileReadNoSuchFile {
-            problem = "There is no catalog yet"
-        } catch {
-            problem = "The catalog could not be read"
-        }
-    }
-
-    func windowLostFocus() {
-        lockTask?.cancel()
-        lockTask = Task {
-            try? await Task.sleep(for: Self.lockDelay)
-            if !Task.isCancelled { self.lock() }
-        }
-    }
-
-    func windowGotFocus() { lockTask?.cancel() }
-}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A window remembered on a display you are not looking at reads as an app that did not open.
@@ -174,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let window = NSApp.windows.first(where: { $0.canBecomeMain }) else { return }
             let mouse = NSEvent.mouseLocation
             let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-            if let visible = screen?.visibleFrame, !visible.intersects(window.frame) || screen != window.screen {
+            if let visible = screen?.visibleFrame, screen != window.screen {
                 let size = NSSize(
                     width: min(window.frame.width, visible.width), height: min(window.frame.height, visible.height))
                 window.setFrame(
@@ -195,6 +33,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct KeyreeveApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    @AppStorage(Language.settingsKey) private var language = Language.system.rawValue
+    @AppStorage(SettingsKey.appearance) private var appearance = "system"
+
+    private var scheme: ColorScheme? {
+        appearance == "light" ? .light : appearance == "dark" ? .dark : nil
+    }
+
+    private var chosenLocale: Locale { (Language(rawValue: language) ?? .system).locale }
 
     var body: some Scene {
         Window("Keyreeve", id: "main") {
@@ -202,16 +48,16 @@ struct KeyreeveApp: App {
                 if !model.unlocked {
                     LockedView(message: model.lockMessage, unlock: model.unlock)
                         .onAppear(perform: model.unlock)
-                } else if let problem = model.problem {
-                    EmptyCatalogView(problem: problem, path: model.catalogURL.path)
+                } else if !model.hasCatalog || model.items.isEmpty {
+                    WelcomeView(busy: model.busy, choose: model.chooseFolder)
                 } else {
-                    CatalogView(
-                        items: model.items, source: model.catalogURL.path, reload: model.refresh,
-                        check: model.check, checking: model.checking, message: model.message,
-                        activity: model.activity)
+                    MainView(model: model)
                 }
             }
-            .frame(minWidth: 820, minHeight: 480)
+            .frame(minWidth: 860, minHeight: 520)
+            .id(language)
+            .environment(\.locale, chosenLocale)
+            .preferredColorScheme(scheme)
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
                 model.windowLostFocus()
             }
@@ -221,9 +67,28 @@ struct KeyreeveApp: App {
         }
         .defaultSize(width: 1180, height: 720)
         .commands {
-            CommandGroup(after: .appInfo) {
-                Button("Lock", action: model.lock).keyboardShortcut("l", modifiers: [.command, .shift])
+            CommandGroup(after: .newItem) {
+                Button(T("Choose folder…"), action: model.chooseFolder)
+                Button(T("Scan folder"), action: model.refresh)
+                    .keyboardShortcut("r")
+                    .disabled(!model.unlocked)
             }
+            CommandGroup(after: .appInfo) {
+                Button(T("Lock now"), action: model.lock).keyboardShortcut("l", modifiers: [.command, .shift])
+            }
+            CommandGroup(replacing: .help) {
+                Button(T("Keyreeve Help")) {
+                    if let url = URL(string: "https://github.com/carlostapiacl/keyreeve#readme") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+        }
+
+        Settings {
+            SettingsView(model: model)
+                .environment(\.locale, chosenLocale)
+                .preferredColorScheme(scheme)
         }
     }
 }

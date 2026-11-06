@@ -116,13 +116,43 @@ only covers user tokens, so an account token reads as rejected. A pass says the 
 The `hetzner` and `langsmith` recipes have passed with a real key. The others have only been shown to reject a
 fake one, except `meta`, `instagram` and `cloudflare`, which have also rejected old real keys.
 
+## The Mac app
+
+A native window over your catalog, with no web inside. It opens with your fingerprint or your Mac's password.
+This lock covers the window. Keys are protected by the vault below.
+
+```bash
+app/build-app.sh
+open app/dist/Keyreeve.app
+```
+
+It reads `~/.keyreeve/catalog.csv`, and it shows which keys need a look: an old copy that still works, a key
+that was rejected, a file others can read. It cannot run a check yet. The build is not notarized, so macOS warns
+you the first time.
+
+## The vault (Mac)
+
+```bash
+app/dist/keyreeve-vault init
+app/dist/keyreeve-vault add hosting-token
+app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
+```
+
+Each key is sealed in a file by a key inside your Mac's Secure Enclave, which it cannot leave. Adding a key needs no
+fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init` shows a
+recovery key once, and refuses to run outside a terminal so the key does not land in a log. Keep it away from this
+Mac, because if the Mac dies it is the only way back in. There is no command that prints a key.
+
+The vault format is mine and has had no outside review, so keep your old copies until it has. It does not yet
+connect to `verify` or to the app.
+
 ## What is missing
 
 - `keyreeve rotate` and `resume` as commands, and a test against a real provider
-- Keychain storage (macOS and Linux first)
+- Connecting the vault to `verify` and to rotation, and storage for Linux and Windows
 - Places to update: `.env`, GitHub, Netlify
 - Recipes that can rotate a real provider
-- A local panel to see each key, its age and its history
+- Checks and editing in the app
 - Approvals that expire
 - Integration with [seisin](https://github.com/carlostapiacl/seisin), which gives each agent its own keys
 

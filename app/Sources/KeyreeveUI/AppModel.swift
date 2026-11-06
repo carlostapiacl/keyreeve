@@ -32,6 +32,7 @@ public final class AppModel: ObservableObject {
     @Published public var vaultComparison: VaultKeeper.CompareReport?
     @Published public var rotations: [RotationStatus] = []
     @Published public var places: [String: KeyPlaces] = [:]
+    @Published public var agentPolicy = AgentPolicy()
     public let files: KeyreeveFiles
     public let vaultStore: VaultStore
     let binary: URL?
@@ -40,6 +41,7 @@ public final class AppModel: ObservableObject {
     private var generation = 0
     /// Changes on each lock, so a confirmation that arrives afterwards counts for nothing.
     var lockEpoch = 0
+    var clipboard = KeyClipboard()
     private var rebuilding: Task<Void, Never>?
 
     public init(files: KeyreeveFiles = KeyreeveFiles(), binary: URL? = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli")) {
@@ -76,6 +78,8 @@ public final class AppModel: ObservableObject {
         confirmation.close()
         vaultDraft = nil
         vaultComparison = nil
+        clearClipboardNow()
+        agentPolicy = AgentPolicy()
         unlocked = false
         items = []
         activity = []
@@ -133,6 +137,7 @@ public final class AppModel: ObservableObject {
         items = snapshot.items
         activity = snapshot.activity
         places = snapshot.places
+        agentPolicy = snapshot.agentPolicy
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
     }
@@ -200,6 +205,7 @@ struct Snapshot: Sendable {
     let items: [CatalogItem]
     let activity: [ActivityItem]
     let places: [String: KeyPlaces]
+    let agentPolicy: AgentPolicy
     let providers: ProviderDirectory?
     let rotations: [RotationStatus]?
 
@@ -231,6 +237,7 @@ struct Snapshot: Sendable {
         items = parsed
         activity = files.activity()
         places = files.allPlaces()
+        agentPolicy = AgentPolicy.load(from: files.agents)
         providers = source.binary.map { CheckRunner.providers(binary: $0) }
         rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }
     }

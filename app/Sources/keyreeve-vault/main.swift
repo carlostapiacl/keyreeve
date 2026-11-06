@@ -24,7 +24,7 @@ let help = """
           Asks for one fingerprint. The file holds references, so it is safe in a repository.
       keyreeve-vault mcp
           Serve agents over MCP. They run allowed programs with a key and never get its value.
-          ~/.keyreeve/agent-commands.json says which, and it starts empty.
+          ~/.keyreeve/agents.toml says which, and it starts empty. Edit it in the app, on each key.
       keyreeve-vault export <name> --recovery
           Print an age file for this key, which any age tool opens with the recovery key.
       keyreeve-vault check-recovery
@@ -156,7 +156,7 @@ do {
         fail("could not run \(command[0])")
     case "mcp":
         let policy = AgentPolicy.load(
-            from: store.directory.deletingLastPathComponent().appendingPathComponent("agent-commands.json"))
+            from: store.directory.deletingLastPathComponent().appendingPathComponent(AgentPolicy.fileName))
         let bridge = AgentBridge(
             policy: policy,
             names: { Array(try store.load().entries.keys) },

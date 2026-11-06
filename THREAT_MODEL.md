@@ -106,7 +106,11 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   trust. Decrypting with the chip was never compared with age's plugin for it.
 - **An agent's program holds the key.** Over MCP an agent runs programs a person allowed, with a fingerprint each time. The output
   hides the plain key and its base64, and a program can hide it another way, so the allowed list is the protection. The agent runs as
-  you, so it can also edit that list and then ask for your finger. Read the prompt: it names the program and the key.
+  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it names the program and the key.
+- **A copied key is on the clipboard for up to 60 seconds.** Any program running as you can read it in that time. The marks that ask
+  history tools to skip it are a convention, and a tool can ignore them.
+- **The list of programs that cannot be allowed is not complete.** It stops the obvious ways to read a key. A program you allow
+  and the arguments an agent gives it can still reach it.
 - **An env file's references name your keys.** `keyreeve://` holds no value, but it says which keys exist.
 - **A key you paste by hand** passes through the app's memory on its way to the vault, and Swift strings are not wiped.
 - **A single rotation cannot be undone.** A provider that ends the old key at once leaves you with whatever comes back. If the

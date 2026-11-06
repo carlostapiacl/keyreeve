@@ -18,6 +18,7 @@ public struct KeyreeveFiles: Sendable {
     public var edits: URL { directory.appendingPathComponent("edits.json") }
     public var ignored: URL { directory.appendingPathComponent("ignored.json") }
     public var words: URL { directory.appendingPathComponent("words.txt") }
+    public var agents: URL { directory.appendingPathComponent("agents.toml") }
     public var moved: URL { directory.appendingPathComponent("moved.json") }
     public var originals: URL { directory.appendingPathComponent("originals") }
     public var rotations: URL { directory.appendingPathComponent("rotations.jsonl") }
@@ -61,7 +62,7 @@ public struct KeyreeveFiles: Sendable {
         try writePrivate(try JSONEncoder().encode(["keys_folder": url.path]), to: settings)
     }
 
-    func writePrivate(_ data: Data, to url: URL) throws {
+    public func writePrivate(_ data: Data, to url: URL) throws {
         let previous = umask(0o077)
         defer { umask(previous) }
         try FileManager.default.createDirectory(

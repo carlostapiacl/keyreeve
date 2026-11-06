@@ -235,7 +235,8 @@ app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
 
 Adding a key needs no fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init`
-refuses to run outside a terminal so the recovery key does not land in a log. There is no command that prints a key.
+refuses to run outside a terminal so the recovery key does not land in a log. No command prints a key, and the app copies one only
+when you press its button.
 
 A copy sealed from the app holds the whole file, so `run` hands a program everything in it. For a file with several values, use
 `env` below and name the field.
@@ -270,11 +271,17 @@ keyreeve-vault env app.env -- ./deploy.sh
 
 One fingerprint opens them all for that command.
 
-An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. It can list the keys it may use and run
-a program with one, and no tool returns a value. Nothing is allowed until you write `~/.keyreeve/agent-commands.json`
-([example](examples/agent-commands.json)), which says which programs may use which keys. Each use asks for your finger, with a prompt
-that shows the program and the key, and the agent's reason goes in the usage log. Choose programs that cannot print what they
-receive: the output hides the plain key and its base64, but a program can hide it in other ways. A run stops after 2 minutes.
+An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`, and **Vault** copies the command that
+connects Claude Code. An agent can list the keys it may use and run a program with one, and no tool returns a value. Nothing is allowed
+until you open a key in the app and press **Allow a program**, which writes `~/.keyreeve/agents.toml` ([example](examples/agents.toml)).
+A file with a mistake allows nothing. Each use asks for your finger, with a prompt that shows the program and the key, and the agent's
+reason goes in the usage log.
+
+The agent chooses the arguments, so allow programs that do one job. Shells, interpreters, `curl`, `env` and others like them cannot
+be allowed at all. The output hides the plain key and its base64, but a program can hide it in other ways. A run stops after 2 minutes.
+
+**Copy the key**, on a sealed key in the app, puts it on the clipboard after your fingerprint. It is marked so clipboard history tools
+skip it, and it leaves after 60 seconds, or when you lock the app, unless you copied something else by then.
 
 ## Rotate a key
 

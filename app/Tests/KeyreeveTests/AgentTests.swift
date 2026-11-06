@@ -168,4 +168,50 @@ struct AgentTests {
         XCTAssertThrowsError(try EnvReferences.value(in: Data("A=1\nB=2\n".utf8), field: nil))
         XCTAssertThrowsError(try EnvReferences.value(in: Data("A=1\n".utf8), field: "Z"))
     }
+
+    @Test func testTheTomlFileRoundTrips() throws {
+        let policy = AgentPolicy(commands: ["dir/a b.env": ["/usr/local/bin/deploy", "./x \"y\".sh"], "z": ["/bin/ls"]])
+        #expect(try AgentPolicy.parse(policy.toml) == policy)
+        let handwritten = """
+            # mine
+            [[allow]]
+            key = "a.env"   # note
+            programs = [
+            """
+        XCTAssertThrowsError(try AgentPolicy.parse(handwritten))
+        #expect(try AgentPolicy.parse("[[allow]]\nkey = \"a\"\nprograms = [\"/x\", \"/y\"]  # both\n").commands == ["a": ["/x", "/y"]])
+    }
+
+    @Test func testABadFileAllowsNothing() throws {
+        for text in [
+            "key = \"a\"", "[[allow]]\nkey = \"a\"", "[[allow]]\nprograms = [\"/x\"]", "[[allow]]\nkey = a\nprograms = []",
+            "[[allow]]\nkey = \"a\"\nprograms = [\"/x\"]\nextra = 1", "[[allow]]\nkey = \"a\"\nkey = \"b\"\nprograms = []",
+            "[[allow]]\nkey = \"a\" junk\nprograms = []",
+        ] {
+            XCTAssertThrowsError(try AgentPolicy.parse(text), text)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("agents-\(UUID().uuidString).toml")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try "nonsense".write(to: url, atomically: true, encoding: .utf8)
+        #expect(AgentPolicy.load(from: url) == AgentPolicy())
+        #expect(AgentPolicy.load(from: url.appendingPathExtension("missing")) == AgentPolicy())
+    }
+
+    @Test func testAProgramThatCouldLeakTheKeyIsNeverAllowed() throws {
+        for program in ["sh", "/bin/bash", "/usr/bin/env", "printenv", "/usr/bin/python3", "/usr/bin/CURL"] {
+            let log = Log()
+            var arguments = run
+            arguments["command"] = [program, "-c", "x"]
+            let result = try call(bridge(log, commands: ["a.env": [program]]), "run_with_key", arguments)
+            #expect(result.error, "\(program)")
+            #expect(log.opened.isEmpty)
+        }
+        let listed = try call(bridge(Log(), commands: ["a.env": ["/bin/sh", "/opt/deploy"]]), "list_keys", [:]).text
+        #expect(listed == "a.env: /opt/deploy")
+    }
+
+    @Test func testFieldsFromOtherShapesOfFile() throws {
+        #expect(try EnvReferences.value(in: Data(#"{"token":"abc","x":"y"}"#.utf8), field: "token") == "abc")
+        #expect(try EnvReferences.value(in: Data("user: me\ntoken: abc\n".utf8), field: "token") == "abc")
+    }
 }

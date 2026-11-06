@@ -48,6 +48,18 @@ public enum EnvReferences {
         if let field {
             // The last one, as a shell or `env` would end up with.
             for case .value(let name, let value) in parse(text).reversed() where name == field { return value }
+            if let data = text.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let value = object[field] as? String
+            {
+                return value
+            }
+            for raw in text.split(whereSeparator: \.isNewline).reversed() {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                if line.hasPrefix(field + ":") {
+                    return cleaned(String(line.dropFirst(field.count + 1)).trimmingCharacters(in: .whitespaces))
+                }
+            }
             throw VaultError("this key has no field \(field)")
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,21 +70,147 @@ public enum EnvReferences {
     }
 }
 
-/// Which programs an agent may run with which keys, written by a person. Empty means nothing, so an
-/// agent gets no key until someone says so. Each use still asks for a fingerprint.
-public struct AgentPolicy: Codable, Equatable, Sendable {
+/// Which programs an agent may run with which keys, written by a person, in `agents.toml`. Empty means
+/// nothing, so an agent gets no key until someone says so. Each use still asks for a fingerprint.
+public struct AgentPolicy: Equatable, Sendable {
     public var commands: [String: [String]]
 
     public init(commands: [String: [String]] = [:]) { self.commands = commands }
 
+    public static let fileName = "agents.toml"
+
+    /// A program that does whatever its arguments say, or prints what it is given. Since the agent
+    /// chooses the arguments, allowing one of these would hand it the key.
+    public static let neverAllowed: Set<String> = [
+        "sh", "bash", "zsh", "dash", "fish", "ksh", "tcsh", "csh", "env", "printenv", "cat", "echo", "printf", "tee",
+        "xargs", "sudo", "python", "python2", "python3", "node", "deno", "bun", "ruby", "perl", "php", "lua",
+        "osascript", "curl", "wget", "nc", "ncat", "ssh", "scp", "awk", "sed", "make", "docker", "pbcopy",
+    ]
+
+    public static func isNeverAllowed(_ program: String) -> Bool {
+        neverAllowed.contains(URL(fileURLWithPath: program).lastPathComponent.lowercased())
+    }
+
+    /// A file that cannot be read allows nothing, so a typo never widens what an agent can do.
     public static func load(from url: URL) -> AgentPolicy {
-        guard let data = try? Data(contentsOf: url) else { return AgentPolicy() }
-        return (try? JSONDecoder().decode(AgentPolicy.self, from: data)) ?? AgentPolicy()
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return AgentPolicy() }
+        return (try? parse(text)) ?? AgentPolicy()
     }
 
     /// The whole program name must match, so `deploy.sh` does not also allow `deploy.sh.evil`.
     public func allows(_ program: String, with key: String) -> Bool {
-        commands[key]?.contains(program) ?? false
+        !Self.isNeverAllowed(program) && (commands[key]?.contains(program) ?? false)
+    }
+
+    /// Reads the part of TOML this file uses: `[[allow]]` tables with a `key` and a list of `programs`.
+    /// Anything else is an error, and not something to guess at.
+    public static func parse(_ text: String) throws -> AgentPolicy {
+        var commands: [String: [String]] = [:]
+        var key: String?
+        var programs: [String]?
+        func finish() throws {
+            guard key != nil || programs != nil else { return }
+            guard let key, let programs else { throw VaultError("each [[allow]] needs a key and programs") }
+            commands[key, default: []] += programs
+        }
+        var inTable = false
+        for (index, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            let bad = VaultError("agents.toml, line \(index + 1), is not something this reads")
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            if line == "[[allow]]" {
+                try finish()
+                key = nil
+                programs = nil
+                inTable = true
+                continue
+            }
+            guard inTable, let equals = line.firstIndex(of: "=") else { throw bad }
+            let name = line[..<equals].trimmingCharacters(in: .whitespaces)
+            var scanner = Scanner(text: String(line[line.index(after: equals)...]))
+            switch name {
+            case "key":
+                guard key == nil else { throw bad }
+                key = try scanner.string(bad)
+            case "programs":
+                guard programs == nil else { throw bad }
+                programs = try scanner.list(bad)
+            default:
+                throw bad
+            }
+            try scanner.end(bad)
+        }
+        try finish()
+        return AgentPolicy(commands: commands)
+    }
+
+    public var toml: String {
+        var out = """
+            # Which programs an agent may run with each key in your vault. Each use asks for your fingerprint.
+            # The agent chooses the arguments, so allow programs that do one job and never print what they get.
+
+            """
+        for key in commands.keys.sorted() where !(commands[key] ?? []).isEmpty {
+            let list = (commands[key] ?? []).map(Self.quoted).joined(separator: ", ")
+            out += "\n[[allow]]\nkey = \(Self.quoted(key))\nprograms = [\(list)]\n"
+        }
+        return out
+    }
+
+    private static func quoted(_ text: String) -> String {
+        "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
+    private struct Scanner {
+        var rest: Substring
+        init(text: String) { rest = Substring(text) }
+
+        mutating func skipSpace() { rest = rest.drop { $0 == " " || $0 == "\t" } }
+
+        mutating func string(_ bad: VaultError) throws -> String {
+            skipSpace()
+            guard rest.first == "\"" else { throw bad }
+            rest = rest.dropFirst()
+            var out = ""
+            while let character = rest.first {
+                rest = rest.dropFirst()
+                switch character {
+                case "\"": return out
+                case "\\":
+                    guard let next = rest.first, next == "\"" || next == "\\" else { throw bad }
+                    out.append(next)
+                    rest = rest.dropFirst()
+                default: out.append(character)
+                }
+            }
+            throw bad
+        }
+
+        mutating func list(_ bad: VaultError) throws -> [String] {
+            skipSpace()
+            guard rest.first == "[" else { throw bad }
+            rest = rest.dropFirst()
+            var out: [String] = []
+            while true {
+                skipSpace()
+                if rest.first == "]" {
+                    rest = rest.dropFirst()
+                    return out
+                }
+                out.append(try string(bad))
+                skipSpace()
+                if rest.first == "," {
+                    rest = rest.dropFirst()
+                } else if rest.first != "]" {
+                    throw bad
+                }
+            }
+        }
+
+        mutating func end(_ bad: VaultError) throws {
+            skipSpace()
+            guard rest.isEmpty || rest.first == "#" else { throw bad }
+        }
     }
 }
 
@@ -151,8 +289,9 @@ public struct AgentBridge {
         switch tool {
         case "list_keys":
             let known = Set(try names())
-            let lines = policy.commands.keys.sorted().filter(known.contains).map { key in
-                "\(key): \((policy.commands[key] ?? []).joined(separator: ", "))"
+            let lines = policy.commands.keys.sorted().filter(known.contains).compactMap { key -> String? in
+                let programs = (policy.commands[key] ?? []).filter { policy.allows($0, with: key) }
+                return programs.isEmpty ? nil : "\(key): \(programs.joined(separator: ", "))"
             }
             return lines.isEmpty ? "No key is allowed for agents yet." : lines.joined(separator: "\n")
         case "run_with_key":
@@ -171,7 +310,7 @@ public struct AgentBridge {
         guard Self.isVariableName(variable) else { throw VaultError("that is not a variable name") }
         // Checked first, so a refused request never reaches the person's finger.
         guard policy.allows(program, with: key) else {
-            throw VaultError("\(program) is not allowed to use \(key). A person adds that in agent-commands.json")
+            throw VaultError("\(program) is not allowed to use \(key). A person allows it in the app, on that key")
         }
         // The agent's words stay out of the prompt, where they could pose as the app.
         let prompt = "let an agent run \(URL(fileURLWithPath: program).lastPathComponent) with \(key)"

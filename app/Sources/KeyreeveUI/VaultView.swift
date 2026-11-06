@@ -52,6 +52,7 @@ struct VaultView: View {
             VStack(alignment: .leading, spacing: 16) {
                 summary
                 if !openRotations.isEmpty { rotationsCard }
+                agentsCard
                 if let report = model.vaultComparison { comparison(report) }
                 if !moved.isEmpty { movedCard }
                 addKeys
@@ -157,6 +158,25 @@ struct VaultView: View {
                         }
                     }
                 }
+            }
+            .padding(14)
+        }
+    }
+
+    private var agentsCard: some View {
+        let count = sealed.filter { !(model.agentPolicy.commands[$0.path] ?? []).isEmpty }.count
+        return Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    SectionTitle(T("Connect an agent"))
+                    Spacer()
+                    Button(T("Copy the command")) { model.copyAgentCommand() }.buttonStyle(KRButtonStyle())
+                }
+                Text(T("An agent lists the keys you allowed and runs the programs you allowed. You choose them on each key."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(count == 0 ? T("No key is allowed for agents yet.") : count == 1 ? T("1 key allowed for agents") : T("%d keys allowed for agents", count))
+                    .font(Theme.caption).foregroundStyle(Theme.text)
             }
             .padding(14)
         }

@@ -63,6 +63,8 @@ pub struct Recipe {
     /// `dual`, the default, keeps the old key working until it is revoked. `single` means creating the
     /// new key ends the old one at once, so it cannot be undone and has no `revoke`.
     pub rotation: Option<String>,
+    /// The variable tools for this provider read their key from, such as `GH_TOKEN`.
+    pub env_var: Option<String>,
     /// When this file was last tried against the real service, as `yyyy-mm`.
     pub tested: Option<Tested>,
     /// With `revoke`, lets the recipe rotate. A recipe without them only checks a key.

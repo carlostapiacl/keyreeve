@@ -78,6 +78,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let can_rotate_by_hand: Bool
     public let single_rotation: Bool
     public let tested: Tested
+    public let env_var: String?
     public let self_hosted: Bool
     public let problem: String?
     public let programs: [String]?
@@ -86,7 +87,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
         approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, can_rotate: Bool = false,
-        can_rotate_by_hand: Bool = false, single_rotation: Bool = false, tested: Tested = Tested(),
+        can_rotate_by_hand: Bool = false, single_rotation: Bool = false, tested: Tested = Tested(), env_var: String? = nil,
         self_hosted: Bool = false,
         problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil
     ) {
@@ -102,6 +103,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         self.can_rotate_by_hand = can_rotate_by_hand
         self.single_rotation = single_rotation
         self.tested = tested
+        self.env_var = env_var
         self.self_hosted = self_hosted
         self.problem = problem
         self.programs = programs

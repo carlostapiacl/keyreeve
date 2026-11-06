@@ -18,6 +18,9 @@ public struct KeyreeveFiles: Sendable {
     public var edits: URL { directory.appendingPathComponent("edits.json") }
     public var ignored: URL { directory.appendingPathComponent("ignored.json") }
     public var words: URL { directory.appendingPathComponent("words.txt") }
+    public var keyIndex: URL { directory.appendingPathComponent("keys.toml") }
+    public var audit: URL { directory.appendingPathComponent("audit.jsonl") }
+    public var keySocket: URL { directory.appendingPathComponent("run/keys.sock") }
     public var agents: URL { directory.appendingPathComponent("agents.toml") }
     public var moved: URL { directory.appendingPathComponent("moved.json") }
     public var originals: URL { directory.appendingPathComponent("originals") }

@@ -50,19 +50,87 @@ extension AppModel {
 
     func clearClipboardNow() { clipboard.clear() }
 
+    /// Locking the app ends what the key service holds too. If it is not running, nothing is lost.
+    func closeServicePermissions() {
+        let path = files.keySocket.path
+        Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: path, timeout: 2) }
+    }
+
+    private func provider(of item: CatalogItem) -> ProviderInfo? {
+        item.recipes.first.flatMap { id in providers.all.first { $0.id == id } }
+    }
+
+    private func project(of item: CatalogItem) -> String? {
+        item.tags.first { !$0.contains(":") && !["confirm", "internal", "revoke", "compartido", "infra"].contains($0) }
+            ?? item.tags.first { !$0.contains(":") && !["confirm", "internal", "revoke", "compartido"].contains($0) }
+    }
+
+    public func suggestedIdentifier(for item: CatalogItem) -> String {
+        keyIndex.suggestion(provider: item.recipes.first, project: project(of: item), source: item.path)
+    }
+
+    public func addIdentifier(_ id: String, for item: CatalogItem, field: String?) {
+        var index = keyIndex
+        let provider = provider(of: item)
+        do {
+            try index.add(
+                KeyIndex.Key(
+                    id: id, source: item.path, field: field ?? (item.field.isEmpty ? nil : item.field),
+                    provider: item.recipes.first, project: project(of: item),
+                    description: item.description.isEmpty ? nil : item.description, variable: provider?.env_var))
+            try saveIndex(index)
+        } catch {
+            message = (error as? VaultError)?.description ?? T("That identifier could not be saved")
+        }
+    }
+
+    public func removeIdentifier(_ id: String) {
+        var index = keyIndex
+        index.remove(id: id)
+        try? saveIndex(index)
+    }
+
+    /// Gives one to each sealed key that has none, which a person can change afterwards.
+    public func assignIdentifiers() {
+        var index = keyIndex
+        var added = 0
+        for item in items where item.vault == .sealed || item.vault == .outdated {
+            guard index.keys(forSource: item.path).isEmpty else { continue }
+            let id = index.suggestion(provider: item.recipes.first, project: project(of: item), source: item.path)
+            try? index.add(
+                KeyIndex.Key(
+                    id: id, source: item.path, field: item.field.isEmpty ? nil : item.field, provider: item.recipes.first,
+                    project: project(of: item), description: item.description.isEmpty ? nil : item.description,
+                    variable: provider(of: item)?.env_var))
+            added += 1
+        }
+        do {
+            try saveIndex(index)
+            message = added == 1 ? T("1 identifier added") : T("%d identifiers added", added)
+        } catch {
+            message = T("That identifier could not be saved")
+        }
+    }
+
+    private func saveIndex(_ index: KeyIndex) throws {
+        try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
+        keyIndex = index
+    }
+
     public func allow(program: String, for item: CatalogItem) {
         guard !AgentPolicy.isNeverAllowed(program) else {
             message = T("%@ can print or send whatever it gets, so it cannot be allowed.", URL(fileURLWithPath: program).lastPathComponent)
             return
         }
+        guard let id = keyIndex.keys(forSource: item.path).first?.id else { return }
         var policy = agentPolicy
-        if !(policy.commands[item.path] ?? []).contains(program) { policy.commands[item.path, default: []].append(program) }
+        if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
         savePolicy(policy)
     }
 
     public func disallow(program: String, for item: CatalogItem) {
         var policy = agentPolicy
-        policy.commands[item.path]?.removeAll { $0 == program }
+        for key in keyIndex.keys(forSource: item.path) { policy.commands[key.id]?.removeAll { $0 == program } }
         savePolicy(policy)
     }
 

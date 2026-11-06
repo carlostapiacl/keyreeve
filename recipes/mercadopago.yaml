@@ -5,6 +5,7 @@ dashboard: https://www.mercadopago.cl/developers/panel/app
 prefixes: [APP_USR-]
 rotate_every_days: 180
 criticality_hint: 5
+env_var: MP_ACCESS_TOKEN
 hosts: [api.mercadopago.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /users/me }

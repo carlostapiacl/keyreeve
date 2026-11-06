@@ -33,6 +33,7 @@ public final class AppModel: ObservableObject {
     @Published public var rotations: [RotationStatus] = []
     @Published public var places: [String: KeyPlaces] = [:]
     @Published public var agentPolicy = AgentPolicy()
+    @Published public var keyIndex = KeyIndex()
     public let files: KeyreeveFiles
     public let vaultStore: VaultStore
     let binary: URL?
@@ -79,7 +80,9 @@ public final class AppModel: ObservableObject {
         vaultDraft = nil
         vaultComparison = nil
         clearClipboardNow()
+        closeServicePermissions()
         agentPolicy = AgentPolicy()
+        keyIndex = KeyIndex()
         unlocked = false
         items = []
         activity = []
@@ -138,6 +141,7 @@ public final class AppModel: ObservableObject {
         activity = snapshot.activity
         places = snapshot.places
         agentPolicy = snapshot.agentPolicy
+        keyIndex = snapshot.keyIndex
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
     }
@@ -206,6 +210,7 @@ struct Snapshot: Sendable {
     let activity: [ActivityItem]
     let places: [String: KeyPlaces]
     let agentPolicy: AgentPolicy
+    let keyIndex: KeyIndex
     let providers: ProviderDirectory?
     let rotations: [RotationStatus]?
 
@@ -238,6 +243,7 @@ struct Snapshot: Sendable {
         activity = files.activity()
         places = files.allPlaces()
         agentPolicy = AgentPolicy.load(from: files.agents)
+        keyIndex = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
         providers = source.binary.map { CheckRunner.providers(binary: $0) }
         rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }
     }

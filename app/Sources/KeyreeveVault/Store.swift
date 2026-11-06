@@ -119,6 +119,10 @@ public struct VaultStore: Sendable {
         guard descriptor >= 0 else { return }
         defer { close(descriptor) }
         _ = (line + Data("\n".utf8)).withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+        let log = AuditLog(url: directory.deletingLastPathComponent().appendingPathComponent("audit.jsonl"))
+        try? log.append(
+            event: "used", key: name, observed: CallerIdentity.observe(pid: getpid()),
+            declared: AuditLog.Declared(reason: reason, command: URL(fileURLWithPath: command).lastPathComponent))
     }
 
     public func loadBlob() throws -> Data {

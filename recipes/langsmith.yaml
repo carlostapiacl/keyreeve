@@ -6,6 +6,7 @@ prefixes: []
 rotate_every_days: 365
 criticality_hint: 2
 tested: { check: 2026-11 }
+env_var: LANGSMITH_API_KEY
 hosts: [api.smith.langchain.com]
 auth: { header: x-api-key, prefix: "" }
 verify: { method: GET, path: "/api/v1/sessions?limit=1", reject: [403] }

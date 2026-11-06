@@ -6,6 +6,7 @@ prefixes: [sk_]
 rotate_every_days: 365
 criticality_hint: 2
 tested: { check: 2026-11 }
+env_var: ELEVENLABS_API_KEY
 hosts: [api.elevenlabs.io]
 auth: { header: xi-api-key }
 # A key limited to other permissions is alive, and the answer says so.

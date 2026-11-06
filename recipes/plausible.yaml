@@ -5,6 +5,7 @@ dashboard: https://plausible.io/settings/api-keys
 rotate_every_days: 365
 criticality_hint: 1
 self_hosted: true
+env_var: PLAUSIBLE_API_KEY
 hosts: []
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /api/v1/sites, reject: [403] }

@@ -168,10 +168,20 @@ struct VaultView: View {
     private var sealedCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 8) {
-                SectionTitle(T("Your sealed keys"))
+                HStack {
+                    SectionTitle(T("Your sealed keys"))
+                    Spacer()
+                    if sealed.contains(where: { model.keyIndex.keys(forSource: $0.path).isEmpty }) {
+                        Button(T("Give identifiers to the sealed keys")) { model.assignIdentifiers() }
+                            .buttonStyle(KRButtonStyle())
+                    }
+                }
                 ForEach(sealed) { item in
                     HStack(spacing: 10) {
                         KeyRow(item: item, compact: true)
+                        if let id = model.keyIndex.keys(forSource: item.path).first?.id {
+                            Text(id).font(Theme.code).foregroundStyle(Theme.muted).lineLimit(1)
+                        }
                         if item.vault == .sealed || item.vault == .outdated {
                             CopyKeyButton(item: item, model: model)
                         }
@@ -183,7 +193,9 @@ struct VaultView: View {
     }
 
     private var agentsCard: some View {
-        let count = sealed.filter { !(model.agentPolicy.commands[$0.path] ?? []).isEmpty }.count
+        let count = sealed.filter { item in
+            model.keyIndex.keys(forSource: item.path).contains { !(model.agentPolicy.commands[$0.id] ?? []).isEmpty }
+        }.count
         return Card {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {

@@ -6,6 +6,7 @@ prefixes: [sk-ant-]
 rotate_every_days: 180
 criticality_hint: 3
 tested: { check: 2026-11 }
+env_var: ANTHROPIC_API_KEY
 hosts: [api.anthropic.com]
 auth: { header: x-api-key, prefix: "" }
 headers: { anthropic-version: "2023-06-01" }

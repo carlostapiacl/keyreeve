@@ -1,4 +1,5 @@
 import KeyreeveCatalog
+import KeyreeveVault
 import SwiftUI
 
 /// What a person can do with a sealed key: copy it, and say which programs agents may run with it.
@@ -6,11 +7,16 @@ struct KeyAccessPanel: View {
     let item: CatalogItem
     @ObservedObject var model: AppModel
 
-    private var allowed: [String] { model.agentPolicy.commands[item.path] ?? [] }
+    @State private var newID = ""
+    @State private var newField = ""
+
+    private var identifiers: [KeyIndex.Key] { model.keyIndex.keys(forSource: item.path) }
+    private var allowed: [String] { identifiers.flatMap { model.agentPolicy.commands[$0.id] ?? [] } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             CopyKeyButton(item: item, model: model)
+            identifierSection
             Text(T("Agents")).font(Theme.caption).foregroundStyle(Theme.muted).padding(.top, 6)
             Text(allowed.isEmpty ? T("No agent can use this key.") : T("Programs an agent may run with this key. Each use asks for your finger, and the agent never gets the value."))
                 .font(Theme.caption).foregroundStyle(Theme.muted)
@@ -35,6 +41,55 @@ struct KeyAccessPanel: View {
                 model.chooseProgram { model.allow(program: $0, for: item) }
             }
             .buttonStyle(KRButtonStyle())
+            .disabled(identifiers.isEmpty)
+        }
+        .onAppear { newID = model.suggestedIdentifier(for: item) }
+        .onChange(of: item.path) { newID = model.suggestedIdentifier(for: item) }
+    }
+
+    private var identifierSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(T("Identifier")).font(Theme.caption).foregroundStyle(Theme.muted).padding(.top, 6)
+            ForEach(identifiers) { key in
+                HStack(spacing: 6) {
+                    Text(key.id).font(Theme.code).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                    if let field = key.field { Text(field).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(1) }
+                    Spacer(minLength: 4)
+                    Button {
+                        model.removeIdentifier(key.id)
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.muted)
+                    .accessibilityLabel(T("Remove"))
+                }
+            }
+            if identifiers.isEmpty {
+                Text(T("What you and your agents call this key."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 6) {
+                TextField(T("Identifier"), text: $newID)
+                    .textFieldStyle(.roundedBorder)
+                    .font(Theme.code)
+                    .autocorrectionDisabled()
+                if item.labels.count > 1 {
+                    Picker("", selection: $newField) {
+                        Text(T("Field")).tag("")
+                        ForEach(item.labels, id: \.self) { Text($0).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 100)
+                }
+                Button(T("Add")) {
+                    model.addIdentifier(newID, for: item, field: newField.isEmpty ? nil : newField)
+                    newID = model.suggestedIdentifier(for: item)
+                }
+                .buttonStyle(KRButtonStyle())
+                .disabled(newID.isEmpty)
+            }
         }
     }
 }

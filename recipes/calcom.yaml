@@ -6,6 +6,7 @@ prefixes: [cal_live_, cal_]
 rotate_every_days: 365
 criticality_hint: 2
 tested: { check: 2026-11 }
+env_var: CALCOM_API_KEY
 hosts: [api.cal.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /v2/me }

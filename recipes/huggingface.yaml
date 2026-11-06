@@ -6,6 +6,7 @@ prefixes: [hf_]
 rotate_every_days: 365
 criticality_hint: 2
 tested: { check: 2026-11 }
+env_var: HF_TOKEN
 hosts: [huggingface.co]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /api/whoami-v2 }

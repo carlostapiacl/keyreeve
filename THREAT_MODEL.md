@@ -111,6 +111,11 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   history tools to skip it are a convention, and a tool can ignore them.
 - **The list of programs that cannot be allowed is not complete.** It stops the obvious ways to read a key. A program you allow
   and the arguments an agent gives it can still reach it.
+- **`use` still hands over the real key.** A permission covers one key with one program as the caller names it. A program written to
+  speak to the service itself can name any program, and gets the value for as long as a permission exists. The stand-in value of the next
+  step closes this. Until then, the service protects you from accidents and leaves a record, and it does not stop a program attacking it.
+- **The usage log shows who, not proof of who.** A process and its parents come from the system. An agent can start a command through
+  something else, and everything under your user looks alike. It can also rewrite the log and its hashes.
 - **An env file's references name your keys.** `keyreeve://` holds no value, but it says which keys exist.
 - **A key you paste by hand** passes through the app's memory on its way to the vault, and Swift strings are not wiped.
 - **A single rotation cannot be undone.** A provider that ends the old key at once leaves you with whatever comes back. If the

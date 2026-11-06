@@ -256,12 +256,36 @@ writes it is mine, and it has had no outside review.
 
 ## Keys and agents
 
+Each key can have an identifier, separate from its file: `netlify`, `mail-restoiq`. A file with several values can have several, and
+renaming or moving a file breaks nothing that uses one. The app suggests them and keeps them in `~/.keyreeve/keys.toml`, which holds no value.
+
+```bash
+keyreeve-vault list
+keyreeve-vault use netlify --reason "deploy" -- netlify deploy --prod
+keyreeve-vault grants
+keyreeve-vault revoke
+keyreeve-vault audit --key netlify
+keyreeve-vault audit --verify
+```
+
+`use` runs one command with one key. Your finger is asked once for that key with that program, and the permission lasts 5 minutes unless
+`--for` says otherwise. A small service keeps it, and stops on its own when idle. Locking the app ends every permission. The variable comes from
+the provider's file, or from `--as`.
+
+Today `use` hands the real key to the command, so a command you allow can read it. The next step is a proxy, so the command holds a
+stand-in.
+
+Every decision goes in `~/.keyreeve/audit.jsonl`: which key, which permission, the process and its parents as the system reports them, and
+apart from those what the caller says about itself. It holds no value and no arguments. Each line carries the hash of the one before, so `--verify`
+finds an edit. Another program running as you could rewrite the whole chain, so this detects changes and does not prevent them. The
+process chain is a hint about who asked, and not proof.
+
 An env file can hold references in place of values, so it is safe in a repository:
 
 ```bash
 # app.env
-HOSTING_TOKEN=keyreeve://hosting-token
-MAIL_KEY=keyreeve://mail.env#API_KEY
+HOSTING_TOKEN=keyreeve://hosting
+MAIL_KEY=keyreeve://mail-restoiq
 LOG_LEVEL=info
 ```
 

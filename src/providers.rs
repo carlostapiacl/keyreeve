@@ -334,6 +334,7 @@ pub struct Entry {
     /// A single rotation cannot be undone, which a person should know before pressing the button.
     pub single_rotation: bool,
     pub tested: crate::recipe::Tested,
+    pub env_var: Option<String>,
     pub self_hosted: bool,
     pub suggested_name: Option<String>,
     pub problem: Option<String>,
@@ -357,6 +358,7 @@ impl Entry {
             can_rotate_by_hand: recipe.can_rotate_by_hand(),
             single_rotation: recipe.is_single(),
             tested: recipe.tested.clone().unwrap_or_default(),
+            env_var: recipe.env_var.clone(),
             self_hosted: recipe.self_hosted,
             suggested_name: recipe.suggested_name.clone(),
             problem: None,
@@ -458,6 +460,7 @@ pub fn list() -> Vec<Entry> {
                 can_rotate_by_hand: false,
                 single_rotation: false,
                 tested: Default::default(),
+                env_var: None,
                 self_hosted: false,
                 suggested_name: None,
                 problem: Some(problem),

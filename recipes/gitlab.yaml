@@ -5,6 +5,7 @@ dashboard: https://gitlab.com/-/user_settings/personal_access_tokens
 prefixes: [glpat-]
 rotate_every_days: 90
 criticality_hint: 4
+env_var: GITLAB_TOKEN
 hosts: [gitlab.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /api/v4/user }

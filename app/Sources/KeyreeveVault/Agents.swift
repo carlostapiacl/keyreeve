@@ -127,7 +127,7 @@ public struct AgentPolicy: Equatable, Sendable {
             }
             guard inTable, let equals = line.firstIndex(of: "=") else { throw bad }
             let name = line[..<equals].trimmingCharacters(in: .whitespaces)
-            var scanner = Scanner(text: String(line[line.index(after: equals)...]))
+            var scanner = TomlScanner(text: String(line[line.index(after: equals)...]))
             switch name {
             case "key":
                 guard key == nil else { throw bad }
@@ -157,61 +157,7 @@ public struct AgentPolicy: Equatable, Sendable {
         return out
     }
 
-    private static func quoted(_ text: String) -> String {
-        "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
-    }
-
-    private struct Scanner {
-        var rest: Substring
-        init(text: String) { rest = Substring(text) }
-
-        mutating func skipSpace() { rest = rest.drop { $0 == " " || $0 == "\t" } }
-
-        mutating func string(_ bad: VaultError) throws -> String {
-            skipSpace()
-            guard rest.first == "\"" else { throw bad }
-            rest = rest.dropFirst()
-            var out = ""
-            while let character = rest.first {
-                rest = rest.dropFirst()
-                switch character {
-                case "\"": return out
-                case "\\":
-                    guard let next = rest.first, next == "\"" || next == "\\" else { throw bad }
-                    out.append(next)
-                    rest = rest.dropFirst()
-                default: out.append(character)
-                }
-            }
-            throw bad
-        }
-
-        mutating func list(_ bad: VaultError) throws -> [String] {
-            skipSpace()
-            guard rest.first == "[" else { throw bad }
-            rest = rest.dropFirst()
-            var out: [String] = []
-            while true {
-                skipSpace()
-                if rest.first == "]" {
-                    rest = rest.dropFirst()
-                    return out
-                }
-                out.append(try string(bad))
-                skipSpace()
-                if rest.first == "," {
-                    rest = rest.dropFirst()
-                } else if rest.first != "]" {
-                    throw bad
-                }
-            }
-        }
-
-        mutating func end(_ bad: VaultError) throws {
-            skipSpace()
-            guard rest.isEmpty || rest.first == "#" else { throw bad }
-        }
-    }
+    private static func quoted(_ text: String) -> String { tomlQuoted(text) }
 }
 
 /// A small MCP server over stdin and stdout. An agent can learn which keys it may use and run an

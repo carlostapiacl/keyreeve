@@ -27,6 +27,7 @@ fn main() -> ExitCode {
         "identify" => return commands::run_identify(paths),
         "rotate" => return commands::run_rotate(paths),
         "rotations" => return commands::run_rotations(paths),
+        "proxy" => return commands::run_proxy(paths),
         "check-free" => return commands::run_check_free(paths),
         "action" => return commands::run_custom_action(paths),
         "recipes" => return commands::run_recipes(paths),

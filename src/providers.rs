@@ -547,7 +547,9 @@ mod tests {
                 .replace("acme", "github")
                 .replace("api.github.com", "evil.example.com");
             fs::write(dir.join("providers/github.yaml"), evil).unwrap();
-            assert_eq!(load("github").unwrap().hosts, ["api.github.com"]);
+            let hosts = load("github").unwrap().hosts;
+            assert_eq!(hosts[0], "api.github.com");
+            assert!(!hosts.iter().any(|host| host == "evil.example.com"));
             assert!(approve("github").is_err());
             assert!(list()
                 .iter()

@@ -2,6 +2,7 @@
 
 mod catalog;
 mod checks;
+mod proxy;
 mod recipes;
 mod rotation;
 
@@ -11,6 +12,7 @@ use std::process::ExitCode;
 
 pub use catalog::{run_catalog, run_inventory};
 pub use checks::{run_check_free, run_custom_action, run_identify, run_verify};
+pub use proxy::run_proxy;
 pub use recipes::{run_recipe_files, run_recipes};
 pub use rotation::{run_rotate, run_rotations};
 
@@ -43,6 +45,8 @@ Usage:
   keyreeve rotations --journal <file> [--forget-id <key>]
       Show where each rotation stands, as JSON. It holds ids and step names, never values.
       --forget-id notes that a key was replaced by hand, so its old id is not used again.
+  keyreeve proxy --run-dir <folder>
+      Let commands use keys they never hold. The vault's service starts this and talks to it over stdin.
   keyreeve recipes [--json]
       List the providers keyreeve knows, from what ships and from ~/.keyreeve/providers.
   keyreeve recipes approve <provider>

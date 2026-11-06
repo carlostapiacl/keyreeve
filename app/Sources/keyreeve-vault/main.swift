@@ -19,9 +19,11 @@ let help = """
       keyreeve-vault run <name> --as <VARIABLE> -- <command> [args...]
           Run a command with the key in one variable. Asks for a fingerprint.
           The command's own output is not filtered, so choose a command that does not print it.
-      keyreeve-vault use <id> [--as VAR] [--for 5m] [--agent NAME] [--reason TEXT] -- <command> [args...]
-          Run a command with a key, by its identifier. Asks for your finger once for this key and
-          program, then not again until the permission ends. Each use goes in the usage log.
+      keyreeve-vault use <id> [--as VAR] [--for 5m] [--agent NAME] [--reason TEXT] [--real] -- <command> [args...]
+          Run a command with a key, by its identifier. The command holds a stand-in, and a local proxy
+          puts the real key on requests to that provider's hosts. Asks for your finger once for this key
+          and program, then not again until the permission ends. Each use goes in the usage log.
+          --real hands the command the real key, for what cannot use a stand-in. It asks every time.
       keyreeve-vault list
           Show the identifiers and what each one is. Needs no fingerprint.
       keyreeve-vault grants
@@ -168,7 +170,13 @@ do {
         let id = arguments[1]
         var options: [String: String] = [:]
         var index = 2
+        var wantsReal = false
         while index < dash {
+            if arguments[index] == "--real" {
+                wantsReal = true
+                index += 1
+                continue
+            }
             guard ["--as", "--for", "--agent", "--reason"].contains(arguments[index]), index + 1 < dash else { fail(help, code: 2) }
             options[arguments[index]] = arguments[index + 1]
             index += 2
@@ -185,24 +193,48 @@ do {
                 op: "use", key: id, seconds: seconds, program: command[0], arguments: command.count - 1,
                 prompt: "run \(shown.prefix(120)) with the key \(id)",
                 agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
-                reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath))
-        guard answer.ok, let value = answer.value else { fail(answer.error ?? "the key could not be used", code: 77) }
+                reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal))
+        guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
         guard let variable = options["--as"] ?? answer.variable else {
             fail("\(id) has no variable set, so say which with --as", code: 2)
         }
-        setenv(variable, value, 1)
+        if wantsReal {
+            guard let value = answer.value else { fail("the key could not be used", code: 77) }
+            setenv(variable, value, 1)
+        } else {
+            guard let standIn = answer.standIn, let token = answer.token, let proxy = answer.proxy else {
+                fail("the key could not be used", code: 77)
+            }
+            setenv(variable, standIn, 1)
+            let address = "http://keyreeve:\(token)@127.0.0.1:\(proxy.port)"
+            for name in ["HTTPS_PROXY", "https_proxy"] { setenv(name, address, 1) }
+            // Node does not read those variables unless it is told to.
+            setenv("NODE_USE_ENV_PROXY", "1", 1)
+            setenv("NODE_EXTRA_CA_CERTS", proxy.ca, 1)
+            // A name on this list would skip the proxy and go straight out with a useless stand-in.
+            unsetenv("NO_PROXY")
+            unsetenv("no_proxy")
+            for name in ["SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT", "AWS_CA_BUNDLE", "CARGO_HTTP_CAINFO", "DENO_CERT"] {
+                setenv(name, proxy.bundle, 1)
+            }
+        }
         var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
         execvp(command[0], &pointers)
         fail("could not run \(command[0])")
     case "serve":
         let descriptor = try KeySocket.listen(path: socketPath)
+        // Beside this program, in the app's bundle.
+        let command = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0])
+            .deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
+        let proxy = try? ProxyProcess(binary: command, runFolder: home.appendingPathComponent("run"))
         let service = KeyService(
             index: { try KeyIndex.load(from: keysFile) },
             open: { source, prompt in
                 let recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), reason: prompt)
                 return try store.load().open(name: source, with: recipient)
             },
-            log: auditLog)
+            proxy: proxy, log: auditLog)
+        proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
         // Stops after a while with nothing in force, so no process stays around for nothing.
         var idleSince = Date()
         KeySocket.serve(descriptor: descriptor, service: service) {
@@ -210,6 +242,7 @@ do {
             return Date().timeIntervalSince(idleSince) > 600
         }
         unlink(socketPath)
+        // The proxy reads until its stdin ends, so it stops with this process.
     case "grants":
         let answer = try askService(KeyService.Request(op: "grants"))
         if (answer.grants ?? []).isEmpty { print("No permission is in force.") }

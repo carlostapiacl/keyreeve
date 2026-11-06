@@ -6,10 +6,10 @@ prefixes: [ghp_, gho_, ghs_, github_pat_]
 rotate_every_days: 90
 criticality_hint: 4
 env_var: GH_TOKEN
-hosts: [api.github.com]
+hosts: [api.github.com, github.com, uploads.github.com]
 auth: { header: Authorization, prefix: "Bearer " }
-verify: { method: GET, path: /user }
+verify: { method: GET, host: api.github.com, path: /user }
 identify:
-  request: { method: GET, path: /user }
+  request: { method: GET, host: api.github.com, path: /user }
   fields: { account: $.login, email: $.email, name: $.name, scopes: "header:x-oauth-scopes", expires: "header:github-authentication-token-expiration" }
 suggested_name: "GitHub · {account}"

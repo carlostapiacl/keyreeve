@@ -1,5 +1,12 @@
 import Foundation
 
+/// Whatever holds the real values and puts them on the wire. Tests use a stand-in for it.
+public protocol KeyProxy: AnyObject, Sendable {
+    func add(grant: String, key: String, provider: String, value: String, expires: Date) throws -> (standIn: String, token: String)
+    func remove(grant: String)
+    var endpoint: KeyService.ProxyEndpoint { get throws }
+}
+
 /// Decides who gets a key, keeps permissions for a short while, and writes down every decision. It
 /// lives in its own process, so a permission outlasts one command and the agent never holds it.
 public final class KeyService: @unchecked Sendable {
@@ -13,10 +20,12 @@ public final class KeyService: @unchecked Sendable {
         public var agent: String?
         public var reason: String?
         public var cwd: String?
+        /// Asks for the value itself, for what cannot use a stand-in. It is never remembered.
+        public var real: Bool?
 
         public init(
             op: String, key: String? = nil, seconds: Int? = nil, program: String? = nil, arguments: Int? = nil,
-            prompt: String? = nil, agent: String? = nil, reason: String? = nil, cwd: String? = nil
+            prompt: String? = nil, agent: String? = nil, reason: String? = nil, cwd: String? = nil, real: Bool? = nil
         ) {
             self.op = op
             self.key = key
@@ -27,20 +36,42 @@ public final class KeyService: @unchecked Sendable {
             self.agent = agent
             self.reason = reason
             self.cwd = cwd
+            self.real = real
+        }
+    }
+
+    public struct ProxyEndpoint: Codable, Equatable, Sendable {
+        public var port: Int
+        public var ca: String
+        public var bundle: String
+        public init(port: Int, ca: String, bundle: String) {
+            self.port = port
+            self.ca = ca
+            self.bundle = bundle
         }
     }
 
     public struct Response: Codable, Equatable, Sendable {
         public var ok: Bool
         public var error: String?
+        /// The real key, only for a request that asked for it with its own fingerprint.
         public var value: String?
+        public var standIn: String?
+        public var token: String?
+        public var proxy: ProxyEndpoint?
         public var variable: String?
         public var grants: [GrantInfo]?
 
-        public init(ok: Bool, error: String? = nil, value: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil) {
+        public init(
+            ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil, token: String? = nil,
+            proxy: ProxyEndpoint? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
+        ) {
             self.ok = ok
             self.error = error
             self.value = value
+            self.standIn = standIn
+            self.token = token
+            self.proxy = proxy
             self.variable = variable
             self.grants = grants
         }
@@ -58,7 +89,8 @@ public final class KeyService: @unchecked Sendable {
         let key: String
         let program: String
         let expires: Date
-        var value: String
+        let standIn: String
+        let token: String
     }
 
     public static let defaultSeconds = 5 * 60
@@ -66,6 +98,7 @@ public final class KeyService: @unchecked Sendable {
 
     private let index: () throws -> KeyIndex
     private let open: (_ source: String, _ prompt: String) throws -> Data
+    private let proxy: KeyProxy?
     private let log: AuditLog
     private let now: () -> Date
     private var grants: [Grant] = []
@@ -74,8 +107,9 @@ public final class KeyService: @unchecked Sendable {
     public init(
         index: @escaping () throws -> KeyIndex,
         open: @escaping (_ source: String, _ prompt: String) throws -> Data,
-        log: AuditLog, now: @escaping () -> Date = Date.init
+        proxy: KeyProxy?, log: AuditLog, now: @escaping () -> Date = Date.init
     ) {
+        self.proxy = proxy
         self.index = index
         self.open = open
         self.log = log
@@ -91,7 +125,13 @@ public final class KeyService: @unchecked Sendable {
 
     private func dropExpired() {
         let current = now()
+        for grant in grants where grant.expires <= current { proxy?.remove(grant: grant.id) }
         grants.removeAll { $0.expires <= current }
+    }
+
+    /// One request that went out with a key, as the proxy reports it.
+    public func record(grant: String, key: String, detail: String) {
+        try? log.append(event: "request", key: key, grant: grant, detail: detail)
     }
 
     public func handle(_ request: Request, caller: AuditLog.Observed?) -> Response {
@@ -107,6 +147,7 @@ public final class KeyService: @unchecked Sendable {
                     grants: grants.map { GrantInfo(id: $0.id, key: $0.key, program: $0.program, expires: $0.expires) })
             case "revoke":
                 let closing = grants.filter { request.key == nil || $0.key == request.key }
+                for grant in closing { proxy?.remove(grant: grant.id) }
                 grants.removeAll { request.key == nil || $0.key == request.key }
                 for grant in closing {
                     try? log.append(event: "closed", key: grant.key, grant: grant.id, observed: caller)
@@ -136,14 +177,32 @@ public final class KeyService: @unchecked Sendable {
             throw VaultError("no key is called \(id). `list` shows them")
         }
         let name = URL(fileURLWithPath: program).lastPathComponent
+        // The account is the file's word and not the caller's, and it is how you notice the wrong one.
+        let account = key.account.map { " (\($0))" } ?? ""
+        if request.real == true {
+            // Asked every time and never remembered: past this point nothing protects the value.
+            let sealed: Data
+            do {
+                sealed = try open(key.source, "give the real key \(id)\(account) to \(name)")
+            } catch {
+                try log.append(event: "denied", key: id, observed: caller, declared: declared, detail: "real key")
+                throw error
+            }
+            let value = try EnvReferences.value(in: sealed, field: key.field)
+            try log.append(event: "handed", key: id, observed: caller, declared: declared, detail: "real key")
+            return Response(ok: true, value: value, variable: key.variable)
+        }
+        guard let proxy else { throw VaultError("the proxy is not available") }
+        guard let provider = key.provider else {
+            throw VaultError("\(id) has no provider, so nothing says where it may go. Set one, or use --real")
+        }
         let granted: Grant
         if let existing = grants.first(where: { $0.key == id && $0.program == name }) {
             granted = existing
         } else {
-            // A permission covers one key with one program, so one for `netlify` does not also let
-            // `printenv` read the key without showing you that it wants to.
-            // The account is the file's word and not the caller's, and it is how you notice the wrong one.
-            let prompt = (request.prompt ?? "run \(name) with the key \(id)") + (key.account.map { " (\($0))" } ?? "")
+            // A permission covers one key with one program, so one for `netlify` does not also cover
+            // something else without showing you that it asked.
+            let prompt = (request.prompt ?? "run \(name) with the key \(id)") + account
             let sealed: Data
             do {
                 sealed = try open(key.source, prompt)
@@ -152,17 +211,150 @@ public final class KeyService: @unchecked Sendable {
                 throw error
             }
             let seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
+            let expires = now().addingTimeInterval(TimeInterval(seconds))
+            let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
+            // From here the value lives in the proxy, and this process keeps only the stand-in.
+            let added = try proxy.add(
+                grant: grantID, key: id, provider: provider,
+                value: try EnvReferences.value(in: sealed, field: key.field), expires: expires)
             granted = Grant(
-                id: "g-" + UUID().uuidString.prefix(8).lowercased(), key: id, program: name,
-                expires: now().addingTimeInterval(TimeInterval(seconds)),
-                value: try EnvReferences.value(in: sealed, field: key.field))
+                id: grantID, key: id, program: name, expires: expires, standIn: added.standIn, token: added.token)
             grants.append(granted)
             try log.append(
                 event: "granted", key: id, grant: granted.id, observed: caller, declared: declared,
                 detail: "\(seconds) seconds")
         }
         try log.append(event: "used", key: id, grant: granted.id, observed: caller, declared: declared)
-        return Response(ok: true, value: granted.value, variable: key.variable)
+        return Response(
+            ok: true, standIn: granted.standIn, token: granted.token, proxy: try proxy.endpoint, variable: key.variable)
+    }
+}
+
+/// Starts the proxy and talks to it. It stops when this process does, since it reads until stdin ends.
+public final class ProxyProcess: KeyProxy, @unchecked Sendable {
+    private let process = Process()
+    private let input = Pipe()
+    private let output = Pipe()
+    private let lock = NSLock()
+    private var waiting: [String: DispatchSemaphore] = [:]
+    private var answers: [String: [String: Any]] = [:]
+    private var ready: KeyService.ProxyEndpoint?
+    private let started = DispatchSemaphore(value: 0)
+    /// Each request that went out: grant, key and a line for the log.
+    public var onEvent: (@Sendable (String, String, String) -> Void)?
+
+    public init(binary: URL, runFolder: URL) throws {
+        for handle in [input.fileHandleForReading, input.fileHandleForWriting, output.fileHandleForReading, output.fileHandleForWriting] {
+            _ = fcntl(handle.fileDescriptor, F_SETFD, FD_CLOEXEC)
+        }
+        process.executableURL = binary
+        process.arguments = ["proxy", "--run-dir", runFolder.path]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        signal(SIGPIPE, SIG_IGN)
+        try process.run()
+        let reader = output.fileHandleForReading
+        Thread.detachNewThread { [weak self] in
+            var pending = Data()
+            while true {
+                let chunk = reader.availableData
+                if chunk.isEmpty { break }
+                pending.append(chunk)
+                while let end = pending.firstIndex(of: 10) {
+                    let line = pending[pending.startIndex..<end]
+                    pending.removeSubrange(pending.startIndex...end)
+                    self?.handle(Data(line))
+                }
+            }
+            self?.failAll()
+        }
+        guard started.wait(timeout: .now() + 10) == .success, ready != nil else {
+            throw VaultError("the proxy did not start")
+        }
+    }
+
+    private func handle(_ line: Data) {
+        guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+            let op = message["op"] as? String
+        else { return }
+        switch op {
+        case "ready":
+            if let port = message["port"] as? Int, let ca = message["ca"] as? String, let bundle = message["bundle"] as? String {
+                ready = KeyService.ProxyEndpoint(port: port, ca: ca, bundle: bundle)
+            }
+            started.signal()
+        case "event":
+            guard let grant = message["grant"] as? String, let key = message["key"] as? String else { return }
+            let parts = [message["method"], message["host"], message["path"], message["status"]]
+            let method = parts[0] as? String ?? "?"
+            let place = "\(parts[1] as? String ?? "?")\(parts[2] as? String ?? "")"
+            onEvent?(grant, key, "\(method) \(place) \(parts[3] as? Int ?? 0)")
+        default:
+            guard let grant = message["grant"] as? String else { return }
+            lock.lock()
+            answers[grant] = message
+            let semaphore = waiting[grant]
+            lock.unlock()
+            semaphore?.signal()
+        }
+    }
+
+    private func failAll() {
+        lock.lock()
+        ready = nil
+        let all = waiting.values
+        lock.unlock()
+        for semaphore in all { semaphore.signal() }
+        started.signal()
+    }
+
+    public var endpoint: KeyService.ProxyEndpoint {
+        get throws {
+            guard let ready else { throw VaultError("the proxy stopped") }
+            return ready
+        }
+    }
+
+    private func send(_ object: [String: Any]) throws {
+        var line = try JSONSerialization.data(withJSONObject: object)
+        line.append(10)
+        try input.fileHandleForWriting.write(contentsOf: line)
+    }
+
+    public func add(grant: String, key: String, provider: String, value: String, expires: Date) throws -> (standIn: String, token: String) {
+        let semaphore = DispatchSemaphore(value: 0)
+        lock.lock()
+        waiting[grant] = semaphore
+        lock.unlock()
+        defer {
+            lock.lock()
+            waiting[grant] = nil
+            answers[grant] = nil
+            lock.unlock()
+        }
+        do {
+            try send([
+                "op": "add", "grant": grant, "key": key, "provider": provider, "value": value,
+                "expires": Int(expires.timeIntervalSince1970),
+            ])
+        } catch {
+            throw VaultError("the proxy stopped")
+        }
+        guard semaphore.wait(timeout: .now() + 10) == .success else { throw VaultError("the proxy did not answer") }
+        lock.lock()
+        let answer = answers[grant]
+        lock.unlock()
+        if let standIn = answer?["stand_in"] as? String, let token = answer?["token"] as? String { return (standIn, token) }
+        throw VaultError(answer?["error"] as? String ?? "the proxy did not answer")
+    }
+
+    public func remove(grant: String) {
+        try? send(["op": "remove", "grant": grant])
+    }
+
+    deinit {
+        try? input.fileHandleForWriting.close()
     }
 }
 

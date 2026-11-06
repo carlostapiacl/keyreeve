@@ -12,6 +12,7 @@ pub mod journal;
 pub mod keys;
 pub mod places;
 pub mod providers;
+pub mod proxy;
 pub mod recipe;
 pub mod rotate;
 pub mod schedule;

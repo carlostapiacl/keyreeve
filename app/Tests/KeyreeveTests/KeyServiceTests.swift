@@ -94,29 +94,43 @@ struct AuditLogTests {
     }
 }
 
+final class FakeProxy: KeyProxy, @unchecked Sendable {
+    var added: [(grant: String, provider: String, value: String)] = []
+    var removed: [String] = []
+    var refuses = false
+    func add(grant: String, key: String, provider: String, value: String, expires: Date) throws -> (standIn: String, token: String) {
+        if refuses { throw VaultError("this provider cannot use a stand-in") }
+        added.append((grant, provider, value))
+        return ("STAND-IN", "TOKEN-\(grant)")
+    }
+    func remove(grant: String) { removed.append(grant) }
+    var endpoint: KeyService.ProxyEndpoint { KeyService.ProxyEndpoint(port: 9, ca: "/ca", bundle: "/bundle") }
+}
+
 /// The service, with a counter in place of the finger and a clock the test moves.
 final class Fixture: @unchecked Sendable {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
     var prompts: [String] = []
     var refuse = false
     var now = Date(timeIntervalSince1970: 1_800_000_000)
+    let proxy = FakeProxy()
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return KeyService(
-            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\n") },
+            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n") },
             open: { source, prompt in
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
                 return Data((source == "m.env" ? "OTHER=x\nAPI=CANARY-mail\n" : "CANARY-netlify\n").utf8)
             },
-            log: log, now: { self.now })
+            proxy: proxy, log: log, now: { self.now })
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/bin/zsh", chain: ["zsh", "claude"])
 
-    func use(_ key: String, _ program: String = "/usr/local/bin/netlify", seconds: Int? = nil) -> KeyService.Response {
+    func use(_ key: String, _ program: String = "/usr/local/bin/netlify", seconds: Int? = nil, real: Bool? = nil) -> KeyService.Response {
         service.handle(
-            .init(op: "use", key: key, seconds: seconds, program: program, arguments: 2, agent: "claude", reason: "deploy", cwd: "/w"),
+            .init(op: "use", key: key, seconds: seconds, program: program, arguments: 2, agent: "claude", reason: "deploy", cwd: "/w", real: real),
             caller: caller)
     }
 
@@ -126,9 +140,10 @@ final class Fixture: @unchecked Sendable {
 struct KeyServiceTests {
     @Test func testOneFingerCoversAKeyAndProgramUntilItEnds() throws {
         let f = Fixture()
-        #expect(f.use("netlify").value == "CANARY-netlify")
+        #expect(f.use("netlify").standIn == "STAND-IN")
         #expect(f.use("netlify").variable == "NETLIFY_AUTH_TOKEN")
         #expect(f.prompts.count == 1)
+        #expect(f.proxy.added.count == 1)
         f.now.addTimeInterval(TimeInterval(KeyService.defaultSeconds + 1))
         #expect(f.use("netlify").ok)
         #expect(f.prompts.count == 2)
@@ -148,8 +163,63 @@ struct KeyServiceTests {
         #expect(f.prompts.count == 2)
     }
 
-    @Test func testAFieldIsWhatComesBack() throws {
-        #expect(Fixture().use("mail").value == "CANARY-mail")
+    @Test func testTheFieldGoesToTheProxyAndTheValueNeverComesBack() throws {
+        let f = Fixture()
+        let answer = f.use("mail")
+        #expect(f.proxy.added.first?.value == "CANARY-mail")
+        #expect(f.proxy.added.first?.provider == "resend")
+        #expect(answer.value == nil)
+        let encoded = String(decoding: try JSONEncoder().encode(answer), as: UTF8.self)
+        #expect(!encoded.contains("CANARY"))
+        #expect(answer.token == "TOKEN-\(f.proxy.added[0].grant)")
+        #expect(answer.proxy?.port == 9)
+    }
+
+    @Test func testTheRealKeyAsksEveryTimeAndIsLoggedApart() throws {
+        let f = Fixture()
+        #expect(f.use("netlify", real: true).value == "CANARY-netlify")
+        #expect(f.use("netlify", real: true).value == "CANARY-netlify")
+        #expect(f.prompts.count == 2)
+        #expect(f.prompts[0].hasPrefix("give the real key netlify"))
+        #expect(f.proxy.added.isEmpty)
+        #expect(try f.log.entries().map(\.event) == ["handed", "handed"])
+        #expect(f.service.isIdle)
+    }
+
+    @Test func testAKeyWithNoProviderHasNowhereToGo() throws {
+        let f = Fixture()
+        let answer = f.use("loose")
+        #expect(!answer.ok)
+        #expect(f.prompts.isEmpty)
+        #expect(answer.error?.contains("--real") == true)
+        #expect(f.use("loose", real: true).ok)
+    }
+
+    @Test func testAProviderThatCannotStandInLeavesNoPermission() throws {
+        let f = Fixture()
+        f.proxy.refuses = true
+        #expect(!f.use("netlify").ok)
+        #expect(f.service.isIdle)
+    }
+
+    @Test func testEndingAPermissionReachesTheProxy() throws {
+        let f = Fixture()
+        _ = f.use("netlify")
+        let grant = f.proxy.added[0].grant
+        _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
+        #expect(f.proxy.removed == [grant])
+        _ = f.use("netlify")
+        f.now.addTimeInterval(TimeInterval(KeyService.defaultSeconds + 1))
+        #expect(f.service.isIdle)
+        #expect(f.proxy.removed.count == 2)
+    }
+
+    @Test func testARequestGoesInTheLog() throws {
+        let f = Fixture()
+        f.service.record(grant: "g", key: "netlify", detail: "GET api.netlify.com/x 200")
+        let entry = try #require(try f.log.entries().first)
+        #expect(entry.event == "request")
+        #expect(entry.detail == "GET api.netlify.com/x 200")
     }
 
     @Test func testARefusedFingerGivesNothingAndIsLogged() throws {
@@ -213,7 +283,7 @@ struct KeyServiceTests {
         let mode = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber
         #expect(mode?.intValue == 0o600)
         let answer = try KeySocket.send(.init(op: "use", key: "netlify", program: "/bin/ls", arguments: 0), path: path, timeout: 5)
-        #expect(answer.value == "CANARY-netlify")
+        #expect(answer.standIn == "STAND-IN")
         let entry = try #require(try f.log.entries().first)
         #expect(entry.observed?.pid == getpid())
         let chain = entry.observed?.chain ?? []

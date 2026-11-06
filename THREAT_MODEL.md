@@ -111,9 +111,16 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   history tools to skip it are a convention, and a tool can ignore them.
 - **The list of programs that cannot be allowed is not complete.** It stops the obvious ways to read a key. A program you allow
   and the arguments an agent gives it can still reach it.
-- **`use` still hands over the real key.** A permission covers one key with one program as the caller names it. A program written to
-  speak to the service itself can name any program, and gets the value for as long as a permission exists. The stand-in value of the next
-  step closes this. Until then, the service protects you from accidents and leaves a record, and it does not stop a program attacking it.
+- **A stand-in does not confine a program.** The real key stays in the proxy's memory and the command holds a stand-in, so
+  `printenv` and a leaked variable give nothing. A program running as you can still use the key through the proxy while a permission lasts,
+  doing whatever that key allows at its provider, and it can read your original files or replace these binaries. keyreeve is not a
+  sandbox. If that matters, run the agent in one, and keep the keys folder and `~/.keyreeve` out of its reach.
+- **The proxy reads that traffic.** It ends TLS for a key's hosts, with a CA made for each run whose key stays in memory. Only commands
+  started by `use` are pointed at that CA. The system's own trust store is never touched.
+- **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a
+  stand-in, and a plain reply is scrubbed. A compressed reply or one split across chunks is not.
+- **`--real` is the real key.** A fingerprint is asked each time, and from there it is in the command's hands. So is the MCP server's
+  `run_with_key` and `env`, which give the real value to the program they run.
 - **The usage log shows who, not proof of who.** A process and its parents come from the system. An agent can start a command through
   something else, and everything under your user looks alike. It can also rewrite the log and its hashes.
 - **An env file's references name your keys.** `keyreeve://` holds no value, but it says which keys exist.

@@ -10,6 +10,12 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 hmac = "0.12"
+# The proxy that lets a command use a key it never holds. It terminates TLS for that key's hosts, with
+# a CA made for each run. rustls, ring and webpki-roots already come with ureq.
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
+ring = "0.17.14"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1.0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9.42"

@@ -270,12 +270,17 @@ keyreeve-vault audit --key netlify
 keyreeve-vault audit --verify
 ```
 
-`use` runs one command with one key. Your finger is asked once for that key with that program, and the permission lasts 5 minutes unless
-`--for` says otherwise. A small service keeps it, and stops on its own when idle. Locking the app ends every permission. The variable comes from
-the provider's file, or from `--as`.
+`use` runs one command with one key, and the command never holds it. Its variable holds a stand-in of the same shape, and a local proxy puts
+the real key on requests to that provider's hosts, which come from its file. `printenv` shows the stand-in, and sent anywhere else it is useless.
+Your finger is asked once for that key with that program, and the permission lasts 5 minutes unless `--for` says otherwise. A small service keeps
+it, and stops on its own when idle. Locking the app ends every permission. The variable comes from the provider's file, or from `--as`.
 
-Today `use` hands the real key to the command, so a command you allow can read it. The next step is a proxy, so the command holds a
-stand-in.
+The swap happens in headers and in Basic passwords, and in the address for a provider that takes its key there. A body keeps the stand-in, so a
+tool that sends its key in a body fails and leaks nothing. A reply that echoes the key gets the stand-in back. Other hosts get a tunnel, with TLS
+end to end. Measured through it with fake keys: `curl`, `gh`, `netlify`, Node and Python.
+
+`--real` hands the command the real key, for what cannot use a stand-in, such as a provider that signs requests or a script of your own. It asks for
+your finger every time and is logged apart. A command that sends a stand-in past the proxy, or ignores its variables, simply fails to authenticate.
 
 Every decision goes in `~/.keyreeve/audit.jsonl`: which key, which permission, the process and its parents as the system reports them, and
 apart from those what the caller says about itself. It holds no value and no arguments. Each line carries the hash of the one before, so `--verify`

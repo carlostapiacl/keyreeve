@@ -107,7 +107,7 @@ struct HomeView: View {
             status(T("Rejected"), stats.rejected, "xmark.circle.fill", Theme.bad)
             status(T("No answer"), stats.noAnswer, "questionmark.circle", Theme.muted)
             status(T("Never checked"), stats.neverChecked, "circle.dashed", Theme.faint)
-            HStack(spacing: 6) {
+            FlowRow(spacing: 6) {
                 Button(T("Can be checked") + ": \(stats.canCheck)") { open(.checkable, nil) }
                     .buttonStyle(KRButtonStyle())
                 if stats.stale > 0 {

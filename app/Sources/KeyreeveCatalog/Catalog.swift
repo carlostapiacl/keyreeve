@@ -2,6 +2,10 @@ import Foundation
 
 /// One row of `catalog.csv`. It has names and results, never a key's value.
 public struct CatalogItem: Identifiable, Hashable, Sendable {
+    /// Whether the vault holds this file, which it knows with no fingerprint.
+    public enum VaultCopy: Hashable, Sendable { case none, sealed, outdated }
+
+    public var vault: VaultCopy = .none
     public var path: String
     public var level: String
     public var tags: [String]
@@ -230,6 +234,7 @@ public enum Sidebar: Hashable, Sendable {
     case result(String)
     case level(String)
     case tag(String)
+    case vault
 }
 
 public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String) -> [CatalogItem] {
@@ -238,6 +243,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .home, .all: return !item.isArchived
         case .attention: return item.attention != nil
         case .archive: return item.isArchived
+        case .vault: return item.vault != .none && !item.isArchived
         case .checkable: return item.canCheck && !item.isArchived
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()
@@ -399,4 +405,17 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
             }
         return Array(all.sorted { ($0.at, $0.key) > ($1.at, $1.key) }.prefix(limit))
     }
+}
+
+/// Keys a person could put in the vault first: live ones they would miss least if something went
+/// wrong while they learn it. A key with no rating comes after the rated ones.
+public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
+    let rank = { (item: CatalogItem) in item.criticality == 0 ? 6 : item.criticality }
+    return items
+        .filter { $0.vault == .none && $0.isSecret && !$0.isArchived && $0.format != "binary" }
+        .sorted {
+            let first = ($0.lastResult == "works" ? 0 : 1, rank($0), $0.path)
+            let second = ($1.lastResult == "works" ? 0 : 1, rank($1), $1.path)
+            return first < second
+        }
 }

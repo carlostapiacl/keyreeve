@@ -8,7 +8,7 @@ use crate::script;
 use crate::secret::Secret;
 use crate::ssh;
 use crate::transport::{exchange_token, HttpTransport, Request, Transport};
-use crate::verify::{inside_folder, load_key, now, resolve, Plan};
+use crate::verify::{inside_folder, now, resolve, Plan, Sealed};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -127,6 +127,15 @@ pub fn suggest(template: &str, fields: &BTreeMap<String, String>) -> Option<Stri
 }
 
 pub fn run_plan(plan: &Path, keys: &Path, details: &Path) -> Result<Vec<(String, String)>, String> {
+    run_plan_with(plan, keys, details, &Sealed::default())
+}
+
+pub fn run_plan_with(
+    plan: &Path,
+    keys: &Path,
+    details: &Path,
+    sealed: &Sealed,
+) -> Result<Vec<(String, String)>, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
     let plan: Plan =
         serde_norway::from_str(&text).map_err(|e| format!("{}: {e}", plan.display()))?;
@@ -140,15 +149,15 @@ pub fn run_plan(plan: &Path, keys: &Path, details: &Path) -> Result<Vec<(String,
         let result = inside_folder(&entry.file)
             .and_then(|()| resolve(&entry.recipe, entry.host.as_deref()))
             .and_then(|recipe| {
-                let file = keys.join(&entry.file);
+                let source = sealed.source(keys, &entry.file);
                 if recipe.auth.kind.as_deref() == Some("ssh") {
                     let mut fields = BTreeMap::new();
-                    if let ssh::Reply::Accepted(account) = ssh::greet(&recipe, &file)? {
+                    if let ssh::Reply::Accepted(account) = source.greet(&recipe)? {
                         fields.insert("account".to_owned(), account);
                     }
                     return Ok((recipe, fields));
                 }
-                let key = load_key(&file, entry.field.as_deref(), &recipe)?;
+                let key = source.load(entry.field.as_deref(), &recipe)?;
                 if let Some(run) = &recipe.auth.run {
                     let answer =
                         script::run(&providers::programs_folder(), run, "identify", Some(&key))?;

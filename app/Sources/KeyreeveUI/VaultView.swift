@@ -1,0 +1,188 @@
+import KeyreeveCatalog
+import KeyreeveVault
+import SwiftUI
+
+/// Where keys move into the vault. Sealing needs no fingerprint, and opening always does.
+struct VaultView: View {
+    @ObservedObject var model: AppModel
+    @State private var chosen: Set<String> = []
+
+    private var sealed: [CatalogItem] { filter(model.items, by: .vault, search: "") }
+    private var candidates: [CatalogItem] { vaultCandidates(model.items) }
+    private var outdated: Int { sealed.filter { $0.vault == .outdated }.count }
+
+    var body: some View {
+        Group {
+            if let draft = model.vaultDraft {
+                RecoveryKeyView(draft: draft, model: model)
+            } else if model.hasVault {
+                ready
+            } else {
+                intro
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var intro: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+            Text(T("Keep keys out of plain files")).font(Theme.title).foregroundStyle(Theme.text)
+            Text(T("The vault seals each key with a key inside this Mac's chip. Your finger opens it, and nothing else on this Mac can read it without asking."))
+                .font(Theme.body).foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(T("You get a recovery key once. If this Mac dies, it is the only way back in, so have paper at hand."))
+                .font(Theme.body).foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(T("Create my vault")) { model.startVault() }
+                .buttonStyle(KRButtonStyle(primary: true))
+            }
+            .frame(maxWidth: 460, alignment: .leading)
+            .padding(Theme.pagePadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var ready: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                summary
+                if let report = model.vaultComparison { comparison(report) }
+                addKeys
+            }
+            .padding(Theme.pagePadding)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var summary: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(sealed.count)").font(Theme.figure).monospacedDigit().foregroundStyle(Theme.text)
+                    Text(sealed.count == 1 ? T("key sealed") : T("keys sealed")).font(Theme.body).foregroundStyle(Theme.muted)
+                    Spacer()
+                    Button(T("Compare with the files")) { model.compareVault() }
+                        .buttonStyle(KRButtonStyle())
+                        .disabled(model.busy || sealed.isEmpty)
+                }
+                Text(T("Your original files stay where they are. Checks use the sealed copy, and ask for your finger once per batch."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if outdated > 0 {
+                    Label(
+                        outdated == 1
+                            ? T("1 file changed after it was sealed. Checks use that file.")
+                            : T("%d files changed after they were sealed. Checks use those files.", outdated),
+                        systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.caption).foregroundStyle(Theme.warn)
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    private func comparison(_ report: VaultKeeper.CompareReport) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(
+                    report.same.count == 1 ? T("1 matches its file") : T("%d match their file", report.same.count),
+                    systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(report.different.isEmpty && report.noFile.isEmpty ? Theme.good : Theme.text)
+                ForEach(report.different, id: \.self) { name in
+                    Label(T("Different from its file: %@", name), systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.warn)
+                }
+                ForEach(report.noFile, id: \.self) { name in
+                    Label(T("No file to compare: %@", name), systemImage: "questionmark.circle").foregroundStyle(Theme.muted)
+                }
+            }
+            .font(Theme.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+        }
+    }
+
+    private var addKeys: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    SectionTitle(T("Add keys"))
+                    Spacer()
+                    Button(T("Choose 5 to start")) {
+                        chosen = Set(candidates.prefix(5).map(\.path))
+                    }
+                    .buttonStyle(KRButtonStyle())
+                    .help(T("Live keys you would miss least"))
+                    Button(chosen.isEmpty ? T("Seal") : T("Seal %d", chosen.count)) {
+                        model.seal(candidates.filter { chosen.contains($0.path) })
+                        chosen = []
+                    }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .disabled(model.busy || chosen.isEmpty)
+                }
+                if candidates.isEmpty {
+                    Text(T("Nothing left to add.")).font(Theme.body).foregroundStyle(Theme.muted)
+                }
+                ForEach(candidates) { item in
+                    Toggle(isOn: binding(for: item.path)) {
+                        KeyRow(item: item, compact: true)
+                    }
+                    .toggleStyle(.checkbox)
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    private func binding(for path: String) -> Binding<Bool> {
+        Binding(
+            get: { chosen.contains(path) },
+            set: { isOn in
+                if isOn { chosen.insert(path) } else { chosen.remove(path) }
+            })
+    }
+}
+
+/// Shows the recovery key once. The vault is saved only after the person proves they wrote it down.
+struct RecoveryKeyView: View {
+    let draft: VaultDraft
+    @ObservedObject var model: AppModel
+    @State private var typed = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+            Text(T("Write down your recovery key")).font(Theme.title).foregroundStyle(Theme.text)
+            Text(T("It opens every key in this vault, and it is shown only now. Keep it on paper or in a password manager, away from this Mac."))
+                .font(Theme.body).foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(draft.recoveryKey)
+                .font(.system(size: 15, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.smallRadius))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(T("Type its last group to continue")).font(Theme.section).foregroundStyle(Theme.text)
+                TextField(T("Last group"), text: $typed)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+                    .autocorrectionDisabled()
+            }
+            HStack {
+                Button(T("Cancel")) { model.cancelVault() }.buttonStyle(KRButtonStyle())
+                Button(T("I wrote it down")) { model.finishVault() }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .disabled(!draft.accepts(typed))
+            }
+            }
+            .frame(maxWidth: 520, alignment: .leading)
+            .padding(Theme.pagePadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}

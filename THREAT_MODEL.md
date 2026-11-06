@@ -72,6 +72,14 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
   your files. Turn it off in Settings.
 - **A fingerprint lasts a while.** During the period you choose, 5 minutes by default, the app checks "Ask me" keys without
   asking. It applies to buttons in the app alone. Locking ends it, and the vault asks every time.
+- **One fingerprint opens a whole batch.** The prompt states how many keys, and not which. While a batch runs, its opened
+  values are in the app's memory and the command's, and they reach the command on stdin, so they never appear in arguments
+  or variables. Swift strings are not wiped.
+- **An SSH key from the vault touches the disk.** `ssh` reads keys from files, so the sealed copy spends the call in a file
+  only you can read, overwritten and removed afterwards. A crash in between leaves it there.
+- **Sealing is not moving.** Until you remove an original, the file is as readable as before, and anything that reads it
+  gets the key with no fingerprint. The weekly check still reads files.
+- **The screen shows the recovery key.** Anything recording your screen can see it, and the app cannot tell.
 - **A key in the address.** Some providers accept a key only in the URL. It travels inside HTTPS, but such a provider may
   log its own addresses, which is why this is a declared `auth: { type: url }` and never a default.
 - **The app's settings decide where a key is sent.** `edits.json` and your rules name the recipe for each key. A program

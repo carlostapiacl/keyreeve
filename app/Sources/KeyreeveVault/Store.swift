@@ -28,6 +28,11 @@ public struct EnclaveRecipient: VaultRecipient {
         let context = LAContext()
         context.localizedReason = reason
         context.interactionNotAllowed = !interactive
+        return try load(blob: blob, context: context)
+    }
+
+    /// With a context that already has the fingerprint, so a batch asks once.
+    public static func load(blob: Data, context: LAContext) throws -> EnclaveRecipient {
         let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(
             dataRepresentation: blob, authenticationContext: context)
         return EnclaveRecipient(key: key)
@@ -71,6 +76,21 @@ public struct VaultStore {
     }
 
     public func saveBlob(_ blob: Data) throws { try write(blob, to: blobURL) }
+
+    /// Keeps which key was used and by which program, next to the vault. It never holds a value or
+    /// the command's arguments, which can carry anything. A failure here stops nothing.
+    public func recordUse(of name: String, by command: String) {
+        let entry: [String: Any] = [
+            "at": Int(Date().timeIntervalSince1970), "name": name,
+            "command": URL(fileURLWithPath: command).lastPathComponent,
+        ]
+        guard let line = try? JSONSerialization.data(withJSONObject: entry) else { return }
+        let path = directory.deletingLastPathComponent().appendingPathComponent("usage.jsonl").path
+        let descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
+        guard descriptor >= 0 else { return }
+        defer { close(descriptor) }
+        _ = (line + Data("\n".utf8)).withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+    }
 
     public func loadBlob() throws -> Data { try Data(contentsOf: blobURL) }
 

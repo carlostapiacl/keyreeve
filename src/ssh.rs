@@ -2,8 +2,59 @@
 //! file, and only the account named in the server's greeting comes back.
 
 use crate::recipe::Recipe;
-use std::path::Path;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
+
+/// A private copy of a key, for the one call to `ssh` that needs a file. It is overwritten and
+/// removed when this value is dropped. A crash in between leaves it, readable only by you.
+pub struct TempKey(PathBuf);
+
+impl TempKey {
+    pub fn write(text: &str) -> Result<Self, String> {
+        let folder = crate::providers::home();
+        let failed = |_| "could not prepare the key for ssh".to_owned();
+        fs::create_dir_all(&folder).map_err(failed)?;
+        let name = format!(
+            ".ssh-key-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::SeqCst)
+        );
+        let path = folder.join(name);
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path).map_err(failed)?;
+        // Dropping this on the way out of an error still removes the file.
+        let key = Self(path);
+        file.write_all(text.as_bytes()).map_err(failed)?;
+        if !text.ends_with('\n') {
+            file.write_all(b"\n").map_err(failed)?;
+        }
+        Ok(key)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempKey {
+    fn drop(&mut self) {
+        if let Ok(size) = fs::metadata(&self.0).map(|meta| meta.len()) {
+            let _ = fs::write(&self.0, vec![0u8; size as usize]);
+        }
+        let _ = fs::remove_file(&self.0);
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Reply {

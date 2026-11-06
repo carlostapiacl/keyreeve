@@ -1,5 +1,7 @@
 import AppKit
+import CryptoKit
 import KeyreeveCatalog
+import KeyreeveVault
 import LocalAuthentication
 import SwiftUI
 
@@ -23,7 +25,12 @@ public final class AppModel: ObservableObject {
     /// How far the current batch got, as done and total.
     @Published public var progress: (done: Int, total: Int)?
     @Published public var lastRun: RunSummary?
+    @Published public var hasVault = false
+    /// A new vault waiting for its recovery key to be written down. Nothing is on disk yet.
+    @Published public var vaultDraft: VaultDraft?
+    @Published public var vaultComparison: VaultKeeper.CompareReport?
     public let files: KeyreeveFiles
+    public let vaultStore: VaultStore
     private let binary: URL?
     private var lockTask: Task<Void, Never>?
     private var confirmation = ConfirmationWindow()
@@ -31,6 +38,7 @@ public final class AppModel: ObservableObject {
     public init(files: KeyreeveFiles = KeyreeveFiles(), binary: URL? = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli")) {
         self.files = files
         self.binary = binary
+        vaultStore = VaultStore(directory: files.directory.appendingPathComponent("vault"))
     }
 
     public var keysFolder: URL? { files.keysFolder() }
@@ -57,6 +65,8 @@ public final class AppModel: ObservableObject {
     public func lock() {
         lockTask?.cancel()
         confirmation.close()
+        vaultDraft = nil
+        vaultComparison = nil
         unlocked = false
         items = []
         activity = []
@@ -98,6 +108,16 @@ public final class AppModel: ObservableObject {
         for index in parsed.indices {
             parsed[index].ignoredUntil = ignored[parsed[index].path]
             parsed[index].details = details[parsed[index].path]
+        }
+        // Reading the names and dates needs no fingerprint.
+        hasVault = vaultStore.exists
+        if let vault = try? vaultStore.load() {
+            let folder = keysFolder
+            for index in parsed.indices {
+                guard let entry = vault.entries[parsed[index].path] else { continue }
+                let changed = folder.map { VaultKeeper.isOutdated(entry, path: parsed[index].path, folder: $0) } ?? false
+                parsed[index].vault = changed ? .outdated : .sealed
+            }
         }
         items = parsed
         activity = files.activity()
@@ -151,13 +171,63 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// Gets what these keys need before they can run. Keys in the vault ask for one fingerprint
+    /// for the whole list, and that also answers for the "Ask me" keys in it. A file that changed
+    /// after sealing is read from disk, because the sealed copy may be an old key.
+    private func withKeys(
+        _ list: [CatalogItem], reason: String, by command: String,
+        run: @escaping @MainActor (_ sealed: [String: String]) -> Void
+    ) {
+        let names = list.filter { $0.vault == .sealed }.map(\.path)
+        guard !names.isEmpty else {
+            gated(list, reason: reason) { run([:]) }
+            return
+        }
+        openVault(reason: reason) { unlocked in
+            guard let unlocked else {
+                self.message = T("Not checked: it was not confirmed")
+                return
+            }
+            self.confirmation.confirm()
+            let store = self.vaultStore
+            self.busy = true
+            self.message = T("Opening the vault…")
+            Task.detached {
+                let result = Result {
+                    try VaultKeeper.open(names: names, recipient: try unlocked.recipient(store), store: store, by: command)
+                }
+                await MainActor.run {
+                    self.busy = false
+                    switch result {
+                    case .success(let sealed): run(sealed)
+                    case .failure: self.message = T("The vault could not be opened")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Asks for the finger once. The chip accepts this same confirmation for each key that follows.
+    private func openVault(reason: String, then: @escaping @MainActor (UnlockedVault?) -> Void) {
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            message = T("The fingerprint sensor is not available. Open the lid, or check your Mac's settings.")
+            return
+        }
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, _ in
+            let unlocked = UnlockedVault(context: context)
+            Task { @MainActor in then(success ? unlocked : nil) }
+        }
+    }
+
     public func check(_ chosen: [CatalogItem], then done: (@MainActor () -> Void)? = nil) {
         let list = chosen.filter(providers.canCheck)
         guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
         let reason =
             list.count == 1
             ? T("check 1 key with its provider") : T("check %d keys with their providers", list.count)
-        gated(list, reason: reason) {
+        withKeys(list, reason: reason, by: "check") { sealed in
             self.busy = true
             self.lastRun = nil
             self.progress = (0, list.count)
@@ -165,7 +235,7 @@ public final class AppModel: ObservableObject {
             let files = self.files
             Task.detached {
                 let result = Result {
-                    try CheckRunner.run(list, binary: binary, keysFolder: folder, files: files) { finished, total in
+                    try CheckRunner.run(list, binary: binary, keysFolder: folder, files: files, sealed: sealed) { finished, total in
                         Task { @MainActor in self.progress = (finished, total) }
                     }
                 }
@@ -191,14 +261,14 @@ public final class AppModel: ObservableObject {
     public func identify(_ chosen: [CatalogItem]) {
         let list = chosen.filter(providers.canIdentify)
         guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
-        gated(list, reason: T("identify %d keys with their providers", list.count)) {
+        withKeys(list, reason: T("identify %d keys with their providers", list.count), by: "identify") { sealed in
             self.busy = true
             self.message = T("Identifying…")
             let files = self.files
             let providers = self.providers
             Task.detached {
                 let result = Result {
-                    try CheckRunner.identify(list, providers: providers, binary: binary, keysFolder: folder, files: files)
+                    try CheckRunner.identify(list, providers: providers, binary: binary, keysFolder: folder, files: files, sealed: sealed)
                 }
                 await MainActor.run {
                     self.busy = false
@@ -235,13 +305,14 @@ public final class AppModel: ObservableObject {
         }
         guard !busy, let binary else { return }
         let folder = keysFolder
-        let start = {
+        let start: @MainActor ([String: String]) -> Void = { sealed in
             self.busy = true
             self.message = custom.title
             Task.detached {
                 let result = Result {
                     try CheckRunner.runAction(
-                        provider: provider, action: custom, item: item, binary: binary, keysFolder: folder)
+                        provider: provider, action: custom, item: item, binary: binary, keysFolder: folder,
+                        sealed: sealed[item.path])
                 }
                 await MainActor.run {
                     self.busy = false
@@ -253,9 +324,11 @@ public final class AppModel: ObservableObject {
             }
         }
         if custom.needs_key {
-            gated([CatalogItem(path: item.path, level: "ask")], reason: custom.title, run: start)
+            var asking = item
+            asking.level = "ask"
+            withKeys([asking], reason: custom.title, by: custom.id, run: start)
         } else {
-            start()
+            start([:])
         }
     }
 
@@ -263,6 +336,88 @@ public final class AppModel: ObservableObject {
         guard let binary else { return }
         try? CheckRunner.approve(provider.id, binary: binary)
         load()
+    }
+
+    // MARK: Vault
+
+    /// Makes the chip's key and the recovery key, and keeps both in memory for the next screen.
+    public func startVault() {
+        guard !vaultStore.exists else { return }
+        do {
+            let (enclave, blob) = try EnclaveRecipient.create()
+            vaultDraft = VaultDraft(enclave: enclave, blob: blob, recovery: P256.KeyAgreement.PrivateKey())
+        } catch {
+            message = T("This Mac could not create a key in its chip")
+        }
+    }
+
+    public func finishVault() {
+        guard let draft = vaultDraft else { return }
+        do {
+            try draft.save(to: vaultStore)
+            message = T("Your vault is ready")
+        } catch {
+            message = T("The vault could not be saved")
+        }
+        vaultDraft = nil
+        load()
+    }
+
+    public func cancelVault() { vaultDraft = nil }
+
+    /// Copies the chosen files into the vault. This needs no fingerprint, and originals stay.
+    public func seal(_ chosen: [CatalogItem]) {
+        guard !busy, !chosen.isEmpty, let folder = keysFolder else { return }
+        busy = true
+        vaultComparison = nil
+        let store = vaultStore
+        let paths = chosen.map(\.path)
+        Task.detached {
+            let result = Result { try VaultKeeper.seal(paths: paths, folder: folder, store: store) }
+            await MainActor.run {
+                self.busy = false
+                self.load()
+                switch result {
+                case .success(let report):
+                    self.message =
+                        report.skipped.isEmpty
+                        ? (report.sealed.count == 1 ? T("1 key sealed") : T("%d keys sealed", report.sealed.count))
+                        : T("%d keys sealed, %d could not be read as text", report.sealed.count, report.skipped.count)
+                case .failure:
+                    self.message = T("The vault could not be saved")
+                }
+            }
+        }
+    }
+
+    /// Opens each sealed copy and compares it with its file, so you can trust the vault.
+    public func compareVault() {
+        let names = items.filter { $0.vault != .none }.map(\.path)
+        guard !busy, !names.isEmpty, let folder = keysFolder else { return }
+        openVault(reason: T("compare %d sealed keys with their files", names.count)) { unlocked in
+            guard let unlocked else {
+                self.message = T("Not checked: it was not confirmed")
+                return
+            }
+            self.busy = true
+            let store = self.vaultStore
+            Task.detached {
+                let result = Result {
+                    try VaultKeeper.compare(names: names, folder: folder, recipient: try unlocked.recipient(store), store: store)
+                }
+                await MainActor.run {
+                    self.busy = false
+                    switch result {
+                    case .success(let report):
+                        self.vaultComparison = report
+                        self.message = nil
+                    case .failure:
+                        self.message = T("The vault could not be opened")
+                    }
+                    self.load()
+                }
+            }
+        }
     }
 
     // MARK: Actions and edits
@@ -329,5 +484,14 @@ public final class AppModel: ObservableObject {
             message = (error as? CheckError)?.description
         }
         load()
+    }
+}
+
+/// A fingerprint already given, carried to where the chip is used.
+private struct UnlockedVault: @unchecked Sendable {
+    let context: LAContext
+
+    func recipient(_ store: VaultStore) throws -> EnclaveRecipient {
+        try EnclaveRecipient.load(blob: try store.loadBlob(), context: context)
     }
 }

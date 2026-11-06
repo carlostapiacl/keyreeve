@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/**"
+      - "tests/**"
       - "examples/**"
       - "recipes/**"
       - "Cargo.toml"

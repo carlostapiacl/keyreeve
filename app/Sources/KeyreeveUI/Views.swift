@@ -56,6 +56,7 @@ public struct MainView: View {
                 Label(T("Overview"), systemImage: "square.grid.2x2").tag(Sidebar.home)
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
                 sidebarRow(T("All keys"), "key", .all, active.count)
+                sidebarRow(T("Vault"), "lock.shield", .vault, filter(items, by: .vault, search: "").count)
                 sidebarRow(T("Archive"), "archivebox", .archive, items.count - active.count)
                 Section(T("Projects")) {
                     ForEach(projectTags(in: active), id: \.tag) { entry in
@@ -83,6 +84,8 @@ public struct MainView: View {
                 search = ""
                 chosenRows = path.map { [$0] } ?? []
             }
+        } else if selection == .vault {
+            VaultView(model: model)
         } else {
             VStack(spacing: 0) {
                 filterBar
@@ -149,6 +152,7 @@ public struct MainView: View {
         case .attention: return T("To review")
         case .all: return T("All keys")
         case .archive: return T("Archive")
+        case .vault: return T("Vault")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")
@@ -278,7 +282,16 @@ struct KeyRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.title).font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 5) {
+                    Text(item.title).font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                    if item.vault != .none {
+                        Image(systemName: "lock.shield.fill")
+                            .font(Theme.caption)
+                            .foregroundStyle(item.vault == .sealed ? Theme.good : Theme.warn)
+                            .help(T(item.vault == .sealed ? "In the vault" : "The file changed after it was sealed"))
+                            .accessibilityLabel(T(item.vault == .sealed ? "In the vault" : "The file changed after it was sealed"))
+                    }
+                }
                 if !item.name.isEmpty {
                     Text(item.path).font(Theme.code).foregroundStyle(Theme.faint).lineLimit(1).truncationMode(.middle)
                 }
@@ -363,6 +376,7 @@ struct KeyDetail: View {
                     }
                 }
                 checkButton
+                if item.vault != .none { vaultNote }
                 customActions
                 identity
                 naming
@@ -395,6 +409,16 @@ struct KeyDetail: View {
         } message: {
             Text(T("Archiving hides it from your lists. It does not stop it: this key still works."))
         }
+    }
+
+    private var vaultNote: some View {
+        Label(
+            T(item.vault == .sealed ? "In the vault. Checks use the sealed copy." : "The file changed after it was sealed. Checks use the file."),
+            systemImage: "lock.shield"
+        )
+        .font(Theme.caption)
+        .foregroundStyle(item.vault == .sealed ? Theme.muted : Theme.warn)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Tests this one key. A key with no place to check says why, instead of hiding the button.

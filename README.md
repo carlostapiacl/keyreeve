@@ -214,24 +214,35 @@ with a real key is what proves a recipe. `self_hosted` recipes need your server 
 
 ## The vault (Mac)
 
+In the app, open **Vault** and press **Create my vault**. It shows a recovery key once, and saves nothing until you type
+back its last group. Keep that key away from this Mac, because if the Mac dies it is the only way back in.
+
+Then choose keys and press **Seal**. Each file is sealed by a key inside your Mac's Secure Enclave, which it cannot leave.
+Your original files stay where they are. **Compare with the files** opens every sealed copy and tells you whether it matches.
+From then on, checks, identification and your own actions use the sealed copy, and ask for your finger once per batch.
+
+If a file changes after you seal it, the app says so and uses the file, because the sealed copy may be an old key.
+
+The same vault works from a terminal:
+
 ```bash
 app/dist/keyreeve-vault init
 app/dist/keyreeve-vault add hosting-token
 app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
 
-Each key is sealed in a file by a key inside your Mac's Secure Enclave, which it cannot leave. Adding a key needs no
-fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init` shows a
-recovery key once, and refuses to run outside a terminal so the key does not land in a log. Keep it away from this
-Mac, because if the Mac dies it is the only way back in. There is no command that prints a key.
+Adding a key needs no fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init`
+refuses to run outside a terminal so the recovery key does not land in a log. There is no command that prints a key.
 
-The vault format is mine and has had no outside review, so keep your old copies until it has. It does not yet
-connect to `verify` or to the app.
+A copy sealed from the app holds the whole file, so `run` hands a program everything in it. For a file with several values,
+add the one key by hand under its own name.
+
+The vault format is mine and has had no outside review, so keep your old copies until it has.
 
 ## What is missing
 
 - `keyreeve rotate` and `resume` as commands, and a test against a real provider
-- Connecting the vault to `verify` and to rotation, and storage for Linux and Windows
+- Connecting the vault to rotation, replacing a sealed copy, moving originals away, and storage for Linux and Windows
 - Places to update: `.env`, GitHub, Netlify
 - Recipes that can rotate a real provider
 - Approvals that expire

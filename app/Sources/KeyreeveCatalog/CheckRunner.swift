@@ -75,16 +75,17 @@ public enum CheckRunner {
 
     /// Runs the checks and rebuilds the catalog. The command's output is discarded, because the
     /// history already holds the results, so nothing it prints can stay in this app's memory.
+    /// `sealed` holds copies opened from the vault, by path, and they travel on stdin alone.
     public static func run(
         _ items: [CatalogItem], binary: URL, keysFolder: URL, files: KeyreeveFiles,
+        sealed: [String: String] = [:],
         progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     ) throws {
         try files.writePrivate(try plan(for: items), to: files.plan)
         defer { try? FileManager.default.removeItem(at: files.plan) }
-        let verify = try streaming(
-            binary,
-            ["verify", "--plan", files.plan.path, "--keys", keysFolder.path, "--history", files.history.path, "--progress"],
-            progress: progress)
+        var arguments = ["verify", "--plan", files.plan.path, "--keys", keysFolder.path, "--history", files.history.path, "--progress"]
+        if !sealed.isEmpty { arguments.append("--sealed-stdin") }
+        let verify = try streaming(binary, arguments, stdin: try payload(sealed), progress: progress)
         // 0 is all passed and 1 is at least one did not. Both finished their work.
         guard verify == 0 || verify == 1 else { throw CheckError(T("The check could not start")) }
 
@@ -93,13 +94,14 @@ public enum CheckRunner {
 
     /// Asks each provider whose key this is. The answer's chosen fields go to a private file.
     public static func identify(
-        _ items: [CatalogItem], providers: ProviderDirectory, binary: URL, keysFolder: URL, files: KeyreeveFiles
+        _ items: [CatalogItem], providers: ProviderDirectory, binary: URL, keysFolder: URL, files: KeyreeveFiles,
+        sealed: [String: String] = [:]
     ) throws {
         try files.writePrivate(try plan(for: items.filter(providers.canIdentify)), to: files.plan)
         defer { try? FileManager.default.removeItem(at: files.plan) }
-        let code = try execute(
-            binary,
-            ["identify", "--plan", files.plan.path, "--keys", keysFolder.path, "--details", files.details.path])
+        var arguments = ["identify", "--plan", files.plan.path, "--keys", keysFolder.path, "--details", files.details.path]
+        if !sealed.isEmpty { arguments.append("--sealed-stdin") }
+        let code = try execute(binary, arguments, stdin: try payload(sealed))
         guard code == 0 else { throw CheckError(T("The check could not start")) }
     }
 
@@ -158,11 +160,16 @@ public enum CheckRunner {
 
     /// Runs a button of your own, and returns what it says, which the command has already filtered.
     public static func runAction(
-        provider: String, action: CustomAction, item: CatalogItem, binary: URL, keysFolder: URL?
+        provider: String, action: CustomAction, item: CatalogItem, binary: URL, keysFolder: URL?,
+        sealed: String? = nil
     ) throws -> String {
         var arguments = ["action", provider, action.id]
-        if action.needs_key, let keysFolder {
-            arguments += ["--key-file", keysFolder.appendingPathComponent(item.path).path]
+        if action.needs_key {
+            if sealed != nil {
+                arguments.append("--key-stdin")
+            } else if let keysFolder {
+                arguments += ["--key-file", keysFolder.appendingPathComponent(item.path).path]
+            }
             if !item.field.isEmpty { arguments += ["--field", item.field] }
         }
         let process = Process()
@@ -171,16 +178,32 @@ public enum CheckRunner {
         process.arguments = arguments
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        let input = sealed.map { Data($0.utf8) }
+        let inputPipe = input.map { _ in Pipe() }
+        if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        if let input, let inputPipe { send(input, to: inputPipe) }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw CheckError(T("The action did not finish")) }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Copies from the vault, as the command wants them. No copies means nothing to send.
+    private static func payload(_ sealed: [String: String]) throws -> Data? {
+        sealed.isEmpty ? nil : try JSONEncoder().encode(sealed)
+    }
+
+    /// A command that stops early must fail on its own, and must not take this app with it.
+    private static func send(_ data: Data, to pipe: Pipe) {
+        signal(SIGPIPE, SIG_IGN)
+        try? pipe.fileHandleForWriting.write(contentsOf: data)
+        try? pipe.fileHandleForWriting.close()
+    }
+
     /// Reads progress lines as they come. They hold two counts, and the rest of the output is dropped.
     private static func streaming(
-        _ binary: URL, _ arguments: [String], progress: @Sendable (Int, Int) -> Void
+        _ binary: URL, _ arguments: [String], stdin: Data? = nil, progress: @Sendable (Int, Int) -> Void
     ) throws -> Int32 {
         let process = Process()
         let pipe = Pipe()
@@ -188,7 +211,10 @@ public enum CheckRunner {
         process.arguments = arguments
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        let inputPipe = stdin.map { _ in Pipe() }
+        if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        if let stdin, let inputPipe { send(stdin, to: inputPipe) }
         var pending = Data()
         while true {
             let chunk = pipe.fileHandleForReading.availableData
@@ -207,13 +233,16 @@ public enum CheckRunner {
         return process.terminationStatus
     }
 
-    private static func execute(_ binary: URL, _ arguments: [String]) throws -> Int32 {
+    private static func execute(_ binary: URL, _ arguments: [String], stdin: Data? = nil) throws -> Int32 {
         let process = Process()
         process.executableURL = binary
         process.arguments = arguments
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        let inputPipe = stdin.map { _ in Pipe() }
+        if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        if let stdin, let inputPipe { send(stdin, to: inputPipe) }
         process.waitUntilExit()
         return process.terminationStatus
     }

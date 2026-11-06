@@ -134,18 +134,15 @@ public struct VaultFile: Codable, Equatable {
             outputByteCount: 32)
     }
 
+    /// A name can be a file's path, which can hold spaces and accents. It is bound to its value,
+    /// so what matters is that it stays on one line when a person reads it.
     public static func check(name: String) throws {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-/"))
-        guard !name.isEmpty, name.count <= 200, name.isASCII_,
-            name.unicodeScalars.allSatisfy(allowed.contains)
+        guard !name.isEmpty, name.count <= 200,
+            !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
         else {
-            throw VaultError("a name uses only letters, digits, dot, dash, underscore and slash")
+            throw VaultError("a name is one line of at most 200 characters")
         }
     }
-}
-
-extension String {
-    fileprivate var isASCII_: Bool { utf8.allSatisfy { $0 < 128 } }
 }
 
 /// The recovery key, written so a person can copy it. It ends in a checksum, to catch a typo.

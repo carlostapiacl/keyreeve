@@ -49,21 +49,6 @@ func readSecret(prompt: String) -> Data {
     return Data((readLine(strippingNewline: true) ?? "").utf8)
 }
 
-/// Keeps which key was used and by which program, next to the vault. It never holds a value or
-/// the command's arguments, which can carry anything. A failure here does not stop the command.
-func recordUse(of name: String, by command: String) {
-    let entry: [String: Any] = [
-        "at": Int(Date().timeIntervalSince1970), "name": name,
-        "command": URL(fileURLWithPath: command).lastPathComponent,
-    ]
-    guard let line = try? JSONSerialization.data(withJSONObject: entry) else { return }
-    let path = store.directory.deletingLastPathComponent().appendingPathComponent("usage.jsonl").path
-    let descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
-    guard descriptor >= 0 else { return }
-    defer { close(descriptor) }
-    _ = (line + Data("\n".utf8)).withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
-}
-
 let store = VaultStore(
     directory: ProcessInfo.processInfo.environment["KEYREEVE_VAULT"].map(URL.init(fileURLWithPath:))
         ?? VaultStore.defaultDirectory)
@@ -110,9 +95,10 @@ do {
             blob: try store.loadBlob(), reason: "use the key \(arguments[1])")
         let value = try vault.open(name: arguments[1], with: recipient)
         guard let text = String(data: value, encoding: .utf8) else { fail("the value is not text") }
-        setenv(arguments[3], text, 1)
+        // A file sealed from the app keeps its last line break, which no program wants in a key.
+        setenv(arguments[3], text.trimmingCharacters(in: .newlines), 1)
         let command = Array(arguments[5...])
-        recordUse(of: arguments[1], by: command[0])
+        store.recordUse(of: arguments[1], by: command[0])
         var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
         execvp(command[0], &pointers)
         fail("could not run \(command[0])")

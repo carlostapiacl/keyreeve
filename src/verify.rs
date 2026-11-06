@@ -9,10 +9,11 @@ use crate::secret::Secret;
 use crate::ssh;
 use crate::transport::{exchange_token, HttpTransport, Request, Transport, TransportError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
-use std::path::Path;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
@@ -20,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
 const MAX_KEY_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_SEALED_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -192,7 +194,7 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
 pub fn run_action(
     provider: &str,
     action: &str,
-    file: Option<&Path>,
+    source: Option<&KeySource>,
     field: Option<&str>,
 ) -> Result<String, String> {
     let recipe = load_recipe(provider)?;
@@ -202,8 +204,8 @@ pub fn run_action(
         .find(|candidate| candidate.id == action)
         .ok_or_else(|| format!("{provider} has no action {action}"))?;
     let run = action.run.as_ref().ok_or("this action opens a page")?;
-    let key = match (action.needs_key, file) {
-        (true, Some(file)) => Some(load_key(file, field, &recipe)?),
+    let key = match (action.needs_key, source) {
+        (true, Some(source)) => Some(source.load(field, &recipe)?),
         (true, None) => return Err("this action needs a key".into()),
         (false, _) => None,
     };
@@ -289,6 +291,66 @@ pub(crate) fn load_recipe(name: &str) -> Result<Recipe, String> {
     providers::load(name)
 }
 
+/// Where a key's text comes from. A vault's copy reaches this program on stdin, and never through
+/// an argument, a variable or a file it would have to leave behind.
+pub enum KeySource<'a> {
+    File(PathBuf),
+    Text(&'a str),
+}
+
+impl KeySource<'_> {
+    pub(crate) fn load(&self, field: Option<&str>, recipe: &Recipe) -> Result<Secret, String> {
+        match self {
+            Self::File(path) => load_key(path, field, recipe),
+            Self::Text(text) => read_key_for(text, field, recipe),
+        }
+    }
+
+    /// `ssh` reads a key from a file alone, so a vault's copy spends the call in a private one.
+    pub(crate) fn greet(&self, recipe: &Recipe) -> Result<ssh::Reply, String> {
+        match self {
+            Self::File(path) => ssh::greet(recipe, path),
+            Self::Text(text) => {
+                let file = ssh::TempKey::write(text)?;
+                ssh::greet(recipe, file.path())
+            }
+        }
+    }
+}
+
+/// Copies of key files opened by whoever called this program, by their place in the keys folder.
+#[derive(Default)]
+pub struct Sealed(HashMap<String, Zeroizing<String>>);
+
+impl Sealed {
+    /// Reads `{"path": "text of the file"}`. Errors never quote the input.
+    pub fn read(input: impl Read) -> Result<Self, String> {
+        let mut text = Zeroizing::new(String::new());
+        input
+            .take(MAX_SEALED_BYTES + 1)
+            .read_to_string(&mut text)
+            .map_err(|_| "could not read the keys on stdin".to_owned())?;
+        if text.len() as u64 > MAX_SEALED_BYTES {
+            return Err("too many keys on stdin".into());
+        }
+        let parsed: HashMap<String, String> = serde_json::from_str(&text)
+            .map_err(|_| "the keys on stdin are not in the expected form".to_owned())?;
+        Ok(Self(
+            parsed
+                .into_iter()
+                .map(|(path, value)| (path, Zeroizing::new(value)))
+                .collect(),
+        ))
+    }
+
+    pub(crate) fn source(&self, keys: &Path, file: &str) -> KeySource<'_> {
+        match self.0.get(file) {
+            Some(text) => KeySource::Text(text),
+            None => KeySource::File(keys.join(file)),
+        }
+    }
+}
+
 pub(crate) fn load_key(
     path: &Path,
     field: Option<&str>,
@@ -351,18 +413,18 @@ pub(crate) fn resolve(name: &str, host: Option<&str>) -> Result<Recipe, String> 
 }
 
 pub fn run_one(name: &str, file: &Path, field: Option<&str>) -> Result<Verdict, String> {
-    run_at(name, file, field, None)
+    run_at(name, &KeySource::File(file.to_owned()), field, None)
 }
 
 pub(crate) fn run_at(
     name: &str,
-    file: &Path,
+    source: &KeySource,
     field: Option<&str>,
     host: Option<&str>,
 ) -> Result<Verdict, String> {
     let recipe = resolve(name, host)?;
     if recipe.auth.kind.as_deref() == Some("ssh") {
-        return ssh::greet(&recipe, file).map(|reply| match reply {
+        return source.greet(&recipe).map(|reply| match reply {
             ssh::Reply::Accepted(_) => Verdict::Works {
                 host: recipe.hosts[0].clone(),
             },
@@ -370,12 +432,29 @@ pub(crate) fn run_at(
             ssh::Reply::Unknown => Verdict::NoResult("could not connect".into()),
         });
     }
-    let key = load_key(file, field, &recipe)?;
+    let key = source.load(field, &recipe)?;
+    if let Some(run) = &recipe.auth.run {
+        let answer = script::run(&providers::programs_folder(), run, "check", Some(&key))?;
+        return Ok(program_verdict(&answer));
+    }
     Ok(check(
         &recipe,
         &key,
         &mut HttpTransport::for_recipe(&recipe),
     ))
+}
+
+/// What a program of yours said. An answer it did not mean to give is not read as a live key.
+fn program_verdict(answer: &script::Answer) -> Verdict {
+    match answer.result.as_str() {
+        "works" => Verdict::Works {
+            host: "your program".into(),
+        },
+        "rejected" => Verdict::Rejected,
+        "forbidden" => Verdict::Forbidden,
+        "no_result" if !answer.message.is_empty() => Verdict::NoResult(answer.message.clone()),
+        _ => Verdict::NoResult("the program gave no result".into()),
+    }
 }
 
 /// How many checks run at once. Providers see few requests, and a slow one holds up no others.
@@ -387,7 +466,7 @@ pub fn run_plan(
     keys: &Path,
     history: Option<&Path>,
 ) -> Result<Vec<(String, Verdict)>, String> {
-    run_plan_with(plan, keys, history, &|_, _| {})
+    run_plan_with(plan, keys, history, &Sealed::default(), &|_, _| {})
 }
 
 /// The same, and it reports each finished key with how many are done and how many there are.
@@ -395,6 +474,7 @@ pub fn run_plan_with(
     plan: &Path,
     keys: &Path,
     history: Option<&Path>,
+    sealed: &Sealed,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<Vec<(String, Verdict)>, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
@@ -413,7 +493,7 @@ pub fn run_plan_with(
                 let Some(entry) = plan.keys.get(index) else {
                     return;
                 };
-                let verdict = run_entry(entry, keys).unwrap_or_else(|why| {
+                let verdict = run_entry(entry, keys, sealed).unwrap_or_else(|why| {
                     let why = why
                         .strip_prefix(&format!("{}: ", keys.join(&entry.file).display()))
                         .map_or(why.clone(), str::to_owned);
@@ -457,12 +537,13 @@ pub(crate) fn inside_folder(file: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run_entry(entry: &PlanKey, keys: &Path) -> Result<Verdict, String> {
+fn run_entry(entry: &PlanKey, keys: &Path, sealed: &Sealed) -> Result<Verdict, String> {
     inside_folder(&entry.file)?;
-    run_one(
+    run_at(
         &entry.recipe,
-        &keys.join(&entry.file),
+        &sealed.source(keys, &entry.file),
         entry.field.as_deref(),
+        entry.host.as_deref(),
     )
 }
 
@@ -597,7 +678,7 @@ mod tests {
             field: None,
             host: None,
         };
-        assert!(run_entry(&entry, Path::new("/tmp"))
+        assert!(run_entry(&entry, Path::new("/tmp"), &Sealed::default())
             .unwrap_err()
             .contains("inside"));
         let entry = PlanKey {
@@ -606,7 +687,7 @@ mod tests {
             field: None,
             host: None,
         };
-        assert!(run_entry(&entry, Path::new("/tmp")).is_err());
+        assert!(run_entry(&entry, Path::new("/tmp"), &Sealed::default()).is_err());
     }
 
     #[test]
@@ -655,10 +736,16 @@ mod tests {
         }
         fs::write(dir.join("plan.yaml"), text).unwrap();
         let seen = AtomicUsize::new(0);
-        let lines = run_plan_with(&dir.join("plan.yaml"), &dir, None, &|_, total| {
-            assert_eq!(total, 20);
-            seen.fetch_add(1, Ordering::SeqCst);
-        })
+        let lines = run_plan_with(
+            &dir.join("plan.yaml"),
+            &dir,
+            None,
+            &Sealed::default(),
+            &|_, total| {
+                assert_eq!(total, 20);
+                seen.fetch_add(1, Ordering::SeqCst);
+            },
+        )
         .unwrap();
         assert_eq!(seen.load(Ordering::SeqCst), 20);
         assert_eq!(lines[7].0, "missing-7.txt [hetzner]");

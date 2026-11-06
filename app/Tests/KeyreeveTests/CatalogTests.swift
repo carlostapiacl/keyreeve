@@ -422,3 +422,68 @@ struct CheckTests {
         XCTAssertEqual(refreshed.first?.lastResult, "rejected")
     }
 }
+
+/// What the app hands the command, seen by a stand-in command that writes down what it got.
+struct SealedRunTests {
+    func standIn() throws -> (root: URL, binary: URL, files: KeyreeveFiles) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-run-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let binary = root.appendingPathComponent("stand-in.sh")
+        try """
+            #!/bin/sh
+            printf '%s\\n' "$@" > '\(root.path)/args'
+            env > '\(root.path)/env'
+            cat > '\(root.path)/stdin'
+            """.write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: binary.path)
+        return (root, binary, KeyreeveFiles(directory: root))
+    }
+
+    func read(_ root: URL, _ name: String) throws -> String {
+        try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+    }
+
+    @Test func testASealedCopyTravelsOnStdinAlone() throws {
+        let (root, binary, files) = try standIn()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = CatalogItem(path: "a.txt", recipes: ["github"])
+        // The stand-in writes no catalog, and the run stops there, after the part under test.
+        _ = try? CheckRunner.run([item], binary: binary, keysFolder: root, files: files, sealed: ["a.txt": "CANARY-value"])
+        #expect(try read(root, "stdin").contains("CANARY-value"))
+        #expect(try read(root, "args").contains("--sealed-stdin"))
+        XCTAssertFalse(try read(root, "args").contains("CANARY"))
+        XCTAssertFalse(try read(root, "env").contains("CANARY"))
+    }
+
+    @Test func testWithNoSealedCopyNothingIsSentOrAsked() throws {
+        let (root, binary, files) = try standIn()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = CatalogItem(path: "a.txt", recipes: ["github"])
+        _ = try? CheckRunner.run([item], binary: binary, keysFolder: root, files: files)
+        XCTAssertFalse(try read(root, "args").contains("--sealed-stdin"))
+    }
+
+    @Test func testAnActionGetsItsKeyOnStdin() throws {
+        let (root, binary, _) = try standIn()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let action = CustomAction(id: "go", label: "Go", needs_key: true)
+        _ = try? CheckRunner.runAction(
+            provider: "p", action: action, item: CatalogItem(path: "a.txt"), binary: binary, keysFolder: root,
+            sealed: "CANARY-value")
+        XCTAssertEqual(try read(root, "stdin"), "CANARY-value")
+        XCTAssertFalse(try read(root, "args").contains("CANARY"))
+        XCTAssertFalse(try read(root, "args").contains("a.txt"))
+    }
+
+    @Test func testTheFirstKeysOfferedAreLiveAndLeastCritical() {
+        let list = vaultCandidates([
+            CatalogItem(path: "dead-low", lastResult: "rejected", criticality: 1),
+            CatalogItem(path: "live-high", lastResult: "works", criticality: 5),
+            CatalogItem(path: "live-low", lastResult: "works", criticality: 2),
+            CatalogItem(path: "live-unrated", lastResult: "works"),
+            CatalogItem(path: "public", level: "none", lastResult: "works"),
+            CatalogItem(path: "binary", format: "binary", lastResult: "works"),
+        ])
+        XCTAssertEqual(list.map(\.path), ["live-low", "live-high", "live-unrated", "dead-low"])
+    }
+}

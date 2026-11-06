@@ -1,5 +1,7 @@
 import AppKit
+import CryptoKit
 import KeyreeveCatalog
+import KeyreeveVault
 import Foundation
 import KeyreeveUI
 import SwiftUI
@@ -82,6 +84,23 @@ struct RenderTests {
             try render(WelcomeView(choose: {}), named: "welcome-\(code)", appearance: .aqua)
             try render(SettingsView(model: model), named: "settings-\(code)", appearance: .aqua)
             try render(LockedView(message: nil, unlock: {}), named: "locked-\(code)", appearance: .aqua)
+
+            try render(MainView(model: model, initial: .vault), named: "vault-intro-\(code)", appearance: .aqua)
+            let setup = self.model()
+            setup.vaultDraft = VaultDraft(enclave: SoftwareRecipient(), blob: Data(), recovery: P256.KeyAgreement.PrivateKey())
+            try render(MainView(model: setup, initial: .vault), named: "vault-recovery-\(code)", appearance: .aqua)
+            let ready = self.model()
+            ready.hasVault = true
+            ready.items[2].vault = .sealed
+            ready.items[4].vault = .outdated
+            ready.message = nil
+            ready.vaultComparison = {
+                var report = VaultKeeper.CompareReport()
+                report.same = ["hosting-readonly.txt"]
+                report.different = ["payments.json"]
+                return report
+            }()
+            try render(MainView(model: ready, initial: .vault), named: "vault-ready-\(code)", appearance: .darkAqua)
         }
     }
 }

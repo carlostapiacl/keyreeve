@@ -24,13 +24,14 @@ Usage:
       Give each file tags and an access level, from your rules.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
       Check whether a key still works, with one read-only request.
-  keyreeve verify --plan <plan.yaml> --keys <folder> [--history <file>] [--progress]
-      Check several keys at once, and keep the results.
-  keyreeve action <provider> <action> [--key-file <file>] [--field <name>]
-      Run a button of your own, from a provider file of yours.
+  keyreeve verify --plan <plan.yaml> --keys <folder> [--history <file>] [--progress] [--sealed-stdin]
+      Check several keys at once, and keep the results. --sealed-stdin takes a JSON map of paths to
+      file text, and uses it in place of those files. The Mac app sends this.
+  keyreeve action <provider> <action> [--key-file <file>] [--field <name>] [--key-stdin]
+      Run a button of your own, from a provider file of yours. --key-stdin reads the key's file from stdin.
   keyreeve check-free [--notify] [--spanish]
       Check the keys agents can use, which need no fingerprint. For a weekly schedule.
-  keyreeve identify --plan <plan.yaml> --keys <folder> --details <file>
+  keyreeve identify --plan <plan.yaml> --keys <folder> --details <file> [--sealed-stdin]
       Ask each provider whose key this is, and keep only the fields its file declares.
   keyreeve recipes [--json]
       List the providers keyreeve knows, from what ships and from ~/.keyreeve/providers.
@@ -53,6 +54,16 @@ fn options<'a>(args: &'a [String], names: &[&str]) -> Option<(&'a str, HashMap<S
         found.insert(name.clone(), value.as_str());
     }
     Some((first, found))
+}
+
+/// Takes the keys a caller opened, when it asked to send them. Nothing is read otherwise, so a run
+/// from a terminal does not wait on the keyboard.
+fn sealed_from_stdin(wanted: bool) -> Result<verify::Sealed, String> {
+    if wanted {
+        verify::Sealed::read(std::io::stdin())
+    } else {
+        Ok(verify::Sealed::default())
+    }
 }
 
 fn usage() -> ExitCode {
@@ -153,9 +164,10 @@ fn run_verify(args: &[String]) -> ExitCode {
             return usage();
         };
         let show_progress = rest.iter().any(|arg| arg == "--progress");
+        let wants_sealed = rest.iter().any(|arg| arg == "--sealed-stdin");
         let rest: Vec<String> = rest
             .iter()
-            .filter(|arg| *arg != "--progress")
+            .filter(|arg| *arg != "--progress" && *arg != "--sealed-stdin")
             .cloned()
             .collect();
         let mut found = HashMap::new();
@@ -172,6 +184,13 @@ fn run_verify(args: &[String]) -> ExitCode {
             return usage();
         };
         let history = found.get("--history").map(Path::new);
+        let sealed = match sealed_from_stdin(wants_sealed) {
+            Ok(sealed) => sealed,
+            Err(error) => {
+                eprintln!("verify: {error}");
+                return ExitCode::from(2);
+            }
+        };
         // One line per key, flushed, so a window can show how far it got. It holds counts alone.
         let report = |done: usize, total: usize| {
             if show_progress {
@@ -180,7 +199,13 @@ fn run_verify(args: &[String]) -> ExitCode {
                 let _ = out.flush();
             }
         };
-        return match verify::run_plan_with(Path::new(plan), Path::new(keys), history, &report) {
+        return match verify::run_plan_with(
+            Path::new(plan),
+            Path::new(keys),
+            history,
+            &sealed,
+            &report,
+        ) {
             Ok(lines) => {
                 let mut code = ExitCode::SUCCESS;
                 for (label, verdict) in lines {
@@ -229,18 +254,36 @@ fn run_custom_action(args: &[String]) -> ExitCode {
     let [provider, action, rest @ ..] = args else {
         return usage();
     };
+    let from_stdin = rest.iter().any(|arg| arg == "--key-stdin");
+    let rest: Vec<&String> = rest.iter().filter(|arg| *arg != "--key-stdin").collect();
     let mut found = HashMap::new();
     for pair in rest.chunks(2) {
         let [name, value] = pair else {
             return usage();
         };
-        if name != "--key-file" && name != "--field" {
+        if *name != "--key-file" && *name != "--field" {
             return usage();
         }
         found.insert(name.as_str(), value.as_str());
     }
-    let file = found.get("--key-file").map(Path::new);
-    match verify::run_action(provider, action, file, found.get("--field").copied()) {
+    let mut text = zeroize::Zeroizing::new(String::new());
+    if from_stdin && std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).is_err() {
+        eprintln!("action: could not read the key on stdin");
+        return ExitCode::FAILURE;
+    }
+    let source = if from_stdin {
+        Some(verify::KeySource::Text(&text))
+    } else {
+        found
+            .get("--key-file")
+            .map(|file| verify::KeySource::File(file.into()))
+    };
+    match verify::run_action(
+        provider,
+        action,
+        source.as_ref(),
+        found.get("--field").copied(),
+    ) {
         Ok(message) => {
             println!("{message}");
             ExitCode::SUCCESS
@@ -274,13 +317,27 @@ fn run_check_free(args: &[String]) -> ExitCode {
 }
 
 fn run_identify(args: &[String]) -> ExitCode {
-    let [flag_plan, plan, flag_keys, keys, flag_details, details] = args else {
+    let wants_sealed = args.iter().any(|arg| arg == "--sealed-stdin");
+    let args: Vec<&String> = args.iter().filter(|arg| *arg != "--sealed-stdin").collect();
+    let [flag_plan, plan, flag_keys, keys, flag_details, details] = args.as_slice() else {
         return usage();
     };
-    if flag_plan != "--plan" || flag_keys != "--keys" || flag_details != "--details" {
+    if *flag_plan != "--plan" || *flag_keys != "--keys" || *flag_details != "--details" {
         return usage();
     }
-    match identify::run_plan(Path::new(plan), Path::new(keys), Path::new(details)) {
+    let sealed = match sealed_from_stdin(wants_sealed) {
+        Ok(sealed) => sealed,
+        Err(error) => {
+            eprintln!("identify: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    match identify::run_plan_with(
+        Path::new(plan),
+        Path::new(keys),
+        Path::new(details),
+        &sealed,
+    ) {
         Ok(lines) => {
             for (label, line) in lines {
                 println!("{label}: {line}");

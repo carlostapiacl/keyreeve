@@ -1,0 +1,298 @@
+import CryptoKit
+import Foundation
+
+/// Lets `ssh` sign with a key it never holds. The system's own `ssh-agent` keeps the key and does the
+/// math, so no signing code lives here. Commands speak to a door in front of it, which passes only
+/// listing and signing, knows which server each connection is for, and writes down every signature.
+///
+/// OpenSSH tells an agent which server it is talking to (`session-bind@openssh.com`, since 8.9) and the
+/// agent checks that server's signature, so a client cannot simply claim a server. A signature with
+/// no server named, or for another session, is refused. That also refuses signing for anything but a login.
+public final class SSHDoor: @unchecked Sendable {
+    public struct Signature: Equatable, Sendable {
+        public let user: String
+        public let server: String
+    }
+
+    /// May this permission sign in to this server? It can ask a person.
+    public typealias ServerCheck = @Sendable (_ fingerprint: String) -> Bool
+    public typealias SignatureLog = @Sendable (_ signature: Signature, _ caller: AuditLog.Observed?) -> Void
+    public typealias RefusalLog = @Sendable (_ why: String, _ caller: AuditLog.Observed?) -> Void
+
+    public let socket: String
+    private let upstream: String
+    private let listener: Int32
+    private let agent: Process?
+    private let check: ServerCheck
+    private let signed: SignatureLog
+    private let refused: RefusalLog
+    private let lock = NSLock()
+    private var closed = false
+
+    private enum Message {
+        static let failure: UInt8 = 5
+        static let identities: UInt8 = 11
+        static let sign: UInt8 = 13
+        static let success: UInt8 = 6
+        static let extensionRequest: UInt8 = 27
+    }
+
+    /// Starts an agent for this one key, with the key added from memory, and opens the door.
+    public static func open(
+        grant: String, key sealed: String, seconds: Int, folder: URL,
+        check: @escaping ServerCheck, signed: @escaping SignatureLog, refused: @escaping RefusalLog
+    ) throws -> SSHDoor {
+        let private_ = folder.appendingPathComponent("a-\(grant).sock").path
+        let agent = Process()
+        agent.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-agent")
+        agent.arguments = ["-D", "-a", private_]
+        agent.standardInput = FileHandle.nullDevice
+        agent.standardOutput = FileHandle.nullDevice
+        agent.standardError = FileHandle.nullDevice
+        let previous = umask(0o077)
+        defer { umask(previous) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        unlink(private_)
+        do {
+            try agent.run()
+        } catch {
+            throw VaultError("ssh-agent could not start")
+        }
+        func fail(_ text: String) -> VaultError {
+            agent.terminate()
+            unlink(private_)
+            return VaultError(text)
+        }
+        var waited = 0
+        while !FileManager.default.fileExists(atPath: private_), waited < 50 {
+            usleep(100_000)
+            waited += 1
+        }
+        guard FileManager.default.fileExists(atPath: private_) else { throw fail("ssh-agent could not start") }
+        // The key goes in on stdin. It also has a limit of its own, in case this process dies.
+        let add = Process()
+        let input = Pipe()
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETFD, FD_CLOEXEC)
+        add.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
+        add.arguments = ["-q", "-t", String(seconds), "-"]
+        add.environment = ["SSH_AUTH_SOCK": private_, "SSH_ASKPASS_REQUIRE": "never", "PATH": "/usr/bin:/bin"]
+        add.standardInput = input
+        add.standardOutput = FileHandle.nullDevice
+        add.standardError = FileHandle.nullDevice
+        do {
+            try add.run()
+        } catch {
+            throw fail("ssh-add could not start")
+        }
+        signal(SIGPIPE, SIG_IGN)
+        try? input.fileHandleForWriting.write(contentsOf: Data((sealed.hasSuffix("\n") ? sealed : sealed + "\n").utf8))
+        try? input.fileHandleForWriting.close()
+        add.waitUntilExit()
+        guard add.terminationStatus == 0 else {
+            throw fail("this SSH key could not be loaded. A key with a passphrase cannot be used here yet")
+        }
+        return try SSHDoor(
+            socket: folder.appendingPathComponent("s-\(grant).sock").path, upstream: private_, agent: agent,
+            check: check, signed: signed, refused: refused)
+    }
+
+    /// Opens a door in front of an agent that is already running.
+    public init(
+        socket: String, upstream: String, agent: Process?,
+        check: @escaping ServerCheck, signed: @escaping SignatureLog, refused: @escaping RefusalLog
+    ) throws {
+        self.socket = socket
+        self.upstream = upstream
+        self.agent = agent
+        self.check = check
+        self.signed = signed
+        self.refused = refused
+        listener = try KeySocket.bound(path: socket)
+        Thread.detachNewThread { [self] in acceptLoop() }
+    }
+
+    public func close() {
+        lock.lock()
+        let already = closed
+        closed = true
+        lock.unlock()
+        guard !already else { return }
+        shutdown(listener, SHUT_RDWR)
+        Darwin.close(listener)
+        agent?.terminate()
+        unlink(socket)
+        if agent != nil { unlink(upstream) }
+    }
+
+    deinit { close() }
+
+    private var isClosed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return closed
+    }
+
+    private func acceptLoop() {
+        while !isClosed {
+            let client = accept(listener, nil, nil)
+            guard client >= 0 else {
+                if isClosed { return }
+                usleep(10_000)
+                continue
+            }
+            _ = fcntl(client, F_SETFD, FD_CLOEXEC)
+            Thread.detachNewThread { [self] in
+                defer { Darwin.close(client) }
+                serve(client)
+            }
+        }
+    }
+
+    /// One client, which is one `ssh`. What it was told about its server lasts for this connection.
+    private func serve(_ client: Int32) {
+        guard let pid = CallerIdentity.peer(of: client) else { return }
+        let caller = CallerIdentity.observe(pid: pid)
+        guard let up = try? KeySocket.connected(path: upstream) else { return }
+        defer { Darwin.close(up) }
+        var server: (fingerprint: String, session: Data)?
+        while !isClosed, let frame = Self.readFrame(client), let kind = frame.first {
+            let answer: Data?
+            switch kind {
+            case Message.identities:
+                answer = Self.relay(frame, to: up)
+            case Message.extensionRequest:
+                guard let bind = Self.sessionBind(frame) else {
+                    answer = Self.failure
+                    break
+                }
+                // The agent checks the server's signature. Only its yes counts.
+                let reply = Self.relay(frame, to: up)
+                if reply?.first == Message.success {
+                    // A forwarded connection is a server asking, so it is not one to sign for.
+                    if bind.forwarding {
+                        server = nil
+                        refused("a forwarded agent", caller)
+                        answer = Self.failure
+                    } else {
+                        server = (Self.fingerprint(bind.hostKey), bind.session)
+                        answer = reply
+                    }
+                } else {
+                    answer = Self.failure
+                }
+            case Message.sign:
+                answer = sign(frame, server: server, up: up, caller: caller)
+            default:
+                // Adding, removing or locking keys is not for what comes through here.
+                answer = Self.failure
+            }
+            guard let answer, Self.writeFrame(client, answer) else { return }
+        }
+    }
+
+    private func sign(
+        _ frame: Data, server: (fingerprint: String, session: Data)?, up: Int32, caller: AuditLog.Observed?
+    ) -> Data {
+        guard let server else {
+            refused("no server named", caller)
+            return Self.failure
+        }
+        guard let login = Self.login(inSignRequest: frame), login.session == server.session else {
+            refused("not a login to that server", caller)
+            return Self.failure
+        }
+        guard check(server.fingerprint) else {
+            refused("server not allowed: \(server.fingerprint)", caller)
+            return Self.failure
+        }
+        guard let reply = Self.relay(frame, to: up) else { return Self.failure }
+        signed(Signature(user: login.user, server: server.fingerprint), caller)
+        return reply
+    }
+
+    private static let failure = Data([Message.failure])
+
+    // MARK: Reading the protocol
+
+    private struct Reader {
+        var data: Data
+        mutating func string() -> Data? {
+            guard data.count >= 4 else { return nil }
+            let length = data.prefix(4).reduce(0) { $0 << 8 | Int($1) }
+            guard data.count >= 4 + length else { return nil }
+            let out = data.dropFirst(4).prefix(length)
+            data = Data(data.dropFirst(4 + length))
+            return Data(out)
+        }
+        mutating func byte() -> UInt8? {
+            guard let first = data.first else { return nil }
+            data = Data(data.dropFirst())
+            return first
+        }
+    }
+
+    /// `session-bind@openssh.com`: the server's public key, the session, its signature, and whether forwarded.
+    static func sessionBind(_ frame: Data) -> (hostKey: Data, session: Data, forwarding: Bool)? {
+        var reader = Reader(data: Data(frame.dropFirst()))
+        guard let name = reader.string(), name == Data("session-bind@openssh.com".utf8),
+            let hostKey = reader.string(), let session = reader.string(), reader.string() != nil,
+            let forwarding = reader.byte()
+        else { return nil }
+        return (hostKey, session, forwarding != 0)
+    }
+
+    /// What a login signs: the session, then SSH_MSG_USERAUTH_REQUEST with the user. Anything else, such
+    /// as a signature for a file or a commit, is not a login.
+    static func login(inSignRequest frame: Data) -> (user: String, session: Data)? {
+        var request = Reader(data: Data(frame.dropFirst()))
+        guard request.string() != nil, let blob = request.string() else { return nil }
+        var reader = Reader(data: blob)
+        guard let session = reader.string(), reader.byte() == 50, let user = reader.string(),
+            let service = reader.string(), service == Data("ssh-connection".utf8),
+            let name = String(data: user, encoding: .utf8)
+        else { return nil }
+        return (name, session)
+    }
+
+    /// As `ssh-keygen -l` writes it, so it can be compared with what a server shows.
+    static func fingerprint(_ hostKey: Data) -> String {
+        "SHA256:" + Data(SHA256.hash(data: hostKey)).base64EncodedString().replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func readExact(_ descriptor: Int32, _ count: Int) -> Data? {
+        var out = Data(count: count)
+        var got = 0
+        while got < count {
+            let read = out.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress! + got, count - got) }
+            if read <= 0 { return nil }
+            got += read
+        }
+        return out
+    }
+
+    static func readFrame(_ descriptor: Int32) -> Data? {
+        guard let head = readExact(descriptor, 4) else { return nil }
+        let length = head.reduce(0) { $0 << 8 | Int($1) }
+        guard length > 0, length <= 256 * 1024 else { return nil }
+        return readExact(descriptor, length)
+    }
+
+    static func writeFrame(_ descriptor: Int32, _ frame: Data) -> Bool {
+        let count = UInt32(frame.count).bigEndian
+        var out = withUnsafeBytes(of: count) { Data($0) }
+        out.append(frame)
+        return out.withUnsafeBytes { raw in
+            var offset = 0
+            while offset < raw.count {
+                let wrote = Darwin.write(descriptor, raw.baseAddress! + offset, raw.count - offset)
+                if wrote <= 0 { return false }
+                offset += wrote
+            }
+            return true
+        }
+    }
+
+    private static func relay(_ frame: Data, to up: Int32) -> Data? {
+        writeFrame(up, frame) ? readFrame(up) : nil
+    }
+}

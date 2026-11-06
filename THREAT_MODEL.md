@@ -79,7 +79,7 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **One fingerprint opens a whole batch.** The prompt states how many keys, and not which. While a batch runs, its opened
   values are in the app's memory and the command's, and they reach the command on stdin, so they never appear in arguments
   or variables. Swift strings are not wiped.
-- **An SSH key from the vault touches the disk.** `ssh` reads keys from files, so the sealed copy spends the call in a file
+- **An SSH key checked from the vault touches the disk.** A check through `ssh` reads keys from files, so the sealed copy spends the call in a file
   only you can read, overwritten and removed afterwards. A crash in between leaves it there.
 - **A program running as you can change the app.** It can replace `keyreeve-cli` or `keyreeve-vault` inside the bundle, and the
   next fingerprint then hands opened keys to its copy. An agent you run as yourself can do this too, so if you need to keep keys
@@ -123,6 +123,13 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   stand-in, and a plain reply is scrubbed. A compressed reply or one split across chunks is not.
 - **`--real` is the real key.** A fingerprint is asked each time, and from there it is in the command's hands. So is the MCP server's
   `run_with_key` and `env`, which give the real value to the program they run.
+- **An SSH permission lets anything running as you log in.** The key stays in `ssh-agent`, out of reach through the door, and no signature is made for
+  anything but a login. While a permission lasts, any program of yours that finds the socket can use it to log in. The server check holds for a real
+  `ssh`, which names its server truthfully. A program that speaks the protocol itself can name a server key of its own, and the agent accepts that as long as the
+  signature matches, so it can take the free first server under an invented name, or trigger a prompt with the wrong fingerprint, while logging in somewhere else.
+  The log then shows that invented fingerprint.
+- **An SSH key sits in a system process.** `ssh-agent` holds it opened until the permission ends, at the limit given to `ssh-add`. If the service is killed the agent stays with
+  the key until that limit or until the service starts again. A login already open keeps working after the permission ends.
 - **The usage log shows who, not proof of who.** A process and its parents come from the system. An agent can start a command through
   something else, and everything under your user looks alike. It can also rewrite the log and its hashes.
 - **An env file's references name your keys.** `keyreeve://` holds no value, but it says which keys exist.

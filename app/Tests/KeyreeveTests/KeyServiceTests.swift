@@ -107,6 +107,26 @@ final class FakeProxy: KeyProxy, @unchecked Sendable {
     var endpoint: KeyService.ProxyEndpoint { KeyService.ProxyEndpoint(port: 9, ca: "/ca", bundle: "/bundle") }
 }
 
+final class FakeDoor: SSHDoorHandle {
+    let socket = "/tmp/fake.sock"
+    var closed = false
+    func close() { closed = true }
+}
+
+final class FakeAgents: SSHKeyAgents, @unchecked Sendable {
+    let door = FakeDoor()
+    var keys: [String] = []
+    var check: SSHDoor.ServerCheck?
+    func open(
+        grant: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
+        signed: @escaping SSHDoor.SignatureLog, refused: @escaping SSHDoor.RefusalLog
+    ) throws -> SSHDoorHandle {
+        keys.append(key)
+        self.check = check
+        return door
+    }
+}
+
 /// The service, with a counter in place of the finger and a clock the test moves.
 final class Fixture: @unchecked Sendable {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
@@ -114,17 +134,26 @@ final class Fixture: @unchecked Sendable {
     var refuse = false
     var now = Date(timeIntervalSince1970: 1_800_000_000)
     let proxy = FakeProxy()
+    let agents = FakeAgents()
+    var confirmations: [String] = []
+    var confirmAnswer = true
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return KeyService(
-            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n") },
+            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n\n[[key]]\nid = \"vps\"\nsource = \"vps-key\"\nprovider = \"ssh\"\naccount = \"root\"\n\n[[key]]\nid = \"not-ssh\"\nsource = \"n.txt\"\nprovider = \"ssh\"\n") },
             open: { source, prompt in
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
+                if source == "vps-key" { return Data("-----BEGIN OPENSSH PRIVATE KEY-----\nCANARY\n-----END OPENSSH PRIVATE KEY-----\n".utf8) }
                 return Data((source == "m.env" ? "OTHER=x\nAPI=CANARY-mail\n" : "CANARY-netlify\n").utf8)
             },
-            proxy: proxy, log: log, now: { self.now })
+            proxy: proxy, agents: agents,
+            confirm: { prompt in
+                self.confirmations.append(prompt)
+                return self.confirmAnswer
+            },
+            log: log, now: { self.now })
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/bin/zsh", chain: ["zsh", "claude"])
 
@@ -147,6 +176,62 @@ struct KeyServiceTests {
         f.now.addTimeInterval(TimeInterval(KeyService.defaultSeconds + 1))
         #expect(f.use("netlify").ok)
         #expect(f.prompts.count == 2)
+    }
+
+    @Test func testAnSSHKeyGoesToAnAgentAndNeverComesBack() throws {
+        let f = Fixture()
+        let answer = f.use("vps", "/usr/bin/ssh")
+        #expect(answer.sshSocket == "/tmp/fake.sock")
+        #expect(answer.value == nil)
+        #expect(answer.standIn == nil)
+        #expect(f.agents.keys.first?.contains("CANARY") == true)
+        #expect(f.proxy.added.isEmpty)
+        let encoded = String(decoding: try JSONEncoder().encode(answer), as: UTF8.self)
+        #expect(!encoded.contains("CANARY"))
+        #expect(!(try String(contentsOf: f.log.url, encoding: .utf8)).contains("CANARY"))
+    }
+
+    @Test func testAKeyCalledSSHThatIsNotOneGoesNowhere() throws {
+        let f = Fixture()
+        let answer = f.use("not-ssh", "/usr/bin/ssh")
+        #expect(!answer.ok)
+        #expect(f.agents.keys.isEmpty)
+        #expect(f.proxy.added.isEmpty)
+        #expect(f.service.isIdle)
+    }
+
+    @Test func testOneSSHPermissionCoversEveryProgram() throws {
+        let f = Fixture()
+        #expect(f.use("vps", "/usr/bin/ssh").ok)
+        #expect(f.use("vps", "/usr/bin/git").ok)
+        #expect(f.use("vps", "/usr/bin/rsync").ok)
+        #expect(f.prompts.count == 1)
+    }
+
+    @Test func testTheFirstServerIsCoveredAndEachOtherAsks() throws {
+        let f = Fixture()
+        _ = f.use("vps", "/usr/bin/ssh")
+        let check = try #require(f.agents.check)
+        #expect(check("SHA256:one"))
+        #expect(check("SHA256:one"))
+        #expect(f.confirmations.isEmpty)
+        #expect(check("SHA256:two"))
+        #expect(f.confirmations.count == 1)
+        #expect(f.confirmations.first?.contains("SHA256:two") == true)
+        #expect(f.confirmations.first?.contains("root") == true)
+        #expect(check("SHA256:two"))
+        #expect(f.confirmations.count == 1)
+        f.confirmAnswer = false
+        #expect(!check("SHA256:three"))
+        #expect(!check("SHA256:three"))
+        #expect(f.confirmations.count == 3, "a no is not remembered as a yes")
+    }
+
+    @Test func testEndingAnSSHPermissionClosesItsDoor() throws {
+        let f = Fixture()
+        _ = f.use("vps", "/usr/bin/ssh")
+        _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
+        #expect(f.agents.door.closed)
     }
 
     @Test func testThePromptNamesTheAccount() throws {

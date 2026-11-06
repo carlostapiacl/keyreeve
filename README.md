@@ -279,6 +279,19 @@ The swap happens in headers and in Basic passwords, and in the address for a pro
 tool that sends its key in a body fails and leaks nothing. A reply that echoes the key gets the stand-in back. Other hosts get a tunnel, with TLS
 end to end. The stand-in is what lets a request use the key, so nothing else needs to be in the command's environment.
 
+An SSH key works the same way, with `provider = "ssh"` in `keys.toml` or a provider file that uses `auth: { type: ssh }`:
+
+```bash
+keyreeve-vault use vps --reason "restart" -- ssh root@my-server uptime
+keyreeve-vault use deploy-key -- git push
+```
+
+The command gets `SSH_AUTH_SOCK`, pointing at a door in front of the system's own `ssh-agent`, which holds the key for as long as the permission
+lasts. The door passes listing and signing and nothing else, so the key cannot be read, replaced or used to sign a file or a commit. OpenSSH tells the
+agent which server each connection is for, so the permission covers the first server and every other one asks for your finger. Each signature goes in
+the log with the user and the server's fingerprint. A key with a passphrase is refused. If your `~/.ssh/config` sets `IdentityAgent`, or `ssh` finds a
+matching key on disk first, it uses that and never reaches keyreeve.
+
 `--real` hands the command the real key, for what cannot use a stand-in, such as a provider that signs requests or a script of your own. It asks for
 your finger every time and is logged apart. A command that sends a stand-in past the proxy, or ignores its variables, simply fails to authenticate.
 

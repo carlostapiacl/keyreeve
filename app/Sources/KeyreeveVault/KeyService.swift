@@ -8,6 +8,50 @@ public protocol KeyProxy: AnyObject, Sendable {
     var endpoint: KeyService.ProxyEndpoint { get throws }
 }
 
+/// Starts a door for an SSH key. Tests can stand in for it.
+public protocol SSHKeyAgents: AnyObject, Sendable {
+    func open(
+        grant: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
+        signed: @escaping SSHDoor.SignatureLog, refused: @escaping SSHDoor.RefusalLog
+    ) throws -> SSHDoorHandle
+}
+
+public protocol SSHDoorHandle: AnyObject {
+    var socket: String { get }
+    func close()
+}
+
+extension SSHDoor: SSHDoorHandle {}
+
+/// The real agents, one for each permission, with their sockets in the service's private folder.
+public final class SystemSSHAgents: SSHKeyAgents, @unchecked Sendable {
+    let folder: URL
+
+    /// An agent outlives a service that was killed, and its key stays until its limit. Starting clears those.
+    public init(folder: URL) {
+        self.folder = folder
+        let sweep = Process()
+        sweep.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        sweep.arguments = ["-f", "^/usr/bin/ssh-agent -D -a \(NSRegularExpression.escapedPattern(for: folder.path))/a-"]
+        sweep.standardOutput = FileHandle.nullDevice
+        sweep.standardError = FileHandle.nullDevice
+        try? sweep.run()
+        sweep.waitUntilExit()
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        for name in files where name.hasSuffix(".sock") && (name.hasPrefix("a-") || name.hasPrefix("s-")) {
+            unlink(folder.appendingPathComponent(name).path)
+        }
+    }
+
+    public func open(
+        grant: String, key: String, seconds: Int, check: @escaping SSHDoor.ServerCheck,
+        signed: @escaping SSHDoor.SignatureLog, refused: @escaping SSHDoor.RefusalLog
+    ) throws -> SSHDoorHandle {
+        try SSHDoor.open(
+            grant: grant, key: key, seconds: seconds, folder: folder, check: check, signed: signed, refused: refused)
+    }
+}
+
 /// Decides who gets a key, keeps permissions for a short while, and writes down every decision. It
 /// lives in its own process, so a permission outlasts one command and the agent never holds it.
 public final class KeyService: @unchecked Sendable {
@@ -59,18 +103,21 @@ public final class KeyService: @unchecked Sendable {
         public var value: String?
         public var standIn: String?
         public var proxy: ProxyEndpoint?
+        /// For an SSH key: the socket that signs with it. The key stays on the other side.
+        public var sshSocket: String?
         public var variable: String?
         public var grants: [GrantInfo]?
 
         public init(
             ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil,
-            proxy: ProxyEndpoint? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
+            proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
         ) {
             self.ok = ok
             self.error = error
             self.value = value
             self.standIn = standIn
             self.proxy = proxy
+            self.sshSocket = sshSocket
             self.variable = variable
             self.grants = grants
         }
@@ -89,14 +136,20 @@ public final class KeyService: @unchecked Sendable {
         let program: String
         let expires: Date
         let standIn: String
+        /// An SSH key signs for whichever program asks, so its permission is for the key alone.
+        let door: SSHDoorHandle?
     }
 
+    /// What `provider` says for an SSH key that belongs to no provider's file, such as a server's.
+    public static let sshProvider = "ssh"
     public static let defaultSeconds = 5 * 60
     public static let maxSeconds = 24 * 60 * 60
 
     private let index: () throws -> KeyIndex
     private let open: (_ source: String, _ prompt: String) throws -> Data
     private let proxy: KeyProxy?
+    private let agents: SSHKeyAgents?
+    private let confirm: @Sendable (_ prompt: String) -> Bool
     private let log: AuditLog
     private let now: () -> Date
     private var grants: [Grant] = []
@@ -105,9 +158,12 @@ public final class KeyService: @unchecked Sendable {
     public init(
         index: @escaping () throws -> KeyIndex,
         open: @escaping (_ source: String, _ prompt: String) throws -> Data,
-        proxy: KeyProxy?, log: AuditLog, now: @escaping () -> Date = Date.init
+        proxy: KeyProxy?, agents: SSHKeyAgents? = nil, confirm: @escaping @Sendable (String) -> Bool = { _ in false },
+        log: AuditLog, now: @escaping () -> Date = Date.init
     ) {
         self.proxy = proxy
+        self.agents = agents
+        self.confirm = confirm
         self.index = index
         self.open = open
         self.log = log
@@ -123,8 +179,16 @@ public final class KeyService: @unchecked Sendable {
 
     private func dropExpired() {
         let current = now()
-        for grant in grants where grant.expires <= current { proxy?.remove(grant: grant.id) }
+        for grant in grants where grant.expires <= current { end(grant) }
         grants.removeAll { $0.expires <= current }
+    }
+
+    private func end(_ grant: Grant) {
+        if let door = grant.door {
+            door.close()
+        } else {
+            proxy?.remove(grant: grant.id)
+        }
     }
 
     /// One request that went out with a key, as the proxy reports it.
@@ -145,7 +209,7 @@ public final class KeyService: @unchecked Sendable {
                     grants: grants.map { GrantInfo(id: $0.id, key: $0.key, program: $0.program, expires: $0.expires) })
             case "revoke":
                 let closing = grants.filter { request.key == nil || $0.key == request.key }
-                for grant in closing { proxy?.remove(grant: grant.id) }
+                for grant in closing { end(grant) }
                 grants.removeAll { request.key == nil || $0.key == request.key }
                 for grant in closing {
                     try? log.append(event: "closed", key: grant.key, grant: grant.id, observed: caller)
@@ -190,9 +254,14 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "handed", key: id, observed: caller, declared: declared, detail: "real key")
             return Response(ok: true, value: value, variable: key.variable)
         }
-        guard let proxy else { throw VaultError("the proxy is not available") }
-        guard let provider = key.provider else {
-            throw VaultError("\(id) has no provider, so nothing says where it may go. Set one, or use --real")
+        if let existing = grants.first(where: { $0.key == id && $0.door != nil }), let door = existing.door {
+            try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
+            return Response(ok: true, sshSocket: door.socket)
+        }
+        // No finger is spent on a key that could not be used anyway.
+        guard key.provider != nil else {
+            throw VaultError(
+                "\(id) has no provider, so nothing says where it may go. Set one (`ssh` for an SSH key), or use --real")
         }
         let granted: Grant
         if let existing = grants.first(where: { $0.key == id && $0.program == name }) {
@@ -211,302 +280,91 @@ public final class KeyService: @unchecked Sendable {
             let seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
             let expires = now().addingTimeInterval(TimeInterval(seconds))
             let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
+            let text = String(decoding: sealed, as: UTF8.self)
+            if text.contains("PRIVATE KEY-----") {
+                let door = try openDoor(
+                    grant: grantID, key: id, account: account, text: text, seconds: seconds, caller: caller, declared: declared)
+                grants.append(Grant(id: grantID, key: id, program: name, expires: expires, standIn: "", door: door))
+                try log.append(
+                    event: "granted", key: id, grant: grantID, observed: caller, declared: declared, detail: "\(seconds) seconds, ssh")
+                return Response(ok: true, sshSocket: door.socket)
+            }
+            guard let provider = key.provider, provider != Self.sshProvider else {
+                throw VaultError("\(id) says it is an SSH key, and what is sealed is not a private key")
+            }
+            guard let proxy else { throw VaultError("the proxy is not available") }
             // From here the value lives in the proxy, and this process keeps only the stand-in.
             let standIn = try proxy.add(
-                grant: grantID, key: id, provider: provider, text: String(decoding: sealed, as: UTF8.self),
+                grant: grantID, key: id, provider: provider, text: text,
                 field: key.field, expires: expires)
-            granted = Grant(id: grantID, key: id, program: name, expires: expires, standIn: standIn)
+            granted = Grant(id: grantID, key: id, program: name, expires: expires, standIn: standIn, door: nil)
             grants.append(granted)
             try log.append(
                 event: "granted", key: id, grant: granted.id, observed: caller, declared: declared,
                 detail: "\(seconds) seconds")
         }
         try log.append(event: "used", key: id, grant: granted.id, observed: caller, declared: declared)
+        guard let proxy else { throw VaultError("the proxy is not available") }
         return Response(
             ok: true, standIn: granted.standIn, proxy: try proxy.endpoint, variable: key.variable)
     }
+
+    /// The first server is the one you just approved with your finger. Each other asks again.
+    private func openDoor(
+        grant: String, key: String, account: String, text: String, seconds: Int,
+        caller: AuditLog.Observed?, declared: AuditLog.Declared
+    ) throws -> SSHDoorHandle {
+        guard let agents else { throw VaultError("SSH keys are not available here") }
+        let servers = ServerList()
+        let log = self.log
+        let confirm = self.confirm
+        return try agents.open(
+            grant: grant, key: text, seconds: seconds,
+            check: { fingerprint in
+                switch servers.note(fingerprint) {
+                case .known: return true
+                case .first:
+                    try? log.append(event: "server", key: key, grant: grant, detail: "\(fingerprint), with the permission")
+                    return true
+                case .new:
+                    let allowed = confirm("sign in to a new server \(fingerprint) with the key \(key)\(account)")
+                    if allowed { servers.allow(fingerprint) }
+                    try? log.append(
+                        event: allowed ? "server" : "denied", key: key, grant: grant, detail: "\(fingerprint), asked")
+                    return allowed
+                }
+            },
+            signed: { signature, caller in
+                try? log.append(
+                    event: "signed", key: key, grant: grant, observed: caller,
+                    detail: "\(signature.user) at \(signature.server)")
+            },
+            refused: { why, caller in
+                try? log.append(event: "refused", key: key, grant: grant, observed: caller, detail: why)
+            })
+    }
 }
 
-/// Starts the proxy and talks to it. It stops when this process does, since it reads until stdin ends.
-public final class ProxyProcess: KeyProxy, @unchecked Sendable {
-    private let process = Process()
-    private let input = Pipe()
-    private let output = Pipe()
+/// The servers one SSH permission has been approved for.
+final class ServerList: @unchecked Sendable {
+    enum Note { case first, known, new }
     private let lock = NSLock()
-    private var waiting: [String: DispatchSemaphore] = [:]
-    private var answers: [String: [String: Any]] = [:]
-    private var ready: KeyService.ProxyEndpoint?
-    private let started = DispatchSemaphore(value: 0)
-    /// Each request that went out: grant, key and a line for the log.
-    public var onEvent: (@Sendable (String, String, String) -> Void)?
+    private var servers: Set<String> = []
 
-    public init(binary: URL, runFolder: URL) throws {
-        for handle in [input.fileHandleForReading, input.fileHandleForWriting, output.fileHandleForReading, output.fileHandleForWriting] {
-            _ = fcntl(handle.fileDescriptor, F_SETFD, FD_CLOEXEC)
-        }
-        process.executableURL = binary
-        process.arguments = ["proxy", "--run-dir", runFolder.path]
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        signal(SIGPIPE, SIG_IGN)
-        try process.run()
-        let reader = output.fileHandleForReading
-        Thread.detachNewThread { [weak self] in
-            var pending = Data()
-            while true {
-                let chunk = reader.availableData
-                if chunk.isEmpty { break }
-                pending.append(chunk)
-                while let end = pending.firstIndex(of: 10) {
-                    let line = pending[pending.startIndex..<end]
-                    pending.removeSubrange(pending.startIndex...end)
-                    self?.handle(Data(line))
-                }
-            }
-            self?.failAll()
-        }
-        guard started.wait(timeout: .now() + 10) == .success, ready != nil else {
-            throw VaultError("the proxy did not start")
-        }
-    }
-
-    private func handle(_ line: Data) {
-        guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-            let op = message["op"] as? String
-        else { return }
-        switch op {
-        case "ready":
-            if let port = message["port"] as? Int, let ca = message["ca"] as? String, let bundle = message["bundle"] as? String {
-                ready = KeyService.ProxyEndpoint(port: port, ca: ca, bundle: bundle)
-            }
-            started.signal()
-        case "event":
-            guard let grant = message["grant"] as? String, let key = message["key"] as? String else { return }
-            let parts = [message["method"], message["host"], message["path"], message["status"]]
-            let method = parts[0] as? String ?? "?"
-            let place = "\(parts[1] as? String ?? "?")\(parts[2] as? String ?? "")"
-            onEvent?(grant, key, "\(method) \(place) \(parts[3] as? Int ?? 0)")
-        default:
-            guard let grant = message["grant"] as? String else { return }
-            lock.lock()
-            answers[grant] = message
-            let semaphore = waiting[grant]
-            lock.unlock()
-            semaphore?.signal()
-        }
-    }
-
-    private func failAll() {
+    func note(_ fingerprint: String) -> Note {
         lock.lock()
-        ready = nil
-        let all = waiting.values
-        lock.unlock()
-        for semaphore in all { semaphore.signal() }
-        started.signal()
-    }
-
-    public var endpoint: KeyService.ProxyEndpoint {
-        get throws {
-            guard let ready else { throw VaultError("the proxy stopped") }
-            return ready
+        defer { lock.unlock() }
+        if servers.contains(fingerprint) { return .known }
+        if servers.isEmpty {
+            servers.insert(fingerprint)
+            return .first
         }
+        return .new
     }
 
-    private func send(_ object: [String: Any]) throws {
-        var line = try JSONSerialization.data(withJSONObject: object)
-        line.append(10)
-        try input.fileHandleForWriting.write(contentsOf: line)
-    }
-
-    public func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date) throws -> String {
-        let semaphore = DispatchSemaphore(value: 0)
+    func allow(_ fingerprint: String) {
         lock.lock()
-        waiting[grant] = semaphore
-        lock.unlock()
-        defer {
-            lock.lock()
-            waiting[grant] = nil
-            answers[grant] = nil
-            lock.unlock()
-        }
-        do {
-            var message: [String: Any] = [
-                "op": "add", "grant": grant, "key": key, "provider": provider, "text": text,
-                "expires": Int(expires.timeIntervalSince1970),
-            ]
-            if let field { message["field"] = field }
-            try send(message)
-        } catch {
-            throw VaultError("the proxy stopped")
-        }
-        guard semaphore.wait(timeout: .now() + 10) == .success else { throw VaultError("the proxy did not answer") }
-        lock.lock()
-        let answer = answers[grant]
-        lock.unlock()
-        if let standIn = answer?["stand_in"] as? String { return standIn }
-        throw VaultError(answer?["error"] as? String ?? "the proxy did not answer")
-    }
-
-    public func remove(grant: String) {
-        try? send(["op": "remove", "grant": grant])
-    }
-
-    deinit {
-        try? input.fileHandleForWriting.close()
-    }
-}
-
-/// What the system says about the process on the other end of a connection.
-public enum CallerIdentity {
-    static func parent(of pid: Int32) -> (parent: Int32, name: String)? {
-        var info = kinfo_proc()
-        var size = MemoryLayout<kinfo_proc>.stride
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
-        var command = info.kp_proc.p_comm
-        let name = withUnsafeBytes(of: &command) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-        return (info.kp_eproc.e_ppid, name)
-    }
-
-    static func path(of pid: Int32) -> String? {
-        var buffer = [CChar](repeating: 0, count: 4096)
-        return proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : nil
-    }
-
-    /// A readable name for a process. Some tools install as `claude/versions/2.1.319`, and a log that
-    /// says `2.1.319` says nothing about who it was.
-    public static func label(path: String?, name: String) -> String {
-        guard let path else { return name }
-        let url = URL(fileURLWithPath: path)
-        let base = url.lastPathComponent
-        guard base.first?.isNumber == true, url.deletingLastPathComponent().lastPathComponent == "versions" else { return base }
-        return url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
-    }
-
-    public static func observe(pid: Int32) -> AuditLog.Observed {
-        var chain: [String] = []
-        var current = pid
-        for _ in 0..<8 {
-            guard current > 1, let found = parent(of: current) else { break }
-            chain.append(label(path: path(of: current), name: found.name))
-            current = found.parent
-        }
-        return AuditLog.Observed(pid: pid, program: path(of: pid) ?? chain.first ?? "unknown", chain: chain)
-    }
-
-    /// Only this user's processes may talk to the service. The socket's mode says so too.
-    static func peer(of descriptor: Int32) -> Int32? {
-        var uid: uid_t = 0
-        var gid: gid_t = 0
-        guard getpeereid(descriptor, &uid, &gid) == 0, uid == getuid() else { return nil }
-        var pid: pid_t = 0
-        var size = socklen_t(MemoryLayout<pid_t>.size)
-        guard getsockopt(descriptor, 0 /* SOL_LOCAL */, 2 /* LOCAL_PEERPID */, &pid, &size) == 0 else { return nil }
-        return pid
-    }
-}
-
-/// The service's socket. One line of JSON each way, one request per connection.
-public enum KeySocket {
-    static func address(_ path: String) throws -> sockaddr_un {
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw VaultError("the socket's path is too long") }
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in
-            raw.copyBytes(from: bytes)
-        }
-        return address
-    }
-
-    private static func readLine(_ descriptor: Int32, limit: Int = 1024 * 1024) -> Data? {
-        var out = Data()
-        var byte = [UInt8](repeating: 0, count: 4096)
-        while out.count < limit {
-            let got = read(descriptor, &byte, byte.count)
-            if got <= 0 { break }
-            out.append(contentsOf: byte[0..<got])
-            if byte[0..<got].contains(10) { break }
-        }
-        return out.isEmpty ? nil : out
-    }
-
-    private static func writeAll(_ descriptor: Int32, _ data: Data) -> Bool {
-        data.withUnsafeBytes { raw in
-            var offset = 0
-            while offset < raw.count {
-                let wrote = write(descriptor, raw.baseAddress! + offset, raw.count - offset)
-                if wrote <= 0 { return false }
-                offset += wrote
-            }
-            return true
-        }
-    }
-
-    public static func listen(path: String) throws -> Int32 {
-        let folder = URL(fileURLWithPath: path).deletingLastPathComponent()
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        // A refused connection means nothing is serving, so what is there is a leftover.
-        if let existing = try? send(KeyService.Request(op: "grants"), path: path, timeout: 1), existing.ok {
-            throw VaultError("the service is already running")
-        }
-        unlink(path)
-        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { throw VaultError("the service could not start") }
-        _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
-        var target = try address(path)
-        let bound = withUnsafePointer(to: &target) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-        guard bound == 0, Darwin.listen(descriptor, 16) == 0, chmod(path, 0o600) == 0 else {
-            close(descriptor)
-            throw VaultError("the service could not start")
-        }
-        return descriptor
-    }
-
-    /// Serves until `shouldStop` says so. Requests are answered one at a time by the service's lock.
-    public static func serve(descriptor: Int32, service: KeyService, shouldStop: @escaping () -> Bool = { false }) {
-        var pollFD = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
-        while !shouldStop() {
-            guard poll(&pollFD, 1, 1000) > 0 else { continue }
-            let client = accept(descriptor, nil, nil)
-            guard client >= 0 else { continue }
-            _ = fcntl(client, F_SETFD, FD_CLOEXEC)
-            Thread.detachNewThread {
-                defer { close(client) }
-                guard let pid = CallerIdentity.peer(of: client), let line = readLine(client),
-                    let request = try? JSONDecoder().decode(KeyService.Request.self, from: line)
-                else { return }
-                let response = service.handle(request, caller: CallerIdentity.observe(pid: pid))
-                if var out = try? JSONEncoder().encode(response) {
-                    out.append(10)
-                    _ = writeAll(client, out)
-                }
-            }
-        }
-    }
-
-    public static func send(_ request: KeyService.Request, path: String, timeout: Int32 = 120) throws -> KeyService.Response {
-        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { throw VaultError("the service could not be reached") }
-        defer { close(descriptor) }
-        _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
-        var limit = timeval(tv_sec: Int(timeout), tv_usec: 0)
-        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
-        var target = try address(path)
-        let connected = withUnsafePointer(to: &target) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-        guard connected == 0 else { throw VaultError("the service could not be reached") }
-        var out = try JSONEncoder().encode(request)
-        out.append(10)
-        guard writeAll(descriptor, out), let line = readLine(descriptor) else {
-            throw VaultError("the service did not answer")
-        }
-        return try JSONDecoder().decode(KeyService.Response.self, from: line)
+        defer { lock.unlock() }
+        servers.insert(fingerprint)
     }
 }

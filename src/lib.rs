@@ -10,6 +10,8 @@ pub mod inventory;
 pub mod journal;
 pub mod providers;
 pub mod recipe;
+pub mod schedule;
+pub mod script;
 pub mod secret;
 pub mod sigv4;
 pub mod simulate;

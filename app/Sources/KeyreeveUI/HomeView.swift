@@ -9,11 +9,15 @@ struct HomeView: View {
     let open: (Sidebar, String?) -> Void
 
     private let shownFirst = 5
+    @State private var confirmCheck = false
+    @State private var confirmIdentify = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
+                if let progress = model.progress { progressCard(progress) }
+                if let run = model.lastRun { summaryCard(run) }
                 if !stats.needLook.isEmpty { doFirst }
                 HStack(alignment: .top, spacing: 16) {
                     Card { bars(T("Secrets by project"), stats.projects).padding(16) }
@@ -33,17 +37,86 @@ struct HomeView: View {
         .background(Theme.background)
     }
 
+    private var checkable: [CatalogItem] { model.items.filter { model.providers.canCheck($0) && !$0.isArchived } }
+    private var identifiable: [CatalogItem] { checkable.filter(model.providers.canIdentify) }
+
     private var header: some View {
-        Button {
-            open(stats.needLook.isEmpty ? .all : .attention, nil)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(headline).font(Theme.title).foregroundStyle(Theme.text)
-                Text(T("Secrets: %d · Critical: %d · Checked: %d · Identified: %d", stats.secrets, stats.critical, stats.checked, stats.identified))
-                    .font(Theme.body)
-                    .foregroundStyle(Theme.muted)
+        HStack(alignment: .top) {
+            Button {
+                open(stats.needLook.isEmpty ? .all : .attention, nil)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(headline).font(Theme.title).foregroundStyle(Theme.text)
+                    Text(T("Secrets: %d · Critical: %d · Checked: %d · Identified: %d", stats.secrets, stats.critical, stats.checked, stats.identified))
+                        .font(Theme.body)
+                        .foregroundStyle(Theme.muted)
+                }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            Spacer()
+            HStack(spacing: 6) {
+                Button(T("Identify all")) { confirmIdentify = true }
+                    .buttonStyle(KRButtonStyle())
+                    .disabled(model.busy || identifiable.isEmpty)
+                Button(T("Check all")) { confirmCheck = true }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .disabled(model.busy || checkable.isEmpty)
+            }
+        }
+        .confirmationDialog(
+            T("Check all %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
+        ) {
+            Button(T("Check all")) { model.check(checkable) }
+            Button(T("Cancel"), role: .cancel) {}
+        } message: {
+            Text(T("Each key goes to its own provider, one read-only request. Keys set to Only me stay out."))
+        }
+        .confirmationDialog(
+            T("Identify all %d keys?", identifiable.count), isPresented: $confirmIdentify, titleVisibility: .visible
+        ) {
+            Button(T("Identify all")) { model.identify(identifiable) }
+            Button(T("Cancel"), role: .cancel) {}
+        } message: {
+            Text(T("Each provider says whose key it is. Only the fields its file declares are kept."))
+        }
+    }
+
+    private func progressCard(_ progress: (done: Int, total: Int)) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(T("Checking…")).font(Theme.section).foregroundStyle(Theme.text)
+                    Spacer()
+                    Text(T("%d of %d keys", progress.done, progress.total))
+                        .font(Theme.body).monospacedDigit().foregroundStyle(Theme.muted)
+                }
+                ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                    .tint(Theme.accent)
+            }
+            .padding(14)
+        }
+    }
+
+    private func summaryCard(_ run: RunSummary) -> some View {
+        Card {
+            HStack(spacing: 8) {
+                Text(T("Last run")).font(Theme.section).foregroundStyle(Theme.text)
+                Text(T("%d checked", run.checked)).font(Theme.body).foregroundStyle(Theme.muted)
+                Spacer()
+                resultButton(T("Works"), run.works, "checkmark", .good, "works")
+                resultButton(T("Rejected"), run.rejected, "xmark", .bad, "rejected")
+                resultButton(T("No answer"), run.noAnswer, "questionmark", .neutral, "no_answer")
+            }
+            .padding(12)
+        }
+    }
+
+    private func resultButton(_ title: String, _ count: Int, _ icon: String, _ tone: Tone, _ result: String) -> some View {
+        Button {
+            open(.result(result), nil)
+        } label: {
+            Badge(text: "\(title): \(count)", icon: icon, tone: tone).contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }

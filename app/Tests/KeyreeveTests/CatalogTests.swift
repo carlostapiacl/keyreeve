@@ -57,7 +57,7 @@ struct ActionTests {
     ])
 
     @Test func testProvidersComeFromTheirFiles() {
-        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"self_hosted":false,"suggested_name":null,"problem":null}]"#.utf8)
+        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"self_hosted":false,"suggested_name":null,"problem":null,"programs":[],"actions":[]}]"#.utf8)
         XCTAssertEqual(ProviderDirectory.parse(data).name(of: "x"), "X")
         XCTAssertEqual(ProviderDirectory.parse(Data("nope".utf8)).all.count, 0)
         XCTAssertEqual(directory.usable.map(\.id), ["langsmith", "aws"])
@@ -87,6 +87,33 @@ struct ActionTests {
         XCTAssertEqual(stats.needLook.map(\.path), ["alive"])
         XCTAssertEqual(alive.title, "Old cloud")
         XCTAssertEqual(dead.title, "dead")
+    }
+
+    @Test func testFiltersByResultAndSummarizesARun() {
+        let items = [
+            CatalogItem(path: "a", lastResult: "works"), CatalogItem(path: "b", lastResult: "rejected"),
+            CatalogItem(path: "c", lastResult: "no_result"), CatalogItem(path: "d", lastResult: "forbidden"),
+            CatalogItem(path: "e"), CatalogItem(path: "f.pub", level: "none"),
+            CatalogItem(path: "g", tags: ["status:archived"], lastResult: "works"),
+        ]
+        XCTAssertEqual(filter(items, by: .result("works"), search: "").map(\.path), ["a"])
+        XCTAssertEqual(filter(items, by: .result("no_answer"), search: "").map(\.path), ["c", "d"])
+        XCTAssertEqual(filter(items, by: .result(""), search: "").map(\.path), ["e"])
+        let run = RunSummary(items: items, checked: ["a", "b", "c", "d"])
+        XCTAssertEqual(run.checked, 4)
+        XCTAssertEqual(run.works, 1)
+        XCTAssertEqual(run.rejected, 1)
+        XCTAssertEqual(run.noAnswer, 2)
+    }
+
+    @Test func testOnlyApprovedFilesOfferTheirButtons() {
+        let button = CustomAction(id: "go", label: "Go", label_es: "Ir", open: "https://x.com")
+        let providers = ProviderDirectory([
+            ProviderInfo(id: "mine", name: "Mine", source: "local", approved: true, actions: [button]),
+            ProviderInfo(id: "other", name: "Other", source: "local", approved: false, actions: [button]),
+        ])
+        XCTAssertEqual(providers.customActions(for: CatalogItem(path: "a", recipes: ["mine"])).count, 1)
+        XCTAssertEqual(providers.customActions(for: CatalogItem(path: "a", recipes: ["other"])).count, 0)
     }
 
     @Test func testAFingerprintLastsTheChosenPeriod() {
@@ -252,6 +279,18 @@ struct LanguageTests {
         }
         XCTAssertGreaterThan(count, 60)
         XCTAssertEqual(missing.sorted(), [])
+    }
+
+    /// Swift stops a program at a repeated key in a table, so a repeat here would crash the app in Spanish.
+    @Test func testTheTableHasNoRepeatedKeys() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/KeyreeveCatalog/Strings.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let lines = text.components(separatedBy: "\n").filter { $0.hasPrefix("    \"") && $0.contains("\":") }
+        let keys = lines.map { $0.components(separatedBy: "\":")[0] }
+        XCTAssertEqual(Set(keys).count, keys.count)
+        XCTAssertGreaterThan(keys.count, 100)
     }
 
     @Test func testTranslationsKeepTheirPlaceholders() {

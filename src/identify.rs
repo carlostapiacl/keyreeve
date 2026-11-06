@@ -2,7 +2,9 @@
 //! anything that looks like a credential is dropped, so the rest of the answer never lands on disk.
 
 use crate::inventory::{kind_of, write_private};
+use crate::providers;
 use crate::recipe::{extract, Recipe};
+use crate::script;
 use crate::secret::Secret;
 use crate::ssh;
 use crate::transport::{exchange_token, HttpTransport, Request, Transport};
@@ -147,6 +149,16 @@ pub fn run_plan(plan: &Path, keys: &Path, details: &Path) -> Result<Vec<(String,
                     return Ok((recipe, fields));
                 }
                 let key = load_key(&file, entry.field.as_deref(), &recipe)?;
+                if let Some(run) = &recipe.auth.run {
+                    let answer =
+                        script::run(&providers::programs_folder(), run, "identify", Some(&key))?;
+                    let fields = answer
+                        .fields
+                        .into_iter()
+                        .filter(|(_, value)| safe_value(value, &key))
+                        .collect();
+                    return Ok((recipe, fields));
+                }
                 let mut transport = HttpTransport::for_recipe(&recipe);
                 identify(&recipe, &key, &mut transport).map(|fields| (recipe, fields))
             });

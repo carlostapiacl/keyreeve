@@ -20,6 +20,9 @@ public final class AppModel: ObservableObject {
     @Published public var message: String?
     @Published public var activity: [ActivityItem] = []
     @Published public var providers = ProviderDirectory()
+    /// How far the current batch got, as done and total.
+    @Published public var progress: (done: Int, total: Int)?
+    @Published public var lastRun: RunSummary?
     public let files: KeyreeveFiles
     private let binary: URL?
     private var lockTask: Task<Void, Never>?
@@ -31,6 +34,7 @@ public final class AppModel: ObservableObject {
     }
 
     public var keysFolder: URL? { files.keysFolder() }
+    public var commandURL: URL? { binary }
 
     // MARK: Lock
 
@@ -155,18 +159,26 @@ public final class AppModel: ObservableObject {
             ? T("check 1 key with its provider") : T("check %d keys with their providers", list.count)
         gated(list, reason: reason) {
             self.busy = true
+            self.lastRun = nil
+            self.progress = (0, list.count)
             self.message = T("Checking…")
             let files = self.files
             Task.detached {
-                let result = Result { try CheckRunner.run(list, binary: binary, keysFolder: folder, files: files) }
+                let result = Result {
+                    try CheckRunner.run(list, binary: binary, keysFolder: folder, files: files) { finished, total in
+                        Task { @MainActor in self.progress = (finished, total) }
+                    }
+                }
                 await MainActor.run {
                     self.busy = false
+                    self.progress = nil
                     self.load()
                     switch result {
                     case .success:
                         let paths = Set(list.map(\.path))
-                        let works = self.items.filter { paths.contains($0.path) && $0.lastResult == "works" }.count
-                        self.message = T("%d checked: %d work", list.count, works)
+                        let summary = RunSummary(items: self.items, checked: paths)
+                        if list.count > 1 { self.lastRun = summary }
+                        self.message = T("%d checked: %d work", list.count, summary.works)
                         done?()
                     case .failure(let error):
                         self.message = (error as? CheckError)?.description ?? T("The check did not finish")
@@ -213,6 +225,37 @@ public final class AppModel: ObservableObject {
             save(KeyEdit(host: host), for: item)
         } catch {
             message = (error as? CheckError)?.description
+        }
+    }
+
+    public func run(_ custom: CustomAction, provider: String, on item: CatalogItem) {
+        if let page = custom.open.flatMap(URL.init(string:)) {
+            NSWorkspace.shared.open(page)
+            return
+        }
+        guard !busy, let binary else { return }
+        let folder = keysFolder
+        let start = {
+            self.busy = true
+            self.message = custom.title
+            Task.detached {
+                let result = Result {
+                    try CheckRunner.runAction(
+                        provider: provider, action: custom, item: item, binary: binary, keysFolder: folder)
+                }
+                await MainActor.run {
+                    self.busy = false
+                    switch result {
+                    case .success(let text): self.message = text.isEmpty ? T("Done") : text
+                    case .failure: self.message = T("The action did not finish")
+                    }
+                }
+            }
+        }
+        if custom.needs_key {
+            gated([CatalogItem(path: item.path, level: "ask")], reason: custom.title, run: start)
+        } else {
+            start()
         }
     }
 

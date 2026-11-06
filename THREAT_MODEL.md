@@ -64,6 +64,12 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
 - **The recovery key opens everything.** Whoever holds it does not need the Mac.
 - **The app's lock covers the window.** The catalog it shows is a plain file with names and results, and it never holds
   a value.
+- **A program of yours is yours.** A provider file you approved can run a program with your permissions, and it sees the
+  key it checks. keyreeve pins the file and the program by hash, gives it a clean environment and filters what it says, and
+  that does not make a bad program safe. Read what you approve. The hash lives in a file you own, so another program running
+  as you could change it too.
+- **The weekly check runs with no fingerprint.** It covers only keys you set to "Agents can use it", and it reads them from
+  your files. Turn it off in Settings.
 - **A fingerprint lasts a while.** During the period you choose, 5 minutes by default, the app checks "Ask me" keys without
   asking. It applies to buttons in the app alone. Locking ends it, and the vault asks every time.
 - **A key in the address.** Some providers accept a key only in the URL. It travels inside HTTPS, but such a provider may

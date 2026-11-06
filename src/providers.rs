@@ -1,8 +1,10 @@
 //! Every provider is a file. Those that ship are built in, and anyone can add more in
 //! `~/.keyreeve/providers` with no new build. The rest of the tool knows no provider by name.
 
-use crate::recipe::Recipe;
+use crate::recipe::{CustomAction, Recipe};
+use crate::script;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -31,6 +33,10 @@ const BUILTIN: &[(&str, &str)] = &[
     ("langsmith", include_str!("../recipes/langsmith.yaml")),
     ("mailerlite", include_str!("../recipes/mailerlite.yaml")),
     ("mercadopago", include_str!("../recipes/mercadopago.yaml")),
+    (
+        "mailerlite-classic",
+        include_str!("../recipes/mailerlite-classic.yaml"),
+    ),
     ("meta", include_str!("../recipes/meta.yaml")),
     ("netlify", include_str!("../recipes/netlify.yaml")),
     ("openai", include_str!("../recipes/openai.yaml")),
@@ -61,7 +67,7 @@ fn builtin() -> &'static Vec<(&'static str, Recipe)> {
     })
 }
 
-fn home() -> PathBuf {
+pub fn home() -> PathBuf {
     std::env::var_os("KEYREEVE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".keyreeve")))
@@ -84,11 +90,81 @@ fn approved() -> BTreeMap<String, Vec<String>> {
 }
 
 /// A local file gets a key only for the hosts you approved. Editing its hosts undoes the
-/// approval, so a changed file cannot quietly send keys somewhere new.
+/// approval, so a changed file cannot quietly send keys somewhere new. A file that runs a program
+/// is pinned exactly: any change to the file or to its programs undoes the approval.
 fn is_approved(recipe: &Recipe) -> bool {
-    approved()
+    let hosts_ok = approved()
         .get(&recipe.provider)
-        .is_some_and(|hosts| recipe.hosts.iter().all(|host| hosts.contains(host)))
+        .is_some_and(|hosts| recipe.hosts.iter().all(|host| hosts.contains(host)));
+    if !hosts_ok {
+        return false;
+    }
+    if !recipe.runs_code() {
+        return true;
+    }
+    match (
+        fingerprint(recipe),
+        approved_programs().get(&recipe.provider),
+    ) {
+        (Ok(now), Some(saved)) => now == *saved,
+        _ => false,
+    }
+}
+
+fn programs_file() -> PathBuf {
+    home().join("approved-programs.json")
+}
+
+fn approved_programs() -> BTreeMap<String, String> {
+    fs::read_to_string(programs_file())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// A hash of the provider's file and of every program it names.
+fn fingerprint(recipe: &Recipe) -> Result<String, String> {
+    let folder = local_dir();
+    let mut hasher = Sha256::new();
+    let file =
+        fs::read(folder.join(format!("{}.yaml", recipe.provider))).map_err(|e| e.to_string())?;
+    hasher.update(&file);
+    let runs = recipe.auth.run.iter().chain(
+        recipe
+            .actions
+            .iter()
+            .filter_map(|action| action.run.as_ref()),
+    );
+    for run in runs {
+        let path = script::program_path(&folder, &run.program)?;
+        hasher.update(fs::read(path).map_err(|_| format!("{} was not found", run.program))?);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+pub fn programs_folder() -> PathBuf {
+    local_dir()
+}
+
+fn runs_of(recipe: &Recipe) -> Vec<String> {
+    recipe
+        .auth
+        .run
+        .iter()
+        .chain(
+            recipe
+                .actions
+                .iter()
+                .filter_map(|action| action.run.as_ref()),
+        )
+        .map(|run| run.program.clone())
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .collect()
 }
 
 fn read_local(name: &str) -> Result<Recipe, String> {
@@ -121,9 +197,13 @@ pub fn load(name: &str) -> Result<Recipe, String> {
     }
     let recipe = read_local(name)?;
     if !is_approved(&recipe) {
+        let reach = if recipe.runs_code() {
+            format!("run {}", runs_of(&recipe).join(", "))
+        } else {
+            format!("receive keys at {}", recipe.hosts.join(", "))
+        };
         return Err(format!(
-            "{name} is your own file, and it would receive keys at {}. Approve it with `keyreeve recipes approve {name}`",
-            recipe.hosts.join(", ")
+            "{name} is your own file, and it would {reach}. Approve it with `keyreeve recipes approve {name}`"
         ));
     }
     Ok(recipe)
@@ -138,6 +218,12 @@ pub fn approve(name: &str) -> Result<Vec<String>, String> {
     all.insert(name.to_owned(), recipe.hosts.clone());
     let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
     crate::inventory::write_private(&approved_file(), &text).map_err(|e| e.to_string())?;
+    if recipe.runs_code() {
+        let mut programs = approved_programs();
+        programs.insert(name.to_owned(), fingerprint(&recipe)?);
+        let text = serde_json::to_string_pretty(&programs).map_err(|e| e.to_string())?;
+        crate::inventory::write_private(&programs_file(), &text).map_err(|e| e.to_string())?;
+    }
     Ok(recipe.hosts)
 }
 
@@ -234,6 +320,9 @@ pub struct Entry {
     pub self_hosted: bool,
     pub suggested_name: Option<String>,
     pub problem: Option<String>,
+    /// The programs this file runs, shown before you approve it.
+    pub programs: Vec<String>,
+    pub actions: Vec<CustomAction>,
 }
 
 impl Entry {
@@ -251,6 +340,8 @@ impl Entry {
             self_hosted: recipe.self_hosted,
             suggested_name: recipe.suggested_name.clone(),
             problem: None,
+            programs: runs_of(recipe),
+            actions: recipe.actions.clone(),
         }
     }
 
@@ -267,6 +358,19 @@ impl Entry {
         .filter(|(on, _)| *on)
         .map(|(_, word)| *word)
         .collect();
+        if !self.programs.is_empty() {
+            let state = if self.approved {
+                ""
+            } else {
+                ", needs approval"
+            };
+            return format!(
+                "{}: {}, runs {}{state}",
+                self.id,
+                can.join(", "),
+                self.programs.join(", ")
+            );
+        }
         let state = if self.source == "local" && !self.approved {
             ", needs approval"
         } else {
@@ -334,6 +438,8 @@ pub fn list() -> Vec<Entry> {
                 self_hosted: false,
                 suggested_name: None,
                 problem: Some(problem),
+                programs: Vec::new(),
+                actions: Vec::new(),
             }),
         }
     }
@@ -374,6 +480,7 @@ mod tests {
             assert_eq!(recipe.verify.method, "GET", "{name}");
             assert!(recipe.name.is_some(), "{name}");
             assert!(recipe.dashboard.is_some(), "{name}");
+            assert!(!recipe.runs_code(), "{name} must not run a program");
             assert!(recipe.rotate_every_days.is_some(), "{name}");
             assert!(recipe.criticality_hint.is_some(), "{name}");
             if let Some(identify) = &recipe.identify {
@@ -428,6 +535,37 @@ mod tests {
             fs::write(dir.join("providers/bad.yaml"), "schema: 9").unwrap();
             assert!(list().iter().any(|e| e.id == "bad" && e.problem.is_some()));
             assert!(read_local("../../etc/passwd").is_err());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_runs_only_as_approved_and_any_change_undoes_it() {
+        use std::os::unix::fs::PermissionsExt;
+        with_home("program", |dir| {
+            let script_path = dir.join("providers/check.sh");
+            fs::write(
+                &script_path,
+                "#!/bin/sh\ncat >/dev/null\necho '{\"result\":\"works\"}'\n",
+            )
+            .unwrap();
+            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700)).unwrap();
+            let file = "schema: 1\nprovider: mine\nname: Mine\nhosts: []\nauth: { type: command, run: { program: check.sh } }\n";
+            fs::write(dir.join("providers/mine.yaml"), file).unwrap();
+
+            let error = load("mine").unwrap_err();
+            assert!(error.contains("check.sh"), "{error}");
+            approve("mine").unwrap();
+            assert!(load("mine").is_ok());
+
+            fs::write(&script_path, "#!/bin/sh\necho changed\n").unwrap();
+            assert!(load("mine").is_err(), "changing the program undoes it");
+            approve("mine").unwrap();
+            assert!(load("mine").is_ok());
+
+            let extra = format!("{file}actions: []\n");
+            fs::write(dir.join("providers/mine.yaml"), extra).unwrap();
+            assert!(load("mine").is_err(), "changing the file undoes it");
         });
     }
 

@@ -1,0 +1,27 @@
+# A provider of your own. Copy this and my-service-check.sh to ~/.keyreeve/providers, then approve it
+# in the app's Settings, or with `keyreeve recipes approve my-service`. Changing either file undoes
+# the approval. Nothing like this can ship with keyreeve: programs stay on your own Mac.
+schema: 1
+provider: my-service
+name: My service
+dashboard: https://example.com/settings/keys
+rotate_every_days: 180
+criticality_hint: 3
+hosts: []
+auth:
+  type: command
+  run: { program: my-service-check.sh }
+identify:
+  request: { method: GET, path: / }
+  fields: { account: "reply:" }
+suggested_name: "My service · {account}"
+actions:
+  - id: open-runbook
+    label: Open the runbook
+    label_es: Abrir el runbook
+    open: https://example.com/runbook
+  - id: restart-worker
+    label: Restart the worker
+    label_es: Reiniciar el worker
+    run: { program: my-service-check.sh, args: [--restart] }
+    needs_key: true

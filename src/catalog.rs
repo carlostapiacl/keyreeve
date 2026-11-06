@@ -131,6 +131,8 @@ pub struct Row {
     pub reviewed: bool,
     pub last_result: String,
     pub last_checked: String,
+    /// Why the last check gave no answer, in this tool's own words.
+    pub last_reason: String,
     pub recipes: Vec<String>,
     pub field: String,
     pub name: String,
@@ -180,12 +182,12 @@ pub fn build(items: &[InventoryItem], rules: &Rules, history: &[HistoryEntry]) -
                 history.iter().filter(|h| h.file == item.path).collect();
             if let Some(at) = checks.iter().map(|h| h.at).max() {
                 let latest = checks.iter().filter(|h| h.at == at);
-                row.last_result = latest
+                let shown = latest
                     .clone()
                     .find(|h| h.result == "works")
-                    .or_else(|| latest.clone().next())
-                    .map(|h| h.result.clone())
-                    .unwrap_or_default();
+                    .or_else(|| latest.clone().next());
+                row.last_result = shown.map(|h| h.result.clone()).unwrap_or_default();
+                row.last_reason = shown.and_then(|h| h.reason.clone()).unwrap_or_default();
                 row.last_checked = date_of(at);
             }
             row
@@ -280,6 +282,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         reviewed,
         last_result: String::new(),
         last_checked: String::new(),
+        last_reason: String::new(),
         recipes,
         field,
         name,
@@ -293,7 +296,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
 
 pub fn to_csv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field,name,description,criticality,criticality_suggested,rotate_days,host\n",
+        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field,name,description,criticality,criticality_suggested,rotate_days,host,last_reason\n",
     );
     for row in rows {
         let cells = [
@@ -315,6 +318,7 @@ pub fn to_csv(rows: &[Row]) -> String {
             row.criticality_suggested.to_string(),
             row.rotate_days.to_string(),
             csv_cell(&row.host),
+            csv_cell(&row.last_reason),
         ];
         out.push_str(&cells.join(","));
         out.push('\n');
@@ -479,6 +483,7 @@ files: { deploy.key: { tags: [shared], level: ask } }
             file: "a.txt".into(),
             recipe: recipe.into(),
             result: result.into(),
+            reason: None,
         };
         let history = [
             check(0, "meta", "works"),

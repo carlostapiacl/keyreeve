@@ -1,6 +1,6 @@
 //! The recipe format: data only, with no code and no way to place a secret in a URL or body.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -48,16 +48,57 @@ pub struct Recipe {
     pub self_hosted: bool,
     pub hosts: Vec<String>,
     pub auth: Auth,
+    /// Buttons of your own for this provider's keys, in the app.
+    #[serde(default)]
+    pub actions: Vec<CustomAction>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     /// With `revoke`, lets the recipe rotate. A recipe without them only checks a key.
     pub create: Option<Step>,
+    #[serde(default = "no_request")]
     pub verify: Step,
     pub revoke: Option<Step>,
     /// A read-only request that says whose key this is.
     pub identify: Option<Identify>,
     /// A name to offer, such as `GitHub · {account}`, using the fields of `identify`.
     pub suggested_name: Option<String>,
+}
+
+/// A program in the providers folder. See `script.rs`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CustomRun {
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// A button of your own: a page to open, or a program to run.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CustomAction {
+    pub id: String,
+    pub label: String,
+    pub label_es: Option<String>,
+    pub open: Option<String>,
+    pub run: Option<CustomRun>,
+    /// The program receives the key on stdin, which asks for your fingerprint.
+    #[serde(default)]
+    pub needs_key: bool,
+}
+
+fn no_request() -> Step {
+    Step {
+        method: "GET".into(),
+        path: "/".into(),
+        host: None,
+        body: None,
+        expect: None,
+        value_from: None,
+        id_from: None,
+        reject: Vec::new(),
+        alive_if: None,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -89,6 +130,8 @@ pub struct Auth {
     /// Getting a token is enough to know the key works.
     #[serde(default)]
     pub token_is_proof: bool,
+    /// `command`: a program of yours does the check. Only for your own files.
+    pub run: Option<CustomRun>,
     /// `ssh`: the login name, and the text around the account in the server's greeting.
     pub user: Option<String>,
     pub reply_between: Option<Vec<String>>,
@@ -154,7 +197,8 @@ impl Recipe {
         if !name_ok {
             return fail("provider must use lowercase letters, digits and hyphens".into());
         }
-        if self.self_hosted != self.hosts.is_empty() {
+        let is_command = self.auth.kind.as_deref() == Some("command");
+        if !is_command && self.self_hosted != self.hosts.is_empty() {
             return fail(
                 "a self_hosted recipe lists no hosts, and any other lists at least one".into(),
             );
@@ -198,6 +242,11 @@ impl Recipe {
                 }
             }
             Some("basic") => {}
+            Some("command") => {
+                if self.auth.run.is_none() || self.create.is_some() {
+                    return fail("auth type command needs run, and cannot use create".into());
+                }
+            }
             Some("oauth_token") => {
                 let grant = self.auth.grant.as_deref();
                 if !matches!(grant, Some("client_credentials" | "refresh_token")) {
@@ -235,6 +284,29 @@ impl Recipe {
                 }
             }
             Some(other) => return fail(format!("unknown auth type {other:?}")),
+        }
+        for action in &self.actions {
+            let id_ok = !action.id.is_empty()
+                && action
+                    .id
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+            if !id_ok || action.label.is_empty() || has_control(&action.label) {
+                return fail(format!(
+                    "action {:?} needs a lowercase id and a label",
+                    action.id
+                ));
+            }
+            if action.open.is_some() == action.run.is_some() {
+                return fail(format!("action {} needs either open or run", action.id));
+            }
+            if action
+                .open
+                .as_ref()
+                .is_some_and(|url| !url.starts_with("https://"))
+            {
+                return fail(format!("action {} must open an https address", action.id));
+            }
         }
         if let Some(url) = &self.dashboard {
             if !url.starts_with("https://") || has_control(url) || url.contains(' ') {
@@ -351,6 +423,11 @@ impl Recipe {
 
     pub fn display_name(&self) -> &str {
         self.name.as_deref().unwrap_or(&self.provider)
+    }
+
+    /// True if this file makes keyreeve run a program, which a file that ships may never do.
+    pub fn runs_code(&self) -> bool {
+        self.auth.run.is_some() || self.actions.iter().any(|action| action.run.is_some())
     }
 
     pub fn can_rotate(&self) -> bool {

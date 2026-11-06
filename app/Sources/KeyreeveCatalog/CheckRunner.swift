@@ -76,13 +76,15 @@ public enum CheckRunner {
     /// Runs the checks and rebuilds the catalog. The command's output is discarded, because the
     /// history already holds the results, so nothing it prints can stay in this app's memory.
     public static func run(
-        _ items: [CatalogItem], binary: URL, keysFolder: URL, files: KeyreeveFiles
+        _ items: [CatalogItem], binary: URL, keysFolder: URL, files: KeyreeveFiles,
+        progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     ) throws {
         try files.writePrivate(try plan(for: items), to: files.plan)
         defer { try? FileManager.default.removeItem(at: files.plan) }
-        let verify = try execute(
+        let verify = try streaming(
             binary,
-            ["verify", "--plan", files.plan.path, "--keys", keysFolder.path, "--history", files.history.path])
+            ["verify", "--plan", files.plan.path, "--keys", keysFolder.path, "--history", files.history.path, "--progress"],
+            progress: progress)
         // 0 is all passed and 1 is at least one did not. Both finished their work.
         guard verify == 0 || verify == 1 else { throw CheckError(T("The check could not start")) }
 
@@ -152,6 +154,57 @@ public enum CheckRunner {
         guard try execute(binary, arguments) == 0 else {
             throw CheckError(T("The list could not be updated"))
         }
+    }
+
+    /// Runs a button of your own, and returns what it says, which the command has already filtered.
+    public static func runAction(
+        provider: String, action: CustomAction, item: CatalogItem, binary: URL, keysFolder: URL?
+    ) throws -> String {
+        var arguments = ["action", provider, action.id]
+        if action.needs_key, let keysFolder {
+            arguments += ["--key-file", keysFolder.appendingPathComponent(item.path).path]
+            if !item.field.isEmpty { arguments += ["--field", item.field] }
+        }
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = binary
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw CheckError(T("The action did not finish")) }
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Reads progress lines as they come. They hold two counts, and the rest of the output is dropped.
+    private static func streaming(
+        _ binary: URL, _ arguments: [String], progress: @Sendable (Int, Int) -> Void
+    ) throws -> Int32 {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = binary
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        var pending = Data()
+        while true {
+            let chunk = pipe.fileHandleForReading.availableData
+            if chunk.isEmpty { break }
+            pending.append(chunk)
+            while let end = pending.firstIndex(of: 10) {
+                let line = String(decoding: pending[pending.startIndex..<end], as: UTF8.self)
+                pending.removeSubrange(pending.startIndex...end)
+                let parts = line.split(separator: " ")
+                if parts.count == 3, parts[0] == "progress", let done = Int(parts[1]), let total = Int(parts[2]) {
+                    progress(done, total)
+                }
+            }
+        }
+        process.waitUntilExit()
+        return process.terminationStatus
     }
 
     private static func execute(_ binary: URL, _ arguments: [String]) throws -> Int32 {

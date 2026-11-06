@@ -142,7 +142,8 @@ public final class KeyService: @unchecked Sendable {
         } else {
             // A permission covers one key with one program, so one for `netlify` does not also let
             // `printenv` read the key without showing you that it wants to.
-            let prompt = request.prompt ?? "run \(name) with the key \(id)"
+            // The account is the file's word and not the caller's, and it is how you notice the wrong one.
+            let prompt = (request.prompt ?? "run \(name) with the key \(id)") + (key.account.map { " (\($0))" } ?? "")
             let sealed: Data
             do {
                 sealed = try open(key.source, prompt)

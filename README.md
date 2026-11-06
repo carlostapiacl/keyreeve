@@ -258,6 +258,8 @@ writes it is mine, and it has had no outside review.
 
 Each key can have an identifier, separate from its file: `netlify`, `mail-restoiq`. A file with several values can have several, and
 renaming or moving a file breaks nothing that uses one. The app suggests them and keeps them in `~/.keyreeve/keys.toml`, which holds no value.
+An identifier can also say whose key it is, its `account`, which tells apart several keys of one provider. It comes from the provider when its
+file can ask, and from you when it cannot, and the fingerprint prompt shows it.
 
 ```bash
 keyreeve-vault list

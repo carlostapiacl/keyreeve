@@ -54,7 +54,7 @@ struct KeyAccessPanel: View {
                 HStack(spacing: 6) {
                     Text(key.id).font(Theme.code).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
                     if let field = key.field { Text(field).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(1) }
-                    Spacer(minLength: 4)
+                    AccountField(key: key, model: model)
                     Button {
                         model.removeIdentifier(key.id)
                     } label: {
@@ -121,5 +121,21 @@ struct CopyKeyButton: View {
             .buttonStyle(KRButtonStyle())
             .disabled(model.busy)
         }
+    }
+}
+
+/// Whose key this is, filled by the provider when it can say, and by you when it cannot.
+struct AccountField: View {
+    let key: KeyIndex.Key
+    @ObservedObject var model: AppModel
+    @State private var text = ""
+
+    var body: some View {
+        TextField(T("Account"), text: $text)
+            .textFieldStyle(.roundedBorder)
+            .font(Theme.caption)
+            .onAppear { text = key.account ?? "" }
+            .onChange(of: key.account) { text = key.account ?? "" }
+            .onSubmit { model.setAccount(text, of: key.id) }
     }
 }

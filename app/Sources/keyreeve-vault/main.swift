@@ -160,7 +160,7 @@ do {
     case "list":
         let sealed = Set((try? store.load().entries.keys.map { String($0) }) ?? [])
         for key in try KeyIndex.load(from: keysFile).keys where sealed.contains(key.source) {
-            let parts = [key.provider, key.project, key.description].compactMap { $0 }
+            let parts = [key.provider, key.account, key.project, key.description].compactMap { $0 }
             print(([key.id] + parts).joined(separator: "  "))
         }
     case "use":

@@ -9,19 +9,22 @@ public struct KeyIndex: Equatable, Sendable {
         public var field: String?
         public var provider: String?
         public var project: String?
+        /// Whose key it is, at the provider. Several keys of one provider differ by this.
+        public var account: String?
         public var description: String?
         /// The variable a command gets the key in, when nothing else says.
         public var variable: String?
 
         public init(
             id: String, source: String, field: String? = nil, provider: String? = nil, project: String? = nil,
-            description: String? = nil, variable: String? = nil
+            account: String? = nil, description: String? = nil, variable: String? = nil
         ) {
             self.id = id
             self.source = source
             self.field = field
             self.provider = provider
             self.project = project
+            self.account = account
             self.description = description
             self.variable = variable
         }
@@ -55,8 +58,8 @@ public struct KeyIndex: Equatable, Sendable {
 
     public mutating func remove(id: String) { keys.removeAll { $0.id == id } }
 
-    /// An identifier for a key that has none: its provider, then its project, then a number.
-    public func suggestion(provider: String?, project: String?, source: String) -> String {
+    /// An identifier for a key that has none: its provider, then its project or account, then a number.
+    public func suggestion(provider: String?, project: String?, account: String? = nil, source: String) -> String {
         func slug(_ text: String) -> String {
             let mapped = text.lowercased().folding(options: .diacriticInsensitive, locale: nil).map { character -> Character in
                 character.isASCII && (character.isLetter || character.isNumber) ? character : "-"
@@ -69,6 +72,9 @@ public struct KeyIndex: Equatable, Sendable {
         let start = base.isEmpty ? "key" : String(base.prefix(40))
         var tries = [start]
         if let project, !slug(project).isEmpty, slug(project) != start { tries.append("\(start)-\(slug(project).prefix(20))") }
+        // The part before the @, since a whole address makes a long and very public name.
+        let accountName = account.map { String($0.split(separator: "@").first ?? "") } ?? ""
+        if !slug(accountName).isEmpty, slug(accountName) != start { tries.append("\(start)-\(slug(accountName).prefix(24))") }
         for candidate in tries where key(candidate) == nil && Self.isValid(id: candidate) { return candidate }
         let stem = tries.last ?? start
         var number = 2
@@ -96,7 +102,7 @@ public struct KeyIndex: Equatable, Sendable {
             try index.add(
                 Key(
                     id: id, source: source, field: current["field"], provider: current["provider"],
-                    project: current["project"], description: current["description"], variable: current["variable"]))
+                    project: current["project"], account: current["account"], description: current["description"], variable: current["variable"]))
         }
         for (number, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -109,7 +115,7 @@ public struct KeyIndex: Equatable, Sendable {
             }
             guard current != nil, let equals = line.firstIndex(of: "=") else { throw bad }
             let name = line[..<equals].trimmingCharacters(in: .whitespaces)
-            guard ["id", "source", "field", "provider", "project", "description", "variable"].contains(name),
+            guard ["id", "source", "field", "provider", "project", "account", "description", "variable"].contains(name),
                 current?[name] == nil
             else { throw bad }
             var scanner = TomlScanner(text: String(line[line.index(after: equals)...]))
@@ -127,6 +133,7 @@ public struct KeyIndex: Equatable, Sendable {
             if let description = key.description { out += "description = \(tomlQuoted(description))\n" }
             if let provider = key.provider { out += "provider = \(tomlQuoted(provider))\n" }
             if let project = key.project { out += "project = \(tomlQuoted(project))\n" }
+            if let account = key.account { out += "account = \(tomlQuoted(account))\n" }
             out += "source = \(tomlQuoted(key.source))\n"
             if let field = key.field { out += "field = \(tomlQuoted(field))\n" }
             if let variable = key.variable { out += "variable = \(tomlQuoted(variable))\n" }

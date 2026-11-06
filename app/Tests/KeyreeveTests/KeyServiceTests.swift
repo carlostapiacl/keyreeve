@@ -5,9 +5,20 @@ import Testing
 struct KeyIndexTests {
     @Test func testTheFileRoundTrips() throws {
         var index = KeyIndex()
-        try index.add(.init(id: "mail-restoiq", source: "dir/a b.env", field: "API_KEY", provider: "resend", project: "restoiq", description: "Say \"hi\"", variable: "RESEND_API_KEY"))
+        try index.add(.init(id: "mail-restoiq", source: "dir/a b.env", field: "API_KEY", provider: "resend", project: "restoiq", account: "hola@restoiq.cl", description: "Say \"hi\"", variable: "RESEND_API_KEY"))
         try index.add(.init(id: "netlify", source: "netlify-pat.txt"))
         #expect(try KeyIndex.parse(index.toml) == index)
+    }
+
+    @Test func testAccountsTellApartKeysOfOneProviderAndProject() throws {
+        var index = KeyIndex()
+        #expect(index.suggestion(provider: "instagram", project: "redes", account: "cuenta.uno", source: "a") == "instagram")
+        try index.add(.init(id: "instagram", source: "a"))
+        #expect(index.suggestion(provider: "instagram", project: "redes", account: "cuenta.uno", source: "b") == "instagram-redes")
+        try index.add(.init(id: "instagram-redes", source: "b"))
+        #expect(index.suggestion(provider: "instagram", project: "redes", account: "cuenta.dos", source: "c") == "instagram-cuenta-dos")
+        try index.add(.init(id: "instagram-cuenta-dos", source: "c"))
+        #expect(index.suggestion(provider: "instagram", project: "redes", account: "cuenta.dos@correo.cl", source: "d") == "instagram-cuenta-dos-2")
     }
 
     @Test func testBadIdentifiersAndFilesAreRefused() throws {
@@ -93,7 +104,7 @@ final class Fixture: @unchecked Sendable {
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return KeyService(
-            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\n") },
+            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\n") },
             open: { source, prompt in
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
@@ -121,6 +132,13 @@ struct KeyServiceTests {
         f.now.addTimeInterval(TimeInterval(KeyService.defaultSeconds + 1))
         #expect(f.use("netlify").ok)
         #expect(f.prompts.count == 2)
+    }
+
+    @Test func testThePromptNamesTheAccount() throws {
+        let f = Fixture()
+        _ = f.use("netlify")
+        _ = f.use("mail")
+        #expect(f.prompts == ["run netlify with the key netlify (mi-cuenta)", "run netlify with the key mail"])
     }
 
     @Test func testAPermissionForOneProgramDoesNotCoverAnother() throws {

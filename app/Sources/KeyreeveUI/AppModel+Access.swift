@@ -65,8 +65,21 @@ extension AppModel {
             ?? item.tags.first { !$0.contains(":") && !["confirm", "internal", "revoke", "compartido"].contains($0) }
     }
 
+    /// What the provider said when asked whose key this is.
+    public func account(of item: CatalogItem) -> String? {
+        item.details?.fields["account"] ?? item.details?.fields["email"]
+    }
+
     public func suggestedIdentifier(for item: CatalogItem) -> String {
-        keyIndex.suggestion(provider: item.recipes.first, project: project(of: item), source: item.path)
+        keyIndex.suggestion(provider: item.recipes.first, project: project(of: item), account: account(of: item), source: item.path)
+    }
+
+    public func setAccount(_ text: String, of id: String) {
+        var index = keyIndex
+        guard let at = index.keys.firstIndex(where: { $0.id == id }) else { return }
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        index.keys[at].account = clean.isEmpty ? nil : clean
+        try? saveIndex(index)
     }
 
     public func addIdentifier(_ id: String, for item: CatalogItem, field: String?) {
@@ -76,7 +89,7 @@ extension AppModel {
             try index.add(
                 KeyIndex.Key(
                     id: id, source: item.path, field: field ?? (item.field.isEmpty ? nil : item.field),
-                    provider: item.recipes.first, project: project(of: item),
+                    provider: item.recipes.first, project: project(of: item), account: account(of: item),
                     description: item.description.isEmpty ? nil : item.description, variable: provider?.env_var))
             try saveIndex(index)
         } catch {
@@ -95,13 +108,20 @@ extension AppModel {
         var index = keyIndex
         var added = 0
         for item in items where item.vault == .sealed || item.vault == .outdated {
+            // A key that got its identifier before its account was known picks it up here.
+            for existing in index.keys(forSource: item.path) where existing.account == nil {
+                if let found = account(of: item), let at = index.keys.firstIndex(where: { $0.id == existing.id }) {
+                    index.keys[at].account = found
+                }
+            }
             guard index.keys(forSource: item.path).isEmpty else { continue }
-            let id = index.suggestion(provider: item.recipes.first, project: project(of: item), source: item.path)
+            let id = index.suggestion(
+                provider: item.recipes.first, project: project(of: item), account: account(of: item), source: item.path)
             try? index.add(
                 KeyIndex.Key(
                     id: id, source: item.path, field: item.field.isEmpty ? nil : item.field, provider: item.recipes.first,
-                    project: project(of: item), description: item.description.isEmpty ? nil : item.description,
-                    variable: provider(of: item)?.env_var))
+                    project: project(of: item), account: account(of: item),
+                    description: item.description.isEmpty ? nil : item.description, variable: provider(of: item)?.env_var))
             added += 1
         }
         do {

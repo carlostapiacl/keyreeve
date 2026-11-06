@@ -171,7 +171,10 @@ struct VaultView: View {
                 HStack {
                     SectionTitle(T("Your sealed keys"))
                     Spacer()
-                    if sealed.contains(where: { model.keyIndex.keys(forSource: $0.path).isEmpty }) {
+                    if sealed.contains(where: { item in
+                        let keys = model.keyIndex.keys(forSource: item.path)
+                        return keys.isEmpty || (model.account(of: item) != nil && keys.contains { $0.account == nil })
+                    }) {
                         Button(T("Give identifiers to the sealed keys")) { model.assignIdentifiers() }
                             .buttonStyle(KRButtonStyle())
                     }
@@ -179,8 +182,13 @@ struct VaultView: View {
                 ForEach(sealed) { item in
                     HStack(spacing: 10) {
                         KeyRow(item: item, compact: true)
-                        if let id = model.keyIndex.keys(forSource: item.path).first?.id {
-                            Text(id).font(Theme.code).foregroundStyle(Theme.muted).lineLimit(1)
+                        if let key = model.keyIndex.keys(forSource: item.path).first {
+                            VStack(alignment: .trailing, spacing: 1) {
+                                Text(key.id).font(Theme.code).foregroundStyle(Theme.muted).lineLimit(1)
+                                if let account = key.account {
+                                    Text(account).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(1)
+                                }
+                            }
                         }
                         if item.vault == .sealed || item.vault == .outdated {
                             CopyKeyButton(item: item, model: model)

@@ -13,6 +13,7 @@ struct AgentsView: View {
 
     private static let agentEvents: Set<String> = [
         "granted", "used", "denied", "refused", "handed", "closed", "request", "signed", "requested", "opened",
+        "policy", "allowed", "declined", "paused", "resumed", "closed all",
     ]
     private var recent: [AuditLog.Entry] {
         Array(model.usage.entries.filter { Self.agentEvents.contains($0.event) }.prefix(12))
@@ -104,7 +105,7 @@ struct AgentsView: View {
                         .buttonStyle(KRButtonStyle())
                         .help(T("Ends what you allowed for 1 to 24 hours. Locking the app does the same."))
                 }
-                Text(T("Only me: no agent. Ask: you choose once or for some hours, then your finger. Free: your finger once, then no questions until you lock the app."))
+                Text(T("Only me: no agent. Ask: you choose once or for some hours, then your finger. Free: your finger once, then no questions until you quit Keyreeve."))
                     .font(Theme.caption).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 if model.agentKeys.isEmpty {

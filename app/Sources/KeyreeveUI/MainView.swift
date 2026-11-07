@@ -83,6 +83,8 @@ public struct MainView: View {
             .onChange(of: model.pendingRequests.map(\.id)) { old, new in
                 if !Set(new).subtracting(old).isEmpty { selection = .agents }
             }
+            .onChange(of: model.showRequests) { _, _ in selection = .agents }
+            .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
         }
     }
 

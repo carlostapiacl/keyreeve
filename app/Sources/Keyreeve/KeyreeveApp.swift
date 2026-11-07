@@ -25,13 +25,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// With no window there is nothing to use, and a running app with no window looks broken.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Keyreeve stays in the menu bar with no window, since what agents were allowed lasts while it runs.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// With its window closed it lives in the menu bar alone, out of the Dock.
+    func applicationDidUpdate(_ notification: Notification) {
+        let hasWindow = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain }
+        let policy: NSApplication.ActivationPolicy = hasWindow ? .regular : .accessory
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+    }
+
+    /// Clicking the app again, in Finder or with open, brings the window back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { true }
 }
 
 @main
 struct KeyreeveApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var model = AppModel()
     @AppStorage(Language.settingsKey) private var language = Language.system.rawValue
     @AppStorage(SettingsKey.appearance) private var appearance = "system"
@@ -64,7 +75,7 @@ struct KeyreeveApp: App {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 model.windowGotFocus()
             }
-            // "Until you lock the app" also ends when the app does.
+            // What agents were allowed ends when the app does.
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 model.closeServicePermissionsBeforeQuitting()
             }
@@ -88,6 +99,19 @@ struct KeyreeveApp: App {
                 }
             }
         }
+
+        MenuBarExtra {
+            MenuBarView(model: model) {
+                NSApp.setActivationPolicy(.regular)
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .environment(\.locale, chosenLocale)
+            .preferredColorScheme(scheme)
+        } label: {
+            MenuBarLabel(model: model)
+        }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView(model: model)

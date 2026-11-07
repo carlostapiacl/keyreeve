@@ -171,3 +171,20 @@ func showAudit() throws {
         print("\(format.string(from: entry.at))  \(entry.event)  \(entry.key)  \(who)  \(what)")
     }
 }
+
+/// Every log as one list in time order, to read or to analyse elsewhere. No value is in any of them.
+func showTimeline() throws {
+    func option(_ name: String) -> String? {
+        guard let at = arguments.firstIndex(of: name), at + 1 < arguments.count else { return nil }
+        return arguments[at + 1]
+    }
+    var since: Date?
+    if let text = option("--since") {
+        guard let start = Timeline.start(from: text) else { fail("--since takes a time like 30m, 24h or 7d", code: 2) }
+        since = start
+    }
+    let index = (try? KeyIndex.load(from: keysFile)) ?? KeyIndex()
+    var rows = Timeline.read(home: home, index: index, since: since)
+    if let key = option("--key") { rows = rows.filter { $0.key == key } }
+    print(arguments.contains("--csv") ? Timeline.csv(rows) : Timeline.jsonl(rows), terminator: "")
+}

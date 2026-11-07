@@ -17,6 +17,7 @@ do {
     case "grants": try showGrants()
     case "revoke": try revokeGrants()
     case "audit": try showAudit()
+    case "log": try showTimeline()
     case "run": try runWithKey()
     case "env": try runWithEnv()
     case "mcp": try serveAgents()

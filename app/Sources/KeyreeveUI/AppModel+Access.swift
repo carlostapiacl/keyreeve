@@ -112,7 +112,30 @@ extension AppModel {
         Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: path, timeout: 2) }
     }
 
-    /// Quitting ends them as locking does. It waits, since the app is gone once this returns.
+    /// Writes what the person decided, so the usage log has every side of it.
+    func audit(_ changes: [(key: String, detail: String)], event: String = "policy") {
+        let log = AuditLog(url: files.audit)
+        for change in changes { try? log.append(event: event, key: change.key, detail: change.detail) }
+    }
+
+    /// The emergency stop: ends every permission, pauses every agent and locks the window.
+    public func lockEverything() {
+        audit([("-", "every permission ended and agents paused")], event: "paused")
+        AgentBridge.setPaused(true, home: files.directory)
+        agentsPaused = true
+        closeServicePermissions()
+        lock()
+        message = T("Everything is locked and agents are paused")
+    }
+
+    public func resumeAgents() {
+        audit([("-", "agents may ask again")], event: "resumed")
+        AgentBridge.setPaused(false, home: files.directory)
+        agentsPaused = false
+        message = T("Agents may ask again")
+    }
+
+    /// Quitting ends them. It waits, since the app is gone once this returns.
     public func closeServicePermissionsBeforeQuitting() {
         AgentBridge.endAll(home: files.directory)
         _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: files.keySocket.path, timeout: 2)
@@ -244,6 +267,7 @@ extension AppModel {
 
     /// Ends what agents were approved for a while, and every permission the key service holds.
     public func endAgentApprovals() {
+        audit([("-", "every agent permission ended")], event: "closed all")
         closeServicePermissions()
         message = T("Agents must ask again")
     }
@@ -274,7 +298,9 @@ extension AppModel {
 
     private func savePolicy(_ policy: AgentPolicy) {
         do {
+            let before = AgentPolicy.load(from: files.agents)
             try files.writePrivate(Data(policy.toml.utf8), to: files.agents)
+            audit(policy.changes(from: before))
             agentPolicy = policy
         } catch {
             message = T("The permissions could not be saved")

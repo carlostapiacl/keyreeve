@@ -102,7 +102,8 @@ func serveAgents() throws {
         offered: { AccessRequests.readOffered(from: home.appendingPathComponent(AccessRequests.offeredFileName)) },
         requests: { AccessRequests.read(from: home.appendingPathComponent(AccessRequests.fileName)) },
         addRequest: { try AccessRequests.append($0, to: home.appendingPathComponent(AccessRequests.fileName)) },
-        announce: announceRequest)
+        announce: announceRequest,
+        paused: { AgentBridge.isPaused(home: home) })
     while let line = readLine() {
         if let answer = bridge.handle(line) {
             FileHandle.standardOutput.write(Data((answer + "\n").utf8))
@@ -128,8 +129,8 @@ func askApproval(_ request: AgentRequest) -> AgentApproval? {
     let said = request.reason.isEmpty ? "-" : "\u{201C}\(request.reason)\u{201D}"
     let command = request.command.isEmpty ? request.program : request.command
     alert.informativeText = spanish
-        ? "Comando:\n\(command)\n\nLo que dice el agente, en sus palabras:\n\(said)\n\nDespués te pide la huella. Si eliges horas, vale para \(request.program) con esta clave hasta que pase el tiempo o bloquees la app."
-        : "Command:\n\(command)\n\nWhat the agent says, in its own words:\n\(said)\n\nYour fingerprint comes next. Hours cover \(request.program) with this key until the time is up or you lock the app."
+        ? "Comando:\n\(command)\n\nLo que dice el agente, en sus palabras:\n\(said)\n\nDespués te pide la huella. Si eliges horas, vale para \(request.program) con esta clave hasta que pase el tiempo o salgas de Keyreeve."
+        : "Command:\n\(command)\n\nWhat the agent says, in its own words:\n\(said)\n\nYour fingerprint comes next. Hours cover \(request.program) with this key until the time is up or you quit Keyreeve."
     for choice in AgentApproval.choices {
         alert.addButton(withTitle: labels[choice.label] ?? choice.label)
     }
@@ -169,8 +170,8 @@ func askAccess(_ request: AccessRequest) -> AccessDecision? {
         ? "\(request.agent) pide la clave \(request.key)\(provider)"
         : "\(request.agent) asks for the key \(request.key)\(provider)"
     alert.informativeText = spanish
-        ? "Lo que dice el agente, en sus palabras:\n\u{201C}\(request.reason)\u{201D}\n\nSi permites, te pide la huella una vez y no vuelve a preguntar hasta que pase el tiempo o bloquees la app. Lo cambias cuando quieras en Agentes."
-        : "What the agent says, in its own words:\n\u{201C}\(request.reason)\u{201D}\n\nIf you allow it, your fingerprint is asked once, and nothing more until the time is up or you lock the app. Change it any time under Agents."
+        ? "Lo que dice el agente, en sus palabras:\n\u{201C}\(request.reason)\u{201D}\n\nSi permites, te pide la huella una vez y no vuelve a preguntar hasta que pase el tiempo o salgas de Keyreeve. Lo cambias cuando quieras en Agentes."
+        : "What the agent says, in its own words:\n\u{201C}\(request.reason)\u{201D}\n\nIf you allow it, your fingerprint is asked once, and nothing more until the time is up or you quit Keyreeve. Change it any time under Agents."
     let durations = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
     let choices: [Int?] = AccessDecision.hourChoices.map { $0 } + [nil]
     for hours in choices {

@@ -44,6 +44,10 @@ public final class AppModel: ObservableObject {
     @Published public var agentPolicy = AgentPolicy()
     /// Agents' requests for keys not saved yet, with no answer.
     @Published public var pendingRequests: [AccessRequests.Entry] = []
+    /// The emergency stop is on: every agent is refused.
+    @Published public var agentsPaused = false
+    /// Bumped to bring the window to the requests.
+    @Published public var showRequests = 0
     @Published public var keyIndex = KeyIndex()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
@@ -95,7 +99,8 @@ public final class AppModel: ObservableObject {
         vaultDraft = nil
         vaultComparison = nil
         clearClipboardNow()
-        closeServicePermissions()
+        // Locking hides the window's contents. What agents were allowed lasts while Keyreeve runs, and
+        // ends when it quits or with Lock everything.
         agentPolicy = AgentPolicy()
         keyIndex = KeyIndex()
         usage = UsageSnapshot()

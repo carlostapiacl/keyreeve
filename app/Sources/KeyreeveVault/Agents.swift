@@ -78,7 +78,7 @@ public struct AgentPolicy: Equatable, Sendable {
     public enum Level: String, Equatable, Sendable, CaseIterable {
         /// You choose once or for some hours, then confirm with your finger.
         case ask
-        /// One fingerprint, then no more questions until you lock the app.
+        /// One fingerprint, then no more questions until the time is up or you quit Keyreeve.
         case free
     }
 
@@ -219,7 +219,7 @@ public struct AgentPolicy: Equatable, Sendable {
     public var toml: String {
         var out = """
             # What agents may do with each key in your vault. A key that is not here is yours alone.
-            # level = "ask" asks you each time, once or for some hours; "free" asks once, until you lock the app.
+            # level = "ask" asks you each time, once or for some hours; "free" asks once, until you quit Keyreeve.
             # agents limits a key to some agents, such as ["claude"]. programs receive the key itself, and each
             # is pinned by its SHA-256 in hashes, so a program that changed is refused. until closes the key again
             # at that time, for a key opened for some hours.
@@ -242,6 +242,23 @@ public struct AgentPolicy: Equatable, Sendable {
     }
 
     private static func quoted(_ text: String) -> String { tomlQuoted(text) }
+
+    /// What changed for each key, in words, for the usage log. Programs are named, not their paths.
+    public func changes(from old: AgentPolicy) -> [(key: String, detail: String)] {
+        let format = ISO8601DateFormatter()
+        func describe(_ policy: AgentPolicy, _ key: String) -> String {
+            var parts = [policy.levels[key]?.rawValue ?? ((policy.commands[key] ?? []).isEmpty ? "only me" : "ask")]
+            if let agents = policy.agents[key], !agents.isEmpty { parts.append("agents " + agents.joined(separator: " ")) }
+            if let closes = policy.until[key] { parts.append("until " + format.string(from: closes)) }
+            let programs = (policy.commands[key] ?? []).map { URL(fileURLWithPath: $0).lastPathComponent }
+            if !programs.isEmpty { parts.append("programs " + programs.joined(separator: " ")) }
+            return parts.joined(separator: ", ")
+        }
+        return Set(keys).union(old.keys).sorted().compactMap { key in
+            let before = describe(old, key), after = describe(self, key)
+            return before == after ? nil : (key, "\(before) -> \(after)")
+        }
+    }
 }
 
 /// What an agent asks for, shown to the person before the fingerprint. The key and the program come
@@ -340,6 +357,23 @@ public struct AgentBridge {
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
     }
 
+    /// While this file exists every agent is refused, with no window and no request: the person's
+    /// emergency stop, which only they lift.
+    public static func pausedFile(home: URL) -> URL { home.appendingPathComponent("run/agents-paused") }
+
+    public static func setPaused(_ paused: Bool, home: URL) {
+        let file = pausedFile(home: home)
+        if paused {
+            try? FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try? Data().write(to: file)
+        } else {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    public static func isPaused(home: URL) -> Bool { FileManager.default.fileExists(atPath: pausedFile(home: home).path) }
+
     public static func endedAt(home: URL) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: endedFile(home: home).path))?[.modificationDate] as? Date
     }
@@ -391,6 +425,8 @@ public struct AgentBridge {
     let addRequest: (AccessRequests.Entry) throws -> Void
     /// Tells the person an agent asked for a key that is not saved yet.
     let announce: (AccessRequests.Entry) -> Announcement
+    /// The person's emergency stop, read at each request.
+    let paused: () -> Bool
     let held = Held()
 
     /// What the person answers when told of a request for a key that is not saved yet.
@@ -431,7 +467,8 @@ public struct AgentBridge {
         offered: @escaping () -> [String] = { [] },
         requests: @escaping () -> [AccessRequests.Entry] = { [] },
         addRequest: @escaping (AccessRequests.Entry) throws -> Void = { _ in throw VaultError("requests cannot be kept here") },
-        announce: @escaping (AccessRequests.Entry) -> Announcement = { _ in .later }
+        announce: @escaping (AccessRequests.Entry) -> Announcement = { _ in .later },
+        paused: @escaping () -> Bool = { false }
     ) {
         currentPolicy = policy
         self.names = names
@@ -454,6 +491,7 @@ public struct AgentBridge {
         self.requests = requests
         self.addRequest = addRequest
         self.announce = announce
+        self.paused = paused
     }
 
     /// Runs and writes down what ran, with the key and its stand-in taken out of what is kept.
@@ -536,6 +574,11 @@ public struct AgentBridge {
     }
 
     private func call(_ tool: String, _ arguments: [String: Any]) throws -> String {
+        // Before anything else, so a stopped agent cannot open a window or reach the service.
+        if paused() {
+            if tool != "list_keys" { log("refused", arguments["key"] as? String ?? "-", "paused", arguments["reason"] as? String) }
+            throw VaultError("Keyreeve is paused: the person stopped every agent. Ask them in the conversation")
+        }
         switch tool {
         case "list_keys":
             let policy = self.policy
@@ -545,7 +588,7 @@ public struct AgentBridge {
             let isOpen = { (key: String) in policy.level(of: key, at: date) != nil && policy.admits(agent: agent, for: key) }
             var lines = policy.keys.filter { known.contains($0) && isOpen($0) }.compactMap { key -> String? in
                 guard let level = policy.level(of: key, at: date) else { return nil }
-                var parts = [level == .free ? "free until the person locks the app" : "asks the person"]
+                var parts = [level == .free ? "free until the person quits Keyreeve" : "asks the person"]
                 if let closes = policy.until[key] { parts.append("open until \(ISO8601DateFormatter().string(from: closes))") }
                 let info = described[key]
                 if policy.levels[key] != nil {
@@ -676,7 +719,7 @@ public struct AgentBridge {
             // One fingerprint covers every command until the app locks, at most a day.
             request.anyProgram = true
             request.seconds = bounded(KeyService.maxSeconds, key: key, policy: policy)
-            request.prompt = "let \(agent) use \(key) until you lock the app"
+            request.prompt = "let \(agent) use \(key) until you quit Keyreeve"
         case .ask:
             let open = (try? service(KeyService.Request(op: "grants")))?.grants ?? []
             let covered = open.contains { $0.key == key && ($0.program == name || $0.program == KeyService.anyProgram) }
@@ -863,7 +906,7 @@ public struct AgentBridge {
         [
             "name": "request_access",
             "description":
-                "Ask the person to open a closed key, one that list_keys shows as closed, or to save one for a provider that list_keys shows as not saved yet (give the provider as key). Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they lock the app, with one fingerprint and no more questions. Nothing is opened until they decide.",
+                "Ask the person to open a closed key, one that list_keys shows as closed, or to save one for a provider that list_keys shows as not saved yet (give the provider as key). Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they quit Keyreeve, with one fingerprint and no more questions. Nothing is opened until they decide.",
             "inputSchema": [
                 "type": "object",
                 "properties": [

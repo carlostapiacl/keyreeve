@@ -35,6 +35,8 @@ let help = """
           End a key's permissions, or all of them.
       keyreeve-vault audit [--key <id>] [--verify]
           Show who used which key, or check that the log was not edited.
+      keyreeve-vault log [--since 7d] [--key <id>] [--csv]
+          Everything keyreeve logged, in time order and with no value: uses, agents, requests, checks.
       keyreeve-vault env <file.env> -- <command> [args...]
           Run a command with an env file whose values can be keyreeve://name or keyreeve://name#FIELD.
           Asks for one fingerprint. The file holds references, so it is safe in a repository.

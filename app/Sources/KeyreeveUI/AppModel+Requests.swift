@@ -20,7 +20,10 @@ extension AppModel {
 
     /// Reads the requests, and tells agents which providers can be asked for. Only provider names leave the app.
     public func reloadRequests() {
+        agentsPaused = AgentBridge.isPaused(home: files.directory)
         pendingRequests = AccessRequests.pending(AccessRequests.read(from: requestsFile))
+        // Only from a loaded list: a locked window has none, and would tell agents there is nothing to ask for.
+        guard unlocked, !items.isEmpty else { return }
         let offered = Array(Set(items.filter(canBeOffered).compactMap(\.recipes.first))).sorted()
         if AccessRequests.readOffered(from: offeredFile) != offered, let data = try? JSONEncoder().encode(offered) {
             try? files.writePrivate(data, to: offeredFile)
@@ -62,6 +65,7 @@ extension AppModel {
                 keyIndex = index
             }
             var policy = AgentPolicy.load(from: files.agents)
+            let before = policy
             let wasOpen = policy.level(of: id) != nil
             policy.levels[id] = .free
             if let limited = policy.agents[id], !limited.isEmpty {
@@ -72,6 +76,8 @@ extension AppModel {
             policy.until[id] = hours.map { Date().addingTimeInterval(TimeInterval($0 * 3600)) }
             try files.writePrivate(Data(policy.toml.utf8), to: files.agents)
             agentPolicy = policy
+            audit([(id, "request \(request.id) from \(request.agent) for \(request.provider)")], event: "allowed")
+            audit(policy.changes(from: before))
             try AccessRequests.append(
                 AccessRequests.Entry(
                     id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider,
@@ -85,6 +91,7 @@ extension AppModel {
     }
 
     public func decline(_ request: AccessRequests.Entry) {
+        audit([(request.provider, "request \(request.id) from \(request.agent)")], event: "declined")
         try? AccessRequests.append(
             AccessRequests.Entry(id: request.id, at: Date(), event: .declined, agent: request.agent, provider: request.provider),
             to: requestsFile)

@@ -72,6 +72,40 @@ struct UnsavedRequestTests {
         #expect(!(try ask(other).error) && fresh.announced == 1)
     }
 
+    @Test func whilePausedEveryAgentIsRefusedWithNoWindow() throws {
+        final class Switch: @unchecked Sendable { var on = true }
+        let paused = Switch()
+        let world = World()
+        var logged: [String] = []
+        let bridge = AgentBridge(
+            policy: { AgentPolicy(levels: ["pexels": .free]) }, names: { ["pexels"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude",
+            service: { _ in Issue.record("a paused agent reached the service"); return KeyService.Response(ok: false) },
+            log: { event, key, detail, _ in logged.append("\(event) \(key) \(detail)") },
+            offered: { ["resend"] }, requests: { world.entries }, addRequest: { world.entries.append($0) },
+            announce: { _ in world.announced += 1; return .open },
+            paused: { paused.on })
+        let use = try AgentTests().call(bridge, "use_key", ["key": "pexels", "command": ["curl"], "reason": "r"])
+        #expect(use.error && use.text.contains("paused"))
+        #expect(try ask(bridge).error)
+        #expect(try AgentTests().call(bridge, "list_keys", [:]).text.contains("paused"))
+        #expect(world.announced == 0 && world.entries.isEmpty)
+        #expect(logged == ["refused pexels paused", "refused resend paused"])
+        paused.on = false
+        #expect(!(try AgentTests().call(bridge, "list_keys", [:]).text.contains("paused")))
+    }
+
+    @Test func thePauseIsAFileThatComesAndGoes() {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        #expect(!AgentBridge.isPaused(home: home))
+        AgentBridge.setPaused(true, home: home)
+        #expect(AgentBridge.isPaused(home: home))
+        AgentBridge.setPaused(false, home: home)
+        #expect(!AgentBridge.isPaused(home: home))
+    }
+
     @Test func aProviderThatCannotBeSavedIsNotAsked() throws {
         let world = World()
         #expect(try ask(bridge(world), "stripe").error)

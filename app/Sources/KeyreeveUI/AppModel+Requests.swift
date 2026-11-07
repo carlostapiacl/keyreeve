@@ -15,15 +15,28 @@ extension AppModel {
         guard !item.isInternal, item.level != "never", let provider = item.recipes.first, providers.all.contains(where: { $0.id == provider }) else {
             return false
         }
-        return item.vault == .none || keyIndex.keys(forSource: item.path).isEmpty
+        // A copy sealed from another folder, or one whose file changed since, is not the file shown.
+        return item.vault == .none || (item.vault == .sealed && keyIndex.keys(forSource: item.path).isEmpty)
     }
 
-    /// Reads the requests, and tells agents which providers can be asked for. Only provider names leave the app.
+    /// Reads the requests and the pause. Cheap, so the menu bar can do it often.
     public func reloadRequests() {
-        agentsPaused = AgentBridge.isPaused(home: files.directory)
-        pendingRequests = AccessRequests.pending(AccessRequests.read(from: requestsFile))
+        let paused = AgentBridge.isPaused(home: files.directory)
+        if paused != agentsPaused { agentsPaused = paused }
+        // Read again only when the file changed, since this runs every few seconds.
+        let attributes = try? FileManager.default.attributesOfItem(atPath: requestsFile.path)
+        let stamp = "\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)-\((attributes?[.size] as? Int) ?? 0)"
+        guard stamp != requestsStamp else { return }
+        requestsStamp = stamp
+        let pending = AccessRequests.pending(AccessRequests.read(from: requestsFile))
+        if pending != pendingRequests { pendingRequests = pending }
+    }
+
+    /// Tells agents which providers can be asked for, when the list of keys changes. Only provider
+    /// names leave the app.
+    func publishOffered() {
         // Only from a loaded list: a locked window has none, and would tell agents there is nothing to ask for.
-        guard unlocked, !items.isEmpty else { return }
+        guard unlocked else { return }
         // Every provider keyreeve knows can be asked for: one with no file is answered by pasting a new key.
         let known = providers.all.filter { $0.problem == nil && $0.approved }.map(\.id)
         let offered = Array(Set(items.filter(canBeOffered).compactMap(\.recipes.first) + known)).sorted()
@@ -76,20 +89,21 @@ extension AppModel {
 
     /// Opens a saved key to the agent that asked, for the hours chosen or always, and answers its request.
     func openToAgent(_ id: String, for request: AccessRequests.Entry, hours: Int?) throws {
-        var policy = AgentPolicy.load(from: files.agents)
-        let before = policy
-        let wasOpen = policy.level(of: id) != nil
-        policy.levels[id] = .free
-        if let limited = policy.agents[id], !limited.isEmpty {
-            if !limited.contains(request.agent) { policy.agents[id] = limited + [request.agent] }
-        } else if !wasOpen {
-            policy.agents[id] = [request.agent]
+        let agent = request.agent
+        let closes = hours.map { Date().addingTimeInterval(TimeInterval($0 * 3600)) }
+        let (before, after) = try AgentPolicy.update(at: files.agents) { policy in
+            let wasOpen = policy.level(of: id) != nil
+            policy.levels[id] = .free
+            if let limited = policy.agents[id], !limited.isEmpty {
+                if !limited.contains(agent) { policy.agents[id] = limited + [agent] }
+            } else if !wasOpen {
+                policy.agents[id] = [agent]
+            }
+            policy.until[id] = closes
         }
-        policy.until[id] = hours.map { Date().addingTimeInterval(TimeInterval($0 * 3600)) }
-        try files.writePrivate(Data(policy.toml.utf8), to: files.agents)
-        agentPolicy = policy
+        agentPolicy = after
         audit([(id, "request \(request.id) from \(request.agent) for \(request.provider)")], event: "allowed")
-        audit(policy.changes(from: before))
+        audit(after.changes(from: before))
         try AccessRequests.append(
             AccessRequests.Entry(
                 id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider,

@@ -50,6 +50,8 @@ public final class AppModel: ObservableObject {
     @Published public var showRequests = 0
     /// A key being pasted into the vault, while its sheet is open.
     @Published public var addingKey: AddKeyDraft?
+    /// The requests file as last read, so an unchanged file is not read again.
+    var requestsStamp = ""
     @Published public var keyIndex = KeyIndex()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
@@ -100,6 +102,8 @@ public final class AppModel: ObservableObject {
         confirmation.close()
         vaultDraft = nil
         vaultComparison = nil
+        // A key pasted and not saved leaves memory and the clipboard with the lock.
+        cancelAddingKey()
         clearClipboardNow()
         // Locking hides the window's contents. What agents were allowed lasts while Keyreeve runs, and
         // ends when it quits or with Lock everything.
@@ -185,6 +189,7 @@ public final class AppModel: ObservableObject {
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
         reloadRequests()
+        publishOffered()
     }
 
     public func chooseFolder() {

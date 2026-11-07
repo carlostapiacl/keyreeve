@@ -4,13 +4,15 @@ import SwiftUI
 
 /// Paste a key, see which provider it is, name it, and it is sealed. The key itself is never shown:
 /// only its known start and its length.
-struct AddKeySheet: View {
+public struct AddKeySheet: View {
     @ObservedObject var model: AppModel
     @State private var hours: Int? = 1
 
+    public init(model: AppModel) { self.model = model }
+
     private static let durations: [Int?] = AccessDecision.hourChoices.map { $0 } + [nil]
 
-    var body: some View {
+    public var body: some View {
         let draft = model.addingKey
         VStack(alignment: .leading, spacing: 14) {
             Text(draft?.request.map { T("%@ asks for a %@ key", $0.agent, $0.provider) } ?? T("Add a key"))

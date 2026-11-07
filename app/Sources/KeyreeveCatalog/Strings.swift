@@ -285,7 +285,7 @@ public let spanish: [String: String] = [
     "SSH: signs in, the key stays in keyreeve": "SSH: inicia sesión y la clave se queda en keyreeve",
     "That program could not be read": "No se pudo leer ese programa",
     "Make them ask again": "Que vuelvan a pedir",
-    "Ends what you allowed for 1 to 24 hours. Locking the app does the same.": "Termina lo que permitiste por 1 a 24 horas. Bloquear la app hace lo mismo.",
+    "Ends every permission agents hold now. Quitting Keyreeve does the same.": "Termina todos los permisos que tienen los agentes ahora. Salir de Keyreeve hace lo mismo.",
     "Agents must ask again": "Los agentes tendrán que volver a pedir",
     "Look again": "Revisar de nuevo",
     "%d sealed keys have no identifier yet, so they cannot be chosen.": "%d claves selladas aún no tienen identificador, así que no se pueden elegir.",

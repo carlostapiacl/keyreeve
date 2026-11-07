@@ -93,12 +93,7 @@ func serveAgents() throws {
         },
         transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) },
         decideAccess: askAccess,
-        savePolicy: { policy in
-            let previous = umask(0o077)
-            defer { umask(previous) }
-            try Data(policy.toml.utf8).write(to: policyFile, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: policyFile.path)
-        },
+        updatePolicy: { change in try AgentPolicy.update(at: policyFile, change) },
         offered: { AccessRequests.readOffered(from: home.appendingPathComponent(AccessRequests.offeredFileName)) },
         requests: { AccessRequests.read(from: home.appendingPathComponent(AccessRequests.fileName)) },
         addRequest: { try AccessRequests.append($0, to: home.appendingPathComponent(AccessRequests.fileName)) },

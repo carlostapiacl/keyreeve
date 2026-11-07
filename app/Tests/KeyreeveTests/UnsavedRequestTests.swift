@@ -106,6 +106,31 @@ struct UnsavedRequestTests {
         #expect(!AgentBridge.isPaused(home: home))
     }
 
+    @Test func aProviderWithASavedKeyIsAskedForByThatKey() throws {
+        let world = World()
+        let bridge = AgentBridge(
+            policy: { AgentPolicy() }, names: { ["resend-work"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude",
+            describe: { ["resend-work": KeyIndex.Key(id: "resend-work", source: "r.txt", provider: "resend")] },
+            offered: { ["resend", "openai"] }, requests: { world.entries }, addRequest: { world.entries.append($0) })
+        let text = try AgentTests().call(bridge, "list_keys", [:]).text
+        #expect(text.contains("Closed, ask with request_access: resend-work (resend)"))
+        #expect(text.hasSuffix("Not saved yet, ask with request_access by provider: openai"))
+    }
+
+    @Test func requestsWrittenAtTheSameTimeAreAllKept() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("requests-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let at = Date(timeIntervalSince1970: 1_800_000_000)
+        DispatchQueue.concurrentPerform(iterations: 50) { index in
+            try? AccessRequests.append(
+                .init(id: "r-\(index)", at: at, event: .asked, agent: "claude", provider: "resend", reason: String(repeating: "x", count: 150)),
+                to: url)
+        }
+        #expect(AccessRequests.read(from: url).count == 50)
+    }
+
     @Test func aProviderThatCannotBeSavedIsNotAsked() throws {
         let world = World()
         #expect(try ask(bridge(world), "stripe").error)

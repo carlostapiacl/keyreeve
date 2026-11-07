@@ -103,7 +103,7 @@ struct AgentsView: View {
                     Spacer()
                     Button(T("Make them ask again")) { model.endAgentApprovals() }
                         .buttonStyle(KRButtonStyle())
-                        .help(T("Ends what you allowed for 1 to 24 hours. Locking the app does the same."))
+                        .help(T("Ends every permission agents hold now. Quitting Keyreeve does the same."))
                 }
                 Text(T("Only me: no agent. Ask: you choose once or for some hours, then your finger. Free: your finger once, then no questions until you quit Keyreeve."))
                     .font(Theme.caption).foregroundStyle(Theme.muted)

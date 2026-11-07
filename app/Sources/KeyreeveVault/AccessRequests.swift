@@ -53,17 +53,15 @@ public enum AccessRequests {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         let line = try encoder.encode(entry) + Data("\n".utf8)
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        try handle.write(contentsOf: line)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // O_APPEND puts each line at the end in one write, so the app and several agents never overwrite
+        // each other; O_CREAT with 0600 makes it private from the first byte.
+        let descriptor = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw VaultError("the requests could not be written") }
+        defer { close(descriptor) }
+        let written = line.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+        guard written == line.count else { throw VaultError("the requests could not be written") }
     }
 
     /// Requests with no answer yet, oldest first.

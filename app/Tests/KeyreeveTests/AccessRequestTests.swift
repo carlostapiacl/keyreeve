@@ -37,8 +37,8 @@ struct AccessRequestTests {
                 world.asked.append(request)
                 return world.answers.isEmpty ? nil : world.answers.removeFirst()
             },
-            savePolicy: { policy in
-                world.policy = policy
+            updatePolicy: { change in
+                change(&world.policy)
                 world.saved += 1
             })
     }
@@ -125,6 +125,31 @@ struct AccessRequestTests {
         #expect(world.policy.levels["resend"] == .free && world.policy.until["resend"] == nil)
         world.now += 30 * 86400
         #expect(!(try AgentTests().call(bridge, "use_key", ["key": "resend", "command": ["curl"], "reason": "r"]).error))
+    }
+
+    @Test func aKeyOpenToAnotherAgentIsNotReopenedOnNewTerms() throws {
+        let world = World()
+        let closes = world.now.addingTimeInterval(3600)
+        world.policy = AgentPolicy(levels: ["resend": .free], agents: ["resend": ["claude"]], until: ["resend": closes])
+        world.answers = [AccessDecision(hours: nil)]
+        let asked = try request(bridge(world, agent: "codex"), ["key": "resend", "reason": "x", "duration": "always"])
+        #expect(asked.error && asked.text.contains("other agents"))
+        #expect(world.asked.isEmpty && world.saved == 0)
+        #expect(world.policy.until["resend"] == closes && world.policy.agents["resend"] == ["claude"])
+    }
+
+    @Test func writersAtTheSameTimeKeepEveryChange() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("agents-\(UUID().uuidString).toml")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(atPath: url.path + ".lock")
+        }
+        DispatchQueue.concurrentPerform(iterations: 30) { index in
+            _ = try? AgentPolicy.update(at: url) { $0.levels["key-\(index)"] = .ask }
+        }
+        #expect(AgentPolicy.load(from: url).levels.count == 30)
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
     }
 
     @Test func untilIsWrittenAndReadBack() throws {

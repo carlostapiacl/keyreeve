@@ -39,7 +39,7 @@ public enum Timeline {
         let audit = (try? AuditLog(url: home.appendingPathComponent("audit.jsonl")).entries()) ?? []
         for entry in audit {
             rows.append(Row(
-                at: entry.at, source: "audit", event: entry.event, key: entry.key,
+                at: entry.at, source: "audit", event: entry.event, key: name(entry.key),
                 agent: entry.declared?.agent,
                 program: (entry.observed?.program).map { URL(fileURLWithPath: $0).lastPathComponent } ?? entry.declared?.command,
                 detail: entry.detail, reason: entry.declared?.reason))

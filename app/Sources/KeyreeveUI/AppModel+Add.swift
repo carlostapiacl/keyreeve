@@ -62,10 +62,11 @@ extension AppModel {
                 message = T("%@ is taken. Choose another name.", id)
                 return
             }
-            try vaultStore.update { vault in try vault.add(name: entry, value: Data(value.utf8)) }
+            // The name is checked before anything is sealed, so a bad one leaves nothing behind.
             try index.add(KeyIndex.Key(
                 id: id, source: entry, provider: provider,
                 variable: providers.all.first { $0.id == provider }?.env_var))
+            try vaultStore.update { vault in try vault.add(name: entry, value: Data(value.utf8)) }
             try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
             keyIndex = index
             audit([(id, "pasted, \(provider)")], event: "sealed")
@@ -82,7 +83,15 @@ extension AppModel {
         load()
     }
 
-    public func cancelAddingKey() { addingKey = nil }
+    /// Drops the pasted key, and clears the clipboard if it still holds it.
+    public func cancelAddingKey() {
+        if let value = addingKey?.value,
+            NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) == value
+        {
+            NSPasteboard.general.clearContents()
+        }
+        addingKey = nil
+    }
 
     /// The page where this provider's keys are made, from its recipe.
     public func dashboard(of provider: String?) -> URL? {

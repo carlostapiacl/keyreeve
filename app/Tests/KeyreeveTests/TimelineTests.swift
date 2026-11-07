@@ -14,8 +14,9 @@ struct TimelineTests {
         let home = try home()
         defer { try? FileManager.default.removeItem(at: home) }
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        // Written by file name, as copying from the app does, and shown by the key's name.
         try AuditLog(url: home.appendingPathComponent("audit.jsonl")).append(
-            event: "used", key: "pexels", declared: .init(agent: "claude", reason: "find a photo"), now: t0.addingTimeInterval(20))
+            event: "used", key: "pexels.txt", declared: .init(agent: "claude", reason: "find a photo"), now: t0.addingTimeInterval(20))
         AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append(.init(
             at: t0.addingTimeInterval(30), agent: "claude", key: "pexels", command: "curl -s x", reason: "find a photo",
             exit: 0, output: "secret-looking output", milliseconds: 412))

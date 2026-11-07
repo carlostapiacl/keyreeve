@@ -75,12 +75,15 @@ public final class KeyService: @unchecked Sendable {
         public var anyProgram: Bool?
         /// One permission to end, by its id, and no other.
         public var grant: String?
+        /// When the key closes for agents. No permission for it lasts past this, a new one or one in force.
+        public var notAfter: Date?
 
         public init(
             op: String, key: String? = nil, seconds: Int? = nil, program: String? = nil, arguments: Int? = nil,
             prompt: String? = nil, agent: String? = nil, reason: String? = nil, cwd: String? = nil, real: Bool? = nil,
-            anyProgram: Bool? = nil, grant: String? = nil
+            anyProgram: Bool? = nil, grant: String? = nil, notAfter: Date? = nil
         ) {
+            self.notAfter = notAfter
             self.anyProgram = anyProgram
             self.grant = grant
             self.op = op
@@ -159,7 +162,7 @@ public final class KeyService: @unchecked Sendable {
         let id: String
         let key: String
         let program: String
-        let expires: Date
+        var expires: Date
         let standIn: String
         /// An SSH key signs for whichever program asks, so its permission is for the key alone.
         let door: SSHDoorHandle?
@@ -191,6 +194,9 @@ public final class KeyService: @unchecked Sendable {
     private let confirm: @Sendable (_ prompt: String) -> Bool
     private let log: AuditLog
     private let now: () -> Date
+    /// The person's emergency stop. Checked before and after the fingerprint, so a use that was already
+    /// waiting cannot finish once it is on.
+    private let paused: () -> Bool
     private var grants: [Grant] = []
     /// Guards the list, and is never held while a person is being asked, so `revoke` always gets through.
     private let lock = NSLock()
@@ -202,8 +208,9 @@ public final class KeyService: @unchecked Sendable {
         index: @escaping () throws -> KeyIndex,
         open: @escaping (_ source: String, _ prompt: String) throws -> Data,
         proxy: KeyProxy?, agents: SSHKeyAgents? = nil, confirm: @escaping @Sendable (String) -> Bool = { _ in false },
-        log: AuditLog, now: @escaping () -> Date = Date.init
+        log: AuditLog, now: @escaping () -> Date = Date.init, paused: @escaping () -> Bool = { false }
     ) {
+        self.paused = paused
         self.proxy = proxy
         self.agents = agents
         self.confirm = confirm
@@ -282,11 +289,22 @@ public final class KeyService: @unchecked Sendable {
     /// The program name of a permission a person gave for any program.
     public static let anyProgram = "*"
 
-    private func grantInForce(key: String, program: String) -> Grant? {
+    /// A permission in force for this key and program. One that would outlast the key's closing is cut
+    /// to it here, and ended by the service's own clock when that comes.
+    private func grantInForce(key: String, program: String, notAfter: Date? = nil) -> Grant? {
         lock.lock()
         defer { lock.unlock() }
         dropExpired()
-        return grants.first { $0.key == key && ($0.door != nil || $0.program == program || $0.program == Self.anyProgram) }
+        guard let at = grants.firstIndex(where: {
+            $0.key == key && ($0.door != nil || $0.program == program || $0.program == Self.anyProgram)
+        }) else { return nil }
+        let id = grants[at].id
+        if let notAfter, grants[at].expires > notAfter {
+            grants[at].expires = notAfter
+            // Already past it: the permission ends now and a new one is needed.
+            dropExpired()
+        }
+        return grants.first { $0.id == id }
     }
 
     private func answer(for grant: Grant, variable: String?) throws -> Response {
@@ -334,14 +352,18 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "no proxy")
             throw VaultError("the proxy is not available")
         }
-        if let existing = grantInForce(key: id, program: name) {
+        guard !paused() else {
+            try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "paused")
+            throw VaultError("Keyreeve is paused")
+        }
+        if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
         asking.lock()
         defer { asking.unlock() }
         // While this waited, the prompt ahead of it may have given what this needs.
-        if let existing = grantInForce(key: id, program: name) {
+        if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
@@ -355,7 +377,9 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "denied", key: id, observed: caller, declared: declared)
             throw error
         }
-        let seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
+        // Counted from the fingerprint, and never past the key's closing.
+        var seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
+        if let notAfter = request.notAfter { seconds = max(1, min(seconds, Int(notAfter.timeIntervalSince(now())))) }
         let expires = now().addingTimeInterval(TimeInterval(seconds))
         let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
         let text = String(decoding: sealed, as: UTF8.self)
@@ -379,8 +403,8 @@ public final class KeyService: @unchecked Sendable {
             detail = "\(seconds) seconds"
         }
         lock.lock()
-        // Locking the app while your finger was on its way ends this too.
-        guard revocations == revocationsBefore else {
+        // Locking the app, or the emergency stop, while your finger was on its way ends this too.
+        guard revocations == revocationsBefore, !paused() else {
             end(granted)
             lock.unlock()
             throw VaultError("this was revoked while it was being opened")

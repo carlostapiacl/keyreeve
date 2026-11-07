@@ -11,6 +11,8 @@ public struct MenuBarView: View {
     let openWindow: () -> Void
     @State private var grants: [KeyService.GrantInfo] = []
     @State private var runs: [AgentTranscript.Entry] = []
+    /// The menu's contents are read only while it is open.
+    @State private var open = false
     private let ticker = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     public init(model: AppModel, openWindow: @escaping () -> Void) {
@@ -48,8 +50,12 @@ public struct MenuBarView: View {
         .padding(14)
         .frame(width: 340)
         .background(Theme.background)
-        .onAppear(perform: read)
-        .onReceive(ticker) { _ in read() }
+        .onAppear {
+            open = true
+            read()
+        }
+        .onDisappear { open = false }
+        .onReceive(ticker) { _ in if open { read() } }
     }
 
     private var pausedBanner: some View {
@@ -144,9 +150,15 @@ public struct MenuBarView: View {
 /// The menu bar's icon: a key, with the number of requests waiting, or a pause sign when stopped.
 public struct MenuBarLabel: View {
     @ObservedObject var model: AppModel
+    /// The icon stays current with the menu closed: requests and the pause, which are small files.
+    private let ticker = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     public init(model: AppModel) { self.model = model }
 
     public var body: some View {
+        icon.onReceive(ticker) { _ in model.reloadRequests() }
+    }
+
+    @ViewBuilder private var icon: some View {
         if model.agentsPaused {
             Image(systemName: "pause.circle")
         } else if model.pendingRequests.isEmpty {

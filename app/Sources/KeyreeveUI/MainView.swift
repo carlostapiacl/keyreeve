@@ -84,7 +84,6 @@ public struct MainView: View {
                 if !Set(new).subtracting(old).isEmpty { selection = .agents }
             }
             .onChange(of: model.showRequests) { _, _ in selection = .agents }
-            .sheet(item: $model.addingKey) { _ in AddKeySheet(model: model) }
             .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
         }
     }

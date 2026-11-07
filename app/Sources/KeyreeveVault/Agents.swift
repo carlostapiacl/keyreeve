@@ -140,6 +140,29 @@ public struct AgentPolicy: Equatable, Sendable {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Reads, changes and writes the file under one lock, so the app and agent servers changing it at
+    /// once never undo each other. Returns the file as it was and as it is now.
+    @discardableResult
+    public static func update(at url: URL, _ change: (inout AgentPolicy) throws -> Void) throws -> (before: AgentPolicy, after: AgentPolicy) {
+        let previous = umask(0o077)
+        defer { umask(previous) }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let lockFile = open(url.path + ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard lockFile >= 0 else { throw VaultError("the permissions could not be locked") }
+        defer { close(lockFile) }
+        guard flock(lockFile, LOCK_EX) == 0 else { throw VaultError("the permissions could not be locked") }
+        defer { flock(lockFile, LOCK_UN) }
+        let before = load(from: url)
+        var after = before
+        try change(&after)
+        if after != before {
+            try Data(after.toml.utf8).write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        }
+        return (before, after)
+    }
+
     /// A file that cannot be read allows nothing, so a typo never widens what an agent can do.
     public static func load(from url: URL) -> AgentPolicy {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return AgentPolicy() }
@@ -416,8 +439,8 @@ public struct AgentBridge {
     let transcript: (AgentTranscript.Entry) -> Void
     /// Asks the person whether to open a closed key. Nil is a no.
     let decideAccess: (AccessRequest) -> AccessDecision?
-    /// Writes the permissions after the person opened a key.
-    let savePolicy: (AgentPolicy) throws -> Void
+    /// Changes the permissions after the person opened a key, under the file's lock.
+    let updatePolicy: ((inout AgentPolicy) -> Void) throws -> Void
     /// Providers the person can save a key for in the app, by name only.
     let offered: () -> [String]
     /// Requests for keys not saved yet, read and added to.
@@ -463,7 +486,7 @@ public struct AgentBridge {
         describe: @escaping () -> [String: KeyIndex.Key] = { [:] },
         transcript: @escaping (AgentTranscript.Entry) -> Void = { _ in },
         decideAccess: @escaping (AccessRequest) -> AccessDecision? = { _ in nil },
-        savePolicy: @escaping (AgentPolicy) throws -> Void = { _ in throw VaultError("permissions cannot be saved here") },
+        updatePolicy: @escaping ((inout AgentPolicy) -> Void) throws -> Void = { _ in throw VaultError("permissions cannot be saved here") },
         offered: @escaping () -> [String] = { [] },
         requests: @escaping () -> [AccessRequests.Entry] = { [] },
         addRequest: @escaping (AccessRequests.Entry) throws -> Void = { _ in throw VaultError("requests cannot be kept here") },
@@ -486,7 +509,7 @@ public struct AgentBridge {
         self.describe = describe
         self.transcript = transcript
         self.decideAccess = decideAccess
-        self.savePolicy = savePolicy
+        self.updatePolicy = updatePolicy
         self.offered = offered
         self.requests = requests
         self.addRequest = addRequest
@@ -611,7 +634,9 @@ public struct AgentBridge {
             }
             if lines.isEmpty { lines.append("No key is allowed for agents yet.") }
             if !closed.isEmpty { lines.append("Closed, ask with request_access: " + closed.joined(separator: ", ")) }
-            let unsaved = offered().filter { !known.contains($0) }.sorted()
+            // A provider with a key in the vault is asked for by that key's name, shown above.
+            let saved = Set(known.compactMap { described[$0]?.provider })
+            let unsaved = offered().filter { !known.contains($0) && !saved.contains($0) }.sorted()
             if !unsaved.isEmpty {
                 lines.append("Not saved yet, ask with request_access by provider: " + unsaved.joined(separator: ", "))
             }
@@ -712,7 +737,8 @@ public struct AgentBridge {
         guard let service else { throw VaultError("the key service is not available") }
         let name = URL(fileURLWithPath: program).lastPathComponent
         var request = KeyService.Request(
-            op: "use", key: key, program: program, arguments: command.count - 1, agent: agent, reason: reason)
+            op: "use", key: key, program: program, arguments: command.count - 1, agent: agent, reason: reason,
+            notAfter: policy.until[key])
         var once = false
         switch level {
         case .free:
@@ -776,6 +802,12 @@ public struct AgentBridge {
             return "\(key) is already open to \(agent)"
                 + (level == .free ? ". Use use_key." : ". Use use_key; the person is asked there, and can say yes for some hours.")
         }
+        // Open to other agents on terms the person chose for them. A yes here would change those terms
+        // for everyone, so the person adds this agent in the app instead.
+        if current.level(of: key, at: date) != nil {
+            log("refused", key, "open to other agents", reason)
+            throw VaultError("\(key) is open to other agents. Ask the person to add \(agent) in Keyreeve, under Agents")
+        }
         guard !held.refused.contains(key) else {
             log("refused", key, "asked again after a no", reason)
             throw VaultError("the person already said no to \(key) in this session. Ask them in the conversation instead")
@@ -794,18 +826,15 @@ public struct AgentBridge {
             kept("the person said no")
             throw VaultError("the person said no to opening \(key)")
         }
-        // Read again, so a change made in the app while the window was open is kept.
-        var policy = self.policy
-        policy.levels[key] = .free
-        if let limited = policy.agents[key], !limited.isEmpty {
-            if !limited.contains(agent) { policy.agents[key] = limited + [agent] }
-        } else if current.level(of: key, at: date) == nil {
-            // A key opened at an agent's request is open to that agent alone.
-            policy.agents[key] = [agent]
-        }
+        // Changed as the file is now, so what the app changed while the window was open is kept.
         let closes = decision.hours.map { now().addingTimeInterval(TimeInterval($0 * 3600)) }
-        policy.until[key] = closes
-        try savePolicy(policy)
+        let requester = agent
+        try updatePolicy { policy in
+            policy.levels[key] = .free
+            // A key opened at an agent's request is open to that agent alone.
+            policy.agents[key] = [requester]
+            policy.until[key] = closes
+        }
         let how = closes.map { "free until \(ISO8601DateFormatter().string(from: $0))" } ?? "free, always"
         log("opened", key, "\(how), for \(agent)", reason)
         kept("opened: \(how)")

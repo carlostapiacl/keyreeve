@@ -241,28 +241,28 @@ extension AppModel {
             message = T("That program could not be read")
             return
         }
-        var policy = AgentPolicy.load(from: files.agents)
-        if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
-        // Pinned as it is now: if it changes, agents cannot run it until you allow it again.
-        policy.hashes[program] = hash
-        savePolicy(policy)
+        updatePolicy { policy in
+            if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
+            // Pinned as it is now: if it changes, agents cannot run it until you allow it again.
+            policy.hashes[program] = hash
+        }
     }
 
     /// How agents may use a key: nil keeps it yours alone.
     public func setAgentLevel(_ level: AgentPolicy.Level?, for id: String) {
-        var policy = AgentPolicy.load(from: files.agents)
-        policy.levels[id] = level
-        // A level you choose here has no end, even if an agent's request had given it one.
-        policy.until[id] = nil
-        if level == nil { policy.agents[id] = nil }
-        savePolicy(policy)
+        updatePolicy { policy in
+            policy.levels[id] = level
+            // A level you choose here has no end, even if an agent's request had given it one.
+            policy.until[id] = nil
+            if level == nil { policy.agents[id] = nil }
+        }
     }
 
     /// Which agents may use a key. Empty means any.
     public func setAgents(_ agents: [String], for id: String) {
-        var policy = AgentPolicy.load(from: files.agents)
-        policy.agents[id] = agents.isEmpty ? nil : agents
-        savePolicy(policy)
+        updatePolicy { policy in
+            policy.agents[id] = agents.isEmpty ? nil : agents
+        }
     }
 
     /// Ends what agents were approved for a while, and every permission the key service holds.
@@ -273,10 +273,10 @@ extension AppModel {
     }
 
     public func disallow(program: String, keyID id: String) {
-        var policy = AgentPolicy.load(from: files.agents)
-        policy.commands[id]?.removeAll { $0 == program }
-        if policy.commands[id]?.isEmpty == true { policy.commands[id] = nil }
-        savePolicy(policy)
+        updatePolicy { policy in
+            policy.commands[id]?.removeAll { $0 == program }
+            if policy.commands[id]?.isEmpty == true { policy.commands[id] = nil }
+        }
     }
 
     /// Keys an agent could be allowed: sealed, with an identifier.
@@ -291,17 +291,17 @@ extension AppModel {
     }
 
     public func disallow(program: String, for item: CatalogItem) {
-        var policy = AgentPolicy.load(from: files.agents)
-        for key in keyIndex.keys(forSource: item.path) { policy.commands[key.id]?.removeAll { $0 == program } }
-        savePolicy(policy)
+        updatePolicy { policy in
+            for key in keyIndex.keys(forSource: item.path) { policy.commands[key.id]?.removeAll { $0 == program } }
+        }
     }
 
-    private func savePolicy(_ policy: AgentPolicy) {
+    /// Changes the permissions under the file's lock, writes what changed in the usage log, and shows it.
+    func updatePolicy(_ change: (inout AgentPolicy) -> Void) {
         do {
-            let before = AgentPolicy.load(from: files.agents)
-            try files.writePrivate(Data(policy.toml.utf8), to: files.agents)
-            audit(policy.changes(from: before))
-            agentPolicy = policy
+            let (before, after) = try AgentPolicy.update(at: files.agents, change)
+            audit(after.changes(from: before))
+            agentPolicy = after
         } catch {
             message = T("The permissions could not be saved")
         }

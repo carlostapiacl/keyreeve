@@ -66,6 +66,11 @@ struct KeyreeveApp: App {
                 }
             }
             .frame(minWidth: 860, minHeight: 520)
+            // Here and not in the list, so a first key can be pasted before any folder is chosen.
+            .sheet(item: Binding(
+                get: { model.unlocked ? model.addingKey : nil },
+                set: { if $0 == nil { model.cancelAddingKey() } })
+            ) { _ in AddKeySheet(model: model) }
             .id(language)
             .environment(\.locale, chosenLocale)
             .preferredColorScheme(scheme)

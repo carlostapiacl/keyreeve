@@ -171,7 +171,12 @@ struct AgentKeyRow: View {
     let key: KeyIndex.Key
     @ObservedObject var model: AppModel
 
-    private var level: AgentPolicy.Level? { model.agentPolicy.levels[key.id] }
+    /// When an agent's request opened the key for some hours. Past that, the key is closed again.
+    private var closes: Date? { model.agentPolicy.until[key.id] }
+    private var level: AgentPolicy.Level? {
+        if let closes, Date() >= closes { return nil }
+        return model.agentPolicy.levels[key.id]
+    }
     private var agents: [String] { model.agentPolicy.agents[key.id] ?? [] }
     private var programs: [String] { model.agentPolicy.commands[key.id] ?? [] }
     private var usesProxy: Bool { key.provider != nil }
@@ -188,6 +193,10 @@ struct AgentKeyRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(key.id).font(Theme.rowTitle).foregroundStyle(Theme.text)
                     Text(how).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                    if let closes, level != nil {
+                        Text(T("Open until %@", closes.formatted(date: .omitted, time: .shortened)))
+                            .font(Theme.caption).foregroundStyle(Theme.warn).lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 8)
                 if usesProxy {

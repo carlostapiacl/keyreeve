@@ -91,7 +91,14 @@ func serveAgents() throws {
             let keys = (try? KeyIndex.load(from: keysFile).keys) ?? []
             return Dictionary(keys.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         },
-        transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) })
+        transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) },
+        decideAccess: askAccess,
+        savePolicy: { policy in
+            let previous = umask(0o077)
+            defer { umask(previous) }
+            try Data(policy.toml.utf8).write(to: policyFile, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: policyFile.path)
+        })
     while let line = readLine() {
         if let answer = bridge.handle(line) {
             FileHandle.standardOutput.write(Data((answer + "\n").utf8))
@@ -125,14 +132,56 @@ func askApproval(_ request: AgentRequest) -> AgentApproval? {
     let deny = alert.addButton(withTitle: spanish ? "No permitir" : "Deny")
     deny.keyEquivalent = "\u{1b}"
     alert.window.level = .floating
+    let answer = answered(alert)
+    guard answer >= 0, answer < AgentApproval.choices.count else { return nil }
+    return AgentApproval.choices[answer].approval
+}
+
+/// Shows the alert and takes it down. This process goes back to reading stdin and never runs an event
+/// loop, so the window would stay on screen after the click: it is ordered out and the window server
+/// hears it before going on. The answer counts from the first button.
+func answered(_ alert: NSAlert) -> Int {
+    let app = NSApplication.shared
     let answer = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-    // This process goes back to reading stdin and never runs an event loop, so the window would stay
-    // on screen after the click. Take it down and let the window server hear it before going on.
     alert.window.orderOut(nil)
     let until = Date().addingTimeInterval(0.1)
     while let event = app.nextEvent(matching: .any, until: until, inMode: .default, dequeue: true) {
         app.sendEvent(event)
     }
-    guard answer >= 0, answer < AgentApproval.choices.count else { return nil }
-    return AgentApproval.choices[answer].approval
+    return answer
+}
+
+/// A window for an agent asking to open a closed key: allow it for some time, or not. The agent's
+/// suggestion is selected, and the person can change it.
+func askAccess(_ request: AccessRequest) -> AccessDecision? {
+    let spanish = Locale.preferredLanguages.first?.hasPrefix("es") ?? false
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    app.activate(ignoringOtherApps: true)
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    let provider = request.provider.map { " (\($0))" } ?? ""
+    alert.messageText = spanish
+        ? "\(request.agent) pide la clave \(request.key)\(provider)"
+        : "\(request.agent) asks for the key \(request.key)\(provider)"
+    alert.informativeText = spanish
+        ? "Lo que dice el agente, en sus palabras:\n\u{201C}\(request.reason)\u{201D}\n\nSi permites, te pide la huella una vez y no vuelve a preguntar hasta que pase el tiempo o bloquees la app. Lo cambias cuando quieras en Agentes."
+        : "What the agent says, in its own words:\n\u{201C}\(request.reason)\u{201D}\n\nIf you allow it, your fingerprint is asked once, and nothing more until the time is up or you lock the app. Change it any time under Agents."
+    let durations = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
+    let choices: [Int?] = AccessDecision.hourChoices.map { $0 } + [nil]
+    for hours in choices {
+        if let hours {
+            durations.addItem(withTitle: spanish ? "Por \(hours) h" : "For \(hours) h")
+        } else {
+            durations.addItem(withTitle: spanish ? "Siempre" : "Always")
+        }
+    }
+    durations.selectItem(at: choices.firstIndex(of: request.hours) ?? 0)
+    alert.accessoryView = durations
+    alert.addButton(withTitle: spanish ? "Permitir" : "Allow")
+    let deny = alert.addButton(withTitle: spanish ? "No permitir" : "Deny")
+    deny.keyEquivalent = "\u{1b}"
+    alert.window.level = .floating
+    guard answered(alert) == 0 else { return nil }
+    return AccessDecision(hours: choices[durations.indexOfSelectedItem])
 }

@@ -90,22 +90,26 @@ public struct AgentPolicy: Equatable, Sendable {
     public var agents: [String: [String]]
     /// Each allowed program's SHA-256, taken when a person allowed it. A program that changed since is refused.
     public var hashes: [String: String]
+    /// When a key opened for some hours closes again. Missing means it stays open.
+    public var until: [String: Date]
 
     public init(
         commands: [String: [String]] = [:], levels: [String: Level] = [:], agents: [String: [String]] = [:],
-        hashes: [String: String] = [:]
+        hashes: [String: String] = [:], until: [String: Date] = [:]
     ) {
         self.commands = commands
         self.levels = levels
         self.agents = agents
         self.hashes = hashes
+        self.until = until
     }
 
     public static let fileName = "agents.toml"
 
     /// The level for a key, or nil when agents cannot use it.
-    public func level(of key: String) -> Level? {
-        levels[key] ?? ((commands[key] ?? []).isEmpty ? nil : .ask)
+    public func level(of key: String, at date: Date = Date()) -> Level? {
+        if let closes = until[key], date >= closes { return nil }
+        return levels[key] ?? ((commands[key] ?? []).isEmpty ? nil : .ask)
     }
 
     /// Every key open to agents in some way.
@@ -156,6 +160,7 @@ public struct AgentPolicy: Equatable, Sendable {
         var hashes: [String]?
         var level: Level?
         var agents: [String]?
+        var closes: Date?
         var table: String?
         func finish(_ bad: VaultError) throws {
             guard let table else { return }
@@ -168,6 +173,7 @@ public struct AgentPolicy: Equatable, Sendable {
             if let programs { policy.commands[key, default: []] += programs }
             if let level { policy.levels[key] = level }
             if let agents, !agents.isEmpty { policy.agents[key] = agents }
+            if let closes { policy.until[key] = closes }
         }
         for (index, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -175,7 +181,7 @@ public struct AgentPolicy: Equatable, Sendable {
             if line.isEmpty || line.hasPrefix("#") { continue }
             if line == "[[allow]]" || line == "[[key]]" {
                 try finish(bad)
-                key = nil; programs = nil; hashes = nil; level = nil; agents = nil
+                key = nil; programs = nil; hashes = nil; level = nil; agents = nil; closes = nil
                 table = line == "[[allow]]" ? "allow" : "key"
                 continue
             }
@@ -198,6 +204,9 @@ public struct AgentPolicy: Equatable, Sendable {
             case ("key", "agents"):
                 guard agents == nil else { throw bad }
                 agents = try scanner.list(bad)
+            case ("key", "until"):
+                guard closes == nil, let parsed = ISO8601DateFormatter().date(from: try scanner.string(bad)) else { throw bad }
+                closes = parsed
             default:
                 throw bad
             }
@@ -212,7 +221,8 @@ public struct AgentPolicy: Equatable, Sendable {
             # What agents may do with each key in your vault. A key that is not here is yours alone.
             # level = "ask" asks you each time, once or for some hours; "free" asks once, until you lock the app.
             # agents limits a key to some agents, such as ["claude"]. programs receive the key itself, and each
-            # is pinned by its SHA-256 in hashes, so a program that changed is refused.
+            # is pinned by its SHA-256 in hashes, so a program that changed is refused. until closes the key again
+            # at that time, for a key opened for some hours.
 
             """
         for key in keys {
@@ -221,6 +231,7 @@ public struct AgentPolicy: Equatable, Sendable {
             if let limited = agents[key], !limited.isEmpty {
                 out += "agents = [\(limited.map(Self.quoted).joined(separator: ", "))]\n"
             }
+            if let closes = until[key] { out += "until = \(Self.quoted(ISO8601DateFormatter().string(from: closes)))\n" }
             let programs = commands[key] ?? []
             if !programs.isEmpty {
                 out += "programs = [\(programs.map(Self.quoted).joined(separator: ", "))]\n"
@@ -262,6 +273,40 @@ public struct AgentRequest: Equatable, Sendable {
     }
 }
 
+/// An agent asking for a key that is closed to it. The key and provider come from keyreeve; the reason
+/// and the suggestion are the agent's, shown as such.
+public struct AccessRequest: Equatable, Sendable {
+    public let key: String
+    public let provider: String?
+    public let agent: String
+    public let reason: String
+    /// For how long the agent suggests, or nil for always.
+    public let hours: Int?
+
+    public init(key: String, provider: String?, agent: String, reason: String, hours: Int?) {
+        self.key = key
+        self.provider = provider
+        self.agent = agent
+        self.reason = String(AgentRequest.oneLine(reason).prefix(200))
+        self.hours = hours
+    }
+}
+
+/// A yes to an access request: the key is free to that agent for some hours, or nil for always. One
+/// fingerprint opens it, and nothing more is asked until the time is up or the app locks.
+public struct AccessDecision: Equatable, Sendable {
+    public let hours: Int?
+    public init(hours: Int?) { self.hours = hours }
+
+    public static let hourChoices = [1, 4, 8, 24]
+    /// What the agent may suggest, as the tool takes it.
+    public static func hours(from duration: String) -> Int?? {
+        if duration == "always" { return .some(nil) }
+        guard duration.hasSuffix("h"), let number = Int(duration.dropLast()), hourChoices.contains(number) else { return nil }
+        return .some(number)
+    }
+}
+
 /// How long the person's yes lasts, for this key and program in this agent's session.
 public enum AgentApproval: Equatable, Sendable {
     case once
@@ -279,6 +324,8 @@ public struct AgentBridge {
     /// Opened keys a person approved for a while, held by this server alone, which ends with the agent's session.
     final class Held: @unchecked Sendable {
         var entries: [String: (from: Date, until: Date, opened: Data)] = [:]
+        /// Keys the person refused to open in this session, so the agent cannot keep asking.
+        var refused: Set<String> = []
     }
 
     /// Ends everything agents were approved for a while: the app's lock and `revoke` touch this file, and
@@ -333,6 +380,10 @@ public struct AgentBridge {
     let describe: () -> [String: KeyIndex.Key]
     /// Keeps what ran and what came back, for the person to read.
     let transcript: (AgentTranscript.Entry) -> Void
+    /// Asks the person whether to open a closed key. Nil is a no.
+    let decideAccess: (AccessRequest) -> AccessDecision?
+    /// Writes the permissions after the person opened a key.
+    let savePolicy: (AgentPolicy) throws -> Void
     let held = Held()
 
     public init(
@@ -359,7 +410,9 @@ public struct AgentBridge {
         log: @escaping (_ event: String, _ key: String, _ detail: String, _ reason: String?) -> Void = { _, _, _, _ in },
         pinned: @escaping (_ program: String, _ hash: String?) -> Bool = AgentBridge.matchesPin,
         describe: @escaping () -> [String: KeyIndex.Key] = { [:] },
-        transcript: @escaping (AgentTranscript.Entry) -> Void = { _ in }
+        transcript: @escaping (AgentTranscript.Entry) -> Void = { _ in },
+        decideAccess: @escaping (AccessRequest) -> AccessDecision? = { _ in nil },
+        savePolicy: @escaping (AgentPolicy) throws -> Void = { _ in throw VaultError("permissions cannot be saved here") }
     ) {
         currentPolicy = policy
         self.names = names
@@ -376,6 +429,8 @@ public struct AgentBridge {
         self.pinned = pinned
         self.describe = describe
         self.transcript = transcript
+        self.decideAccess = decideAccess
+        self.savePolicy = savePolicy
     }
 
     /// Runs and writes down what ran, with the key and its stand-in taken out of what is kept.
@@ -463,9 +518,12 @@ public struct AgentBridge {
             let policy = self.policy
             let known = Set(try names())
             let described = describe()
-            let lines = policy.keys.filter { known.contains($0) && policy.admits(agent: agent, for: $0) }.compactMap { key -> String? in
-                guard let level = policy.level(of: key) else { return nil }
+            let date = now()
+            let isOpen = { (key: String) in policy.level(of: key, at: date) != nil && policy.admits(agent: agent, for: key) }
+            var lines = policy.keys.filter { known.contains($0) && isOpen($0) }.compactMap { key -> String? in
+                guard let level = policy.level(of: key, at: date) else { return nil }
                 var parts = [level == .free ? "free until the person locks the app" : "asks the person"]
+                if let closes = policy.until[key] { parts.append("open until \(ISO8601DateFormatter().string(from: closes))") }
                 let info = described[key]
                 if policy.levels[key] != nil {
                     if info?.provider == KeyService.sshProvider {
@@ -481,11 +539,19 @@ public struct AgentBridge {
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
                 return "\(key): " + parts.joined(separator: "; ")
             }
-            return lines.isEmpty ? "No key is allowed for agents yet." : lines.joined(separator: "\n")
+            // Names and providers only, so the agent can ask for one with request_access.
+            let closed = known.filter { !isOpen($0) }.sorted().map { key in
+                described[key]?.provider.map { "\(key) (\($0))" } ?? key
+            }
+            if lines.isEmpty { lines.append("No key is allowed for agents yet.") }
+            if !closed.isEmpty { lines.append("Closed, ask with request_access: " + closed.joined(separator: ", ")) }
+            return lines.joined(separator: "\n")
         case "use_key":
             return try useKey(arguments)
         case "run_with_key":
             return try runWithKey(arguments)
+        case "request_access":
+            return try requestAccess(arguments)
         default:
             throw VaultError("no such tool")
         }
@@ -548,9 +614,9 @@ public struct AgentBridge {
 
     /// Refuses, and writes down, a key that is not open to agents or not to this one.
     private func admit(_ key: String, policy: AgentPolicy, reason: String) throws {
-        guard policy.level(of: key) != nil else {
-            log("refused", key, "not open to agents", reason)
-            throw VaultError("\(key) is not open to agents. A person opens keys in the app, under Agents")
+        guard policy.level(of: key, at: now()) != nil else {
+            log("refused", key, policy.until[key] == nil ? "not open to agents" : "closed again", reason)
+            throw VaultError("\(key) is not open to agents. Ask the person with request_access")
         }
         guard policy.admits(agent: agent, for: key) else {
             log("refused", key, "not open to \(agent)", reason)
@@ -582,7 +648,7 @@ public struct AgentBridge {
         case .free:
             // One fingerprint covers every command until the app locks, at most a day.
             request.anyProgram = true
-            request.seconds = KeyService.maxSeconds
+            request.seconds = bounded(KeyService.maxSeconds, key: key, policy: policy)
             request.prompt = "let \(agent) use \(key) until you lock the app"
         case .ask:
             let open = (try? service(KeyService.Request(op: "grants")))?.grants ?? []
@@ -597,7 +663,7 @@ public struct AgentBridge {
                     once = true
                     request.seconds = Int(AgentRunner.limit) + 30
                 case .lasting(let seconds):
-                    request.seconds = Int(seconds)
+                    request.seconds = bounded(Int(seconds), key: key, policy: policy)
                 }
                 request.prompt = "let \(agent) run \(name) with \(key)"
                     + (once ? "" : " for \(Int(request.seconds ?? 0) / 3600) hours")
@@ -612,6 +678,65 @@ public struct AgentBridge {
         return try ran(key: key, command: command, reason: reason, hiding: [answer.standIn].compactMap { $0 }) {
             try runPrepared(prepared)
         }
+    }
+
+    /// A permission never outlasts the time the key was opened for.
+    private func bounded(_ seconds: Int, key: String, policy: AgentPolicy) -> Int {
+        guard let closes = policy.until[key] else { return seconds }
+        return max(1, min(seconds, Int(closes.timeIntervalSince(now()))))
+    }
+
+    /// Asks the person to open a closed key to this agent. What they choose is saved, so the next
+    /// use_key follows it with no new question here.
+    private func requestAccess(_ arguments: [String: Any]) throws -> String {
+        guard let key = arguments["key"] as? String,
+            let reason = arguments["reason"] as? String, !reason.isEmpty
+        else { throw VaultError("this needs key and reason") }
+        guard let hours = AccessDecision.hours(from: arguments["duration"] as? String ?? "1h") else {
+            throw VaultError("duration is 1h, 4h, 8h, 24h or always")
+        }
+        // Checked first, so nothing is asked for a key that is not there or already open.
+        guard try names().contains(key) else { throw VaultError("no key called \(key) is in the vault") }
+        let date = now()
+        let current = policy
+        if let level = current.level(of: key, at: date), current.admits(agent: agent, for: key) {
+            return "\(key) is already open to \(agent)"
+                + (level == .free ? ". Use use_key." : ". Use use_key; the person is asked there, and can say yes for some hours.")
+        }
+        guard !held.refused.contains(key) else {
+            log("refused", key, "asked again after a no", reason)
+            throw VaultError("the person already said no to \(key) in this session. Ask them in the conversation instead")
+        }
+        let request = AccessRequest(
+            key: key, provider: describe()[key]?.provider, agent: agent, reason: reason, hours: hours)
+        let started = Date()
+        func kept(_ output: String) {
+            transcript(AgentTranscript.Entry(
+                at: started, agent: agent, key: key, command: "request_access \(key)", reason: reason, exit: 0,
+                output: output, milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
+        }
+        guard let decision = decideAccess(request) else {
+            held.refused.insert(key)
+            log("denied", key, "access request", reason)
+            kept("the person said no")
+            throw VaultError("the person said no to opening \(key)")
+        }
+        // Read again, so a change made in the app while the window was open is kept.
+        var policy = self.policy
+        policy.levels[key] = .free
+        if let limited = policy.agents[key], !limited.isEmpty {
+            if !limited.contains(agent) { policy.agents[key] = limited + [agent] }
+        } else if current.level(of: key, at: date) == nil {
+            // A key opened at an agent's request is open to that agent alone.
+            policy.agents[key] = [agent]
+        }
+        let closes = decision.hours.map { now().addingTimeInterval(TimeInterval($0 * 3600)) }
+        policy.until[key] = closes
+        try savePolicy(policy)
+        let how = closes.map { "free until \(ISO8601DateFormatter().string(from: $0))" } ?? "free, always"
+        log("opened", key, "\(how), for \(agent)", reason)
+        kept("opened: \(how)")
+        return "The person opened \(key) to \(agent): \(how). Use use_key; it asks nothing more than one fingerprint."
     }
 
     /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.
@@ -668,6 +793,23 @@ public struct AgentBridge {
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
                 ],
                 "required": ["key", "command", "reason"],
+            ],
+        ],
+        [
+            "name": "request_access",
+            "description":
+                "Ask the person to open a closed key, one that list_keys shows as closed. Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they lock the app, with one fingerprint and no more questions. Nothing is opened until they decide.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "key": ["type": "string"],
+                    "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
+                    "duration": [
+                        "type": "string", "enum": ["1h", "4h", "8h", "24h", "always"],
+                        "description": "What you suggest, 1h if left out. always only for a key used every day",
+                    ],
+                ],
+                "required": ["key", "reason"],
             ],
         ],
         [

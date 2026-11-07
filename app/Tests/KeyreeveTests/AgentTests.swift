@@ -69,7 +69,7 @@ struct AgentTests {
             open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
             run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
             record: { _, _, _ in }, pinned: { _, _ in true })
-        #expect(try call(live, "list_keys", [:]).text == "No key is allowed for agents yet.")
+        #expect(try call(live, "list_keys", [:]).text == "No key is allowed for agents yet.\nClosed, ask with request_access: a.env")
         #expect(try call(live, "run_with_key", run).error)
         box.policy = Self.pinnedPolicy(["a.env": ["deploy.sh"]])
         #expect(try call(live, "list_keys", [:]).text == "a.env: asks the person; run_with_key with deploy.sh")
@@ -207,7 +207,7 @@ struct AgentTests {
     @Test func testListingHoldsNoValue() throws {
         let log = Log()
         let text = try call(bridge(log), "list_keys", [:]).text
-        #expect(text == "a.env: asks the person; run_with_key with deploy.sh")
+        #expect(text == "a.env: asks the person; run_with_key with deploy.sh\nClosed, ask with request_access: other.env")
         #expect(log.opened.isEmpty)
     }
 
@@ -314,7 +314,7 @@ struct AgentTests {
             #expect(log.opened.isEmpty)
         }
         let listed = try call(bridge(Log(), commands: ["a.env": ["/bin/sh", "/opt/deploy"]]), "list_keys", [:]).text
-        #expect(listed == "a.env: asks the person; run_with_key with /opt/deploy")
+        #expect(listed == "a.env: asks the person; run_with_key with /opt/deploy\nClosed, ask with request_access: other.env")
     }
 
     @Test func testFieldsFromOtherShapesOfFile() throws {

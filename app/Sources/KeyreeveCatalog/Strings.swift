@@ -181,6 +181,7 @@ public let spanish: [String: String] = [
     "One read-only request to each provider. Some need your fingerprint.":
         "Una consulta de solo lectura a cada proveedor. Algunas piden tu huella.",
     "Only me": "Solo yo",
+    "Open until %@": "Abierta hasta las %@",
     "Only you use this key": "Solo tú usas esta clave",
     "open your key catalog": "abrir tu lista de claves",
     "Open provider": "Abrir proveedor",

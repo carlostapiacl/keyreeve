@@ -218,7 +218,7 @@ extension AppModel {
             message = T("That program could not be read")
             return
         }
-        var policy = agentPolicy
+        var policy = AgentPolicy.load(from: files.agents)
         if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
         // Pinned as it is now: if it changes, agents cannot run it until you allow it again.
         policy.hashes[program] = hash
@@ -227,15 +227,17 @@ extension AppModel {
 
     /// How agents may use a key: nil keeps it yours alone.
     public func setAgentLevel(_ level: AgentPolicy.Level?, for id: String) {
-        var policy = agentPolicy
+        var policy = AgentPolicy.load(from: files.agents)
         policy.levels[id] = level
+        // A level you choose here has no end, even if an agent's request had given it one.
+        policy.until[id] = nil
         if level == nil { policy.agents[id] = nil }
         savePolicy(policy)
     }
 
     /// Which agents may use a key. Empty means any.
     public func setAgents(_ agents: [String], for id: String) {
-        var policy = agentPolicy
+        var policy = AgentPolicy.load(from: files.agents)
         policy.agents[id] = agents.isEmpty ? nil : agents
         savePolicy(policy)
     }
@@ -247,7 +249,7 @@ extension AppModel {
     }
 
     public func disallow(program: String, keyID id: String) {
-        var policy = agentPolicy
+        var policy = AgentPolicy.load(from: files.agents)
         policy.commands[id]?.removeAll { $0 == program }
         if policy.commands[id]?.isEmpty == true { policy.commands[id] = nil }
         savePolicy(policy)
@@ -265,7 +267,7 @@ extension AppModel {
     }
 
     public func disallow(program: String, for item: CatalogItem) {
-        var policy = agentPolicy
+        var policy = AgentPolicy.load(from: files.agents)
         for key in keyIndex.keys(forSource: item.path) { policy.commands[key.id]?.removeAll { $0 == program } }
         savePolicy(policy)
     }

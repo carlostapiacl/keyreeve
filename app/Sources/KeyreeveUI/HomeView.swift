@@ -70,7 +70,7 @@ struct HomeView: View {
             Button(T("Check all")) { model.check(checkable) }
             Button(T("Cancel"), role: .cancel) {}
         } message: {
-            Text(T("Each key goes to its own provider, one read-only request. Keys set to Only me stay out."))
+            Text(T("Each key goes to its own provider, and only to read. Keys set to Only me stay out."))
         }
         .confirmationDialog(
             T("Identify all %d keys?", identifiable.count), isPresented: $confirmIdentify, titleVisibility: .visible

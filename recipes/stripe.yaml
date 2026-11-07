@@ -5,6 +5,7 @@ dashboard: https://dashboard.stripe.com/apikeys
 prefixes: [sk_live_, sk_test_, rk_live_]
 rotate_every_days: 180
 criticality_hint: 5
+env_var: STRIPE_API_KEY
 hosts: [api.stripe.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /v1/balance }

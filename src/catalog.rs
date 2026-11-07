@@ -10,7 +10,7 @@
 use crate::inventory::write_private;
 use crate::verify::HistoryEntry;
 use serde::Deserialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io;
 use std::path::Path;
@@ -172,14 +172,20 @@ pub fn parse_rules(text: &str) -> Result<Rules, String> {
 }
 
 pub fn build(items: &[InventoryItem], rules: &Rules, history: &[HistoryEntry]) -> Vec<Row> {
+    // The history only grows, so each file finds its own lines without reading all of them.
+    let mut by_file: HashMap<&str, Vec<&HistoryEntry>> = HashMap::new();
+    for entry in history {
+        by_file.entry(entry.file.as_str()).or_default().push(entry);
+    }
     items
         .iter()
         .map(|item| {
             let mut row = build_row(item, rules);
             // With several recipes for one file, a pass from any of them counts, because a
             // check against the wrong provider says nothing about the key.
-            let checks: Vec<&HistoryEntry> =
-                history.iter().filter(|h| h.file == item.path).collect();
+            let checks = by_file
+                .get(item.path.as_str())
+                .map_or(&[][..], Vec::as_slice);
             if let Some(at) = checks.iter().map(|h| h.at).max() {
                 let latest = checks.iter().filter(|h| h.at == at);
                 let shown = latest

@@ -55,6 +55,16 @@ public struct CustomAction: Codable, Hashable, Identifiable, Sendable {
 
 /// What keyreeve knows about providers, read from their files through the command. Nothing about
 /// any provider is written in this app, so a new file needs no new app.
+/// When a provider's file was last tried against the real service.
+public struct Tested: Codable, Hashable, Sendable {
+    public let check: String?
+    public let rotate: String?
+    public init(check: String? = nil, rotate: String? = nil) {
+        self.check = check
+        self.rotate = rotate
+    }
+}
+
 public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
@@ -64,6 +74,11 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let approved: Bool
     public let can_check: Bool
     public let can_identify: Bool
+    public let can_rotate: Bool
+    public let can_rotate_by_hand: Bool
+    public let single_rotation: Bool
+    public let tested: Tested
+    public let env_var: String?
     public let self_hosted: Bool
     public let problem: String?
     public let programs: [String]?
@@ -71,7 +86,9 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
 
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
-        approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, self_hosted: Bool = false,
+        approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, can_rotate: Bool = false,
+        can_rotate_by_hand: Bool = false, single_rotation: Bool = false, tested: Tested = Tested(), env_var: String? = nil,
+        self_hosted: Bool = false,
         problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil
     ) {
         self.id = id
@@ -82,6 +99,11 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         self.approved = approved
         self.can_check = can_check
         self.can_identify = can_identify
+        self.can_rotate = can_rotate
+        self.can_rotate_by_hand = can_rotate_by_hand
+        self.single_rotation = single_rotation
+        self.tested = tested
+        self.env_var = env_var
         self.self_hosted = self_hosted
         self.problem = problem
         self.programs = programs
@@ -108,6 +130,12 @@ public struct ProviderDirectory: Sendable {
         item.recipes + item.tags.filter { $0.hasPrefix("provider:") }.map { String($0.dropFirst(9)) }
     }
 
+    /// The provider that can rotate this key, when the key names exactly one.
+    public func rotator(of item: CatalogItem) -> ProviderInfo? {
+        guard item.recipes.count == 1 else { return nil }
+        return usable.first { $0.id == item.recipes[0] && ($0.can_rotate || $0.can_rotate_by_hand) }
+    }
+
     public func page(for item: CatalogItem) -> URL? {
         names(for: item).lazy
             .compactMap { id in self.all.first { $0.id == id }?.dashboard }
@@ -128,6 +156,18 @@ public struct ProviderDirectory: Sendable {
     }
 
     public func canCheck(_ item: CatalogItem) -> Bool { item.canCheck && !needsHost(item) }
+
+    /// The provider a key with none probably belongs to: what its prefix proved first, then what your
+    /// tags say, if they name just one. It is only an offer, since a wrong one would send the key to
+    /// the wrong company, and a person presses the button.
+    public func likelyProvider(of item: CatalogItem) -> ProviderInfo? {
+        guard item.recipes.isEmpty, item.whyNoCheck == T("Choose where to check it") else { return nil }
+        let names = { (prefix: String) in item.tags.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) } }
+        for list in [names("kind:"), names("provider:")] where list.count == 1 {
+            if let found = usable.first(where: { $0.id == list[0] && $0.can_check }) { return found }
+        }
+        return nil
+    }
 
     public func canIdentify(_ item: CatalogItem) -> Bool {
         guard canCheck(item) else { return false }

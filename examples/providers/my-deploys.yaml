@@ -1,0 +1,27 @@
+# Places a rotation can update, as buttons of your own. Copy this and the scripts in examples/places to
+# ~/.keyreeve/providers, approve it in Settings, and choose them under "Add an action" on a key.
+# Each program gets the new key on stdin. It must answer {"result":"no_result"} when it fails, or a
+# rotation would go on to revoke the old key.
+schema: 1
+provider: my-deploys
+name: My deploys
+hosts: []
+auth:
+  type: command
+  run: { program: no-check.sh }
+actions:
+  - id: github-secret
+    label: GitHub secret
+    label_es: Secreto de GitHub
+    run: { program: github-secret.sh }
+    needs_key: true
+  - id: vercel-env
+    label: Vercel variable
+    label_es: Variable de Vercel
+    run: { program: vercel-env.sh }
+    needs_key: true
+  - id: ssh-env
+    label: Env file on a server
+    label_es: Archivo env en un servidor
+    run: { program: ssh-env.sh }
+    needs_key: true

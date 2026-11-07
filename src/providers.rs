@@ -185,15 +185,28 @@ fn read_local(name: &str) -> Result<Recipe, String> {
     Ok(recipe)
 }
 
-/// Finds a provider by name. A name that ships always means the file that ships. A path to a
-/// file is your explicit choice for this one command, as you typed it.
+/// A path typed at the command for this one run, which is your explicit choice. It cannot run a
+/// program, because programs need an approved file of yours. Nothing read from a plan, your rules
+/// or your edits comes through here, so those cannot skip an approval.
+pub fn load_file(path: &str) -> Result<Recipe, String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let recipe = Recipe::parse(&text).map_err(|e| format!("{path}: {e}"))?;
+    if recipe.runs_code() {
+        return Err(format!(
+            "{path} runs a program, so put it in the providers folder and approve it"
+        ));
+    }
+    Ok(recipe)
+}
+
+pub fn is_path(name: &str) -> bool {
+    name.contains('/') || name.ends_with(".yaml")
+}
+
+/// Finds a provider by name. A name that ships always means the file that ships.
 pub fn load(name: &str) -> Result<Recipe, String> {
     if let Some((_, recipe)) = builtin().iter().find(|(builtin, _)| *builtin == name) {
         return Ok(recipe.clone());
-    }
-    if name.contains('/') || name.ends_with(".yaml") {
-        let text = fs::read_to_string(name).map_err(|e| format!("{name}: {e}"))?;
-        return Recipe::parse(&text).map_err(|e| format!("{name}: {e}"));
     }
     let recipe = read_local(name)?;
     if !is_approved(&recipe) {
@@ -317,6 +330,11 @@ pub struct Entry {
     pub can_check: bool,
     pub can_identify: bool,
     pub can_rotate: bool,
+    pub can_rotate_by_hand: bool,
+    /// A single rotation cannot be undone, which a person should know before pressing the button.
+    pub single_rotation: bool,
+    pub tested: crate::recipe::Tested,
+    pub env_var: Option<String>,
     pub self_hosted: bool,
     pub suggested_name: Option<String>,
     pub problem: Option<String>,
@@ -337,6 +355,10 @@ impl Entry {
             can_check: recipe.verify.method == "GET",
             can_identify: recipe.identify.is_some(),
             can_rotate: recipe.can_rotate(),
+            can_rotate_by_hand: recipe.can_rotate_by_hand(),
+            single_rotation: recipe.is_single(),
+            tested: recipe.tested.clone().unwrap_or_default(),
+            env_var: recipe.env_var.clone(),
             self_hosted: recipe.self_hosted,
             suggested_name: recipe.suggested_name.clone(),
             problem: None,
@@ -435,6 +457,10 @@ pub fn list() -> Vec<Entry> {
                 can_check: false,
                 can_identify: false,
                 can_rotate: false,
+                can_rotate_by_hand: false,
+                single_rotation: false,
+                tested: Default::default(),
+                env_var: None,
                 self_hosted: false,
                 suggested_name: None,
                 problem: Some(problem),
@@ -521,7 +547,9 @@ mod tests {
                 .replace("acme", "github")
                 .replace("api.github.com", "evil.example.com");
             fs::write(dir.join("providers/github.yaml"), evil).unwrap();
-            assert_eq!(load("github").unwrap().hosts, ["api.github.com"]);
+            let hosts = load("github").unwrap().hosts;
+            assert_eq!(hosts[0], "api.github.com");
+            assert!(!hosts.iter().any(|host| host == "evil.example.com"));
             assert!(approve("github").is_err());
             assert!(list()
                 .iter()

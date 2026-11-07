@@ -1,25 +1,21 @@
 //! Checks whether a key still works, with one read-only request. The result says nothing about
 //! the key's value, and no error quotes the file it came from.
 
-use crate::inventory::{split_label, strip_comment};
+pub use crate::history::{append_history, now, parse_history, HistoryEntry};
+pub use crate::keys::{read_key, read_key_for, KeySource, Sealed};
 use crate::providers;
 use crate::recipe::{extract, Recipe};
 use crate::script;
 use crate::secret::Secret;
 use crate::ssh;
 use crate::transport::{exchange_token, HttpTransport, Request, Transport, TransportError};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
-use zeroize::Zeroizing;
-
-const MAX_KEY_FILE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -55,50 +51,6 @@ impl Verdict {
             _ => None,
         }
     }
-}
-
-/// One line of the history: which file, which recipe, when and the result.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HistoryEntry {
-    pub at: u64,
-    pub file: String,
-    pub recipe: String,
-    pub result: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// Adds lines to a private file. A check that ran stays on record even if a later one fails.
-pub fn append_history(path: &Path, entries: &[HistoryEntry]) -> io::Result<()> {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        fs::create_dir_all(parent)?;
-    }
-    let mut options = fs::OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    for entry in entries {
-        let line = serde_json::to_string(entry).map_err(io::Error::other)?;
-        writeln!(file, "{line}")?;
-    }
-    file.sync_all()
-}
-
-/// Reads a history, ignoring a line torn by a crash.
-pub fn parse_history(text: &str) -> Vec<HistoryEntry> {
-    text.lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
-}
-
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 impl fmt::Display for Verdict {
@@ -192,7 +144,7 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
 pub fn run_action(
     provider: &str,
     action: &str,
-    file: Option<&Path>,
+    source: Option<&KeySource>,
     field: Option<&str>,
 ) -> Result<String, String> {
     let recipe = load_recipe(provider)?;
@@ -202,8 +154,8 @@ pub fn run_action(
         .find(|candidate| candidate.id == action)
         .ok_or_else(|| format!("{provider} has no action {action}"))?;
     let run = action.run.as_ref().ok_or("this action opens a page")?;
-    let key = match (action.needs_key, file) {
-        (true, Some(file)) => Some(load_key(file, field, &recipe)?),
+    let key = match (action.needs_key, source) {
+        (true, Some(source)) => Some(source.load(field, &recipe)?),
         (true, None) => return Err("this action needs a key".into()),
         (false, _) => None,
     };
@@ -220,121 +172,8 @@ fn failed(error: TransportError) -> Verdict {
     }
 }
 
-/// Reads a key from a file: the whole file, or named fields of an env file, JSON, CSV or loose
-/// notes. `A+B` joins two fields with `:`, for providers whose key has two parts.
-pub fn read_key(text: &str, field: Option<&str>) -> Result<Secret, String> {
-    let trimmed = text.trim().trim_start_matches('\u{FEFF}');
-    let Some(field) = field else {
-        if trimmed.is_empty() {
-            return Err("the file is empty".into());
-        }
-        if trimmed.contains(char::is_whitespace) {
-            return Err("the file holds more than one value, so name one with --field".into());
-        }
-        return Ok(Secret::new(trimmed));
-    };
-    let parts: Vec<Secret> = field
-        .split('+')
-        .map(|name| read_field(trimmed, name))
-        .collect::<Result<_, _>>()?;
-    if let [only] = parts.as_slice() {
-        return Ok(only.clone());
-    }
-    let joined: Vec<&str> = parts.iter().map(Secret::expose).collect();
-    Ok(Secret::new(joined.join(":")))
-}
-
-fn read_field(text: &str, field: &str) -> Result<Secret, String> {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
-        return extract(&json, &format!("$.{field}"))
-            .map(Secret::new)
-            .ok_or_else(|| format!("field {field} was not found"));
-    }
-    let mut lines = text.lines();
-    if let (Some(head), Some(row)) = (lines.next(), lines.next()) {
-        let cells = |line: &str| -> Vec<String> {
-            line.split(',')
-                .map(|c| c.trim().trim_matches('"').to_owned())
-                .collect()
-        };
-        let names = cells(head);
-        if let Some(index) = names
-            .iter()
-            .position(|name| name.eq_ignore_ascii_case(field))
-        {
-            let values = cells(row);
-            if names.len() == values.len() && !values[index].is_empty() {
-                return Ok(Secret::new(values[index].clone()));
-            }
-        }
-    }
-    for line in text.lines().map(str::trim) {
-        if strip_comment(line).is_some() {
-            continue;
-        }
-        if let Some((label, value)) = split_label(line) {
-            if label == field {
-                let value = value.trim().trim_matches(['"', '\'']);
-                if value.is_empty() {
-                    return Err(format!("field {field} is empty"));
-                }
-                return Ok(Secret::new(value));
-            }
-        }
-    }
-    Err(format!("field {field} was not found"))
-}
-
 pub(crate) fn load_recipe(name: &str) -> Result<Recipe, String> {
     providers::load(name)
-}
-
-pub(crate) fn load_key(
-    path: &Path,
-    field: Option<&str>,
-    recipe: &Recipe,
-) -> Result<Secret, String> {
-    let shown = path.display();
-    let size = fs::metadata(path)
-        .map_err(|e| format!("{shown}: {}", e.kind()))?
-        .len();
-    if size > MAX_KEY_FILE_BYTES {
-        return Err(format!("{shown}: too large for a key file"));
-    }
-    let text = fs::read(path)
-        .map(Zeroizing::new)
-        .map_err(|e| format!("{shown}: {}", e.kind()))?;
-    let text = std::str::from_utf8(&text).map_err(|_| format!("{shown}: not UTF-8 text"))?;
-    read_key_for(text, field, recipe).map_err(|e| format!("{shown}: {e}"))
-}
-
-/// Like `read_key`, and in a file of notes it also finds the one word that starts with this
-/// provider's prefix. With two candidates it refuses, because guessing could send the wrong key.
-pub fn read_key_for(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<Secret, String> {
-    match read_key(text, field) {
-        Ok(key) => Ok(key),
-        Err(error) if field.is_some() || recipe.prefixes.is_empty() => Err(error),
-        Err(error) => {
-            let mut found: Vec<&str> = text
-                .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
-                .filter(|word| {
-                    recipe
-                        .prefixes
-                        .iter()
-                        .any(|prefix| word.starts_with(prefix.as_str()))
-                })
-                .collect();
-            found.sort_unstable();
-            found.dedup();
-            match found.as_slice() {
-                [only] => Ok(Secret::new(*only)),
-                [] => Err(error),
-                _ => Err(
-                    "the file holds several keys of this provider, so name one with --field".into(),
-                ),
-            }
-        }
-    }
 }
 
 /// The provider's file, pointed at the server when each person runs their own.
@@ -350,19 +189,27 @@ pub(crate) fn resolve(name: &str, host: Option<&str>) -> Result<Recipe, String> 
     Ok(recipe.at_host(host))
 }
 
+/// One check typed at the command, where a path to a recipe is allowed.
 pub fn run_one(name: &str, file: &Path, field: Option<&str>) -> Result<Verdict, String> {
-    run_at(name, file, field, None)
+    let source = KeySource::File(file.to_owned());
+    if providers::is_path(name) {
+        return run_recipe(&providers::load_file(name)?, &source, field);
+    }
+    run_at(name, &source, field, None)
 }
 
-pub(crate) fn run_at(
+pub fn run_at(
     name: &str,
-    file: &Path,
+    source: &KeySource,
     field: Option<&str>,
     host: Option<&str>,
 ) -> Result<Verdict, String> {
-    let recipe = resolve(name, host)?;
+    run_recipe(&resolve(name, host)?, source, field)
+}
+
+fn run_recipe(recipe: &Recipe, source: &KeySource, field: Option<&str>) -> Result<Verdict, String> {
     if recipe.auth.kind.as_deref() == Some("ssh") {
-        return ssh::greet(&recipe, file).map(|reply| match reply {
+        return source.greet(recipe).map(|reply| match reply {
             ssh::Reply::Accepted(_) => Verdict::Works {
                 host: recipe.hosts[0].clone(),
             },
@@ -370,12 +217,25 @@ pub(crate) fn run_at(
             ssh::Reply::Unknown => Verdict::NoResult("could not connect".into()),
         });
     }
-    let key = load_key(file, field, &recipe)?;
-    Ok(check(
-        &recipe,
-        &key,
-        &mut HttpTransport::for_recipe(&recipe),
-    ))
+    let key = source.load(field, recipe)?;
+    if let Some(run) = &recipe.auth.run {
+        let answer = script::run(&providers::programs_folder(), run, "check", Some(&key))?;
+        return Ok(program_verdict(&answer));
+    }
+    Ok(check(recipe, &key, &mut HttpTransport::for_recipe(recipe)))
+}
+
+/// What a program of yours said. An answer it did not mean to give is not read as a live key.
+fn program_verdict(answer: &script::Answer) -> Verdict {
+    match answer.result.as_str() {
+        "works" => Verdict::Works {
+            host: "your program".into(),
+        },
+        "rejected" => Verdict::Rejected,
+        "forbidden" => Verdict::Forbidden,
+        "no_result" if !answer.message.is_empty() => Verdict::NoResult(answer.message.clone()),
+        _ => Verdict::NoResult("the program gave no result".into()),
+    }
 }
 
 /// How many checks run at once. Providers see few requests, and a slow one holds up no others.
@@ -387,7 +247,7 @@ pub fn run_plan(
     keys: &Path,
     history: Option<&Path>,
 ) -> Result<Vec<(String, Verdict)>, String> {
-    run_plan_with(plan, keys, history, &|_, _| {})
+    run_plan_with(plan, keys, history, &Sealed::default(), &|_, _| {})
 }
 
 /// The same, and it reports each finished key with how many are done and how many there are.
@@ -395,6 +255,7 @@ pub fn run_plan_with(
     plan: &Path,
     keys: &Path,
     history: Option<&Path>,
+    sealed: &Sealed,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<Vec<(String, Verdict)>, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
@@ -413,7 +274,7 @@ pub fn run_plan_with(
                 let Some(entry) = plan.keys.get(index) else {
                     return;
                 };
-                let verdict = run_entry(entry, keys).unwrap_or_else(|why| {
+                let verdict = run_entry(entry, keys, sealed).unwrap_or_else(|why| {
                     let why = why
                         .strip_prefix(&format!("{}: ", keys.join(&entry.file).display()))
                         .map_or(why.clone(), str::to_owned);
@@ -457,12 +318,13 @@ pub(crate) fn inside_folder(file: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run_entry(entry: &PlanKey, keys: &Path) -> Result<Verdict, String> {
+fn run_entry(entry: &PlanKey, keys: &Path, sealed: &Sealed) -> Result<Verdict, String> {
     inside_folder(&entry.file)?;
-    run_one(
+    run_at(
         &entry.recipe,
-        &keys.join(&entry.file),
+        &sealed.source(keys, &entry.file),
         entry.field.as_deref(),
+        entry.host.as_deref(),
     )
 }
 
@@ -597,7 +459,7 @@ mod tests {
             field: None,
             host: None,
         };
-        assert!(run_entry(&entry, Path::new("/tmp"))
+        assert!(run_entry(&entry, Path::new("/tmp"), &Sealed::default())
             .unwrap_err()
             .contains("inside"));
         let entry = PlanKey {
@@ -606,7 +468,7 @@ mod tests {
             field: None,
             host: None,
         };
-        assert!(run_entry(&entry, Path::new("/tmp")).is_err());
+        assert!(run_entry(&entry, Path::new("/tmp"), &Sealed::default()).is_err());
     }
 
     #[test]
@@ -655,10 +517,16 @@ mod tests {
         }
         fs::write(dir.join("plan.yaml"), text).unwrap();
         let seen = AtomicUsize::new(0);
-        let lines = run_plan_with(&dir.join("plan.yaml"), &dir, None, &|_, total| {
-            assert_eq!(total, 20);
-            seen.fetch_add(1, Ordering::SeqCst);
-        })
+        let lines = run_plan_with(
+            &dir.join("plan.yaml"),
+            &dir,
+            None,
+            &Sealed::default(),
+            &|_, total| {
+                assert_eq!(total, 20);
+                seen.fetch_add(1, Ordering::SeqCst);
+            },
+        )
         .unwrap();
         assert_eq!(seen.load(Ordering::SeqCst), 20);
         assert_eq!(lines[7].0, "missing-7.txt [hetzner]");

@@ -4,6 +4,7 @@ name: MailerLite
 dashboard: https://dashboard.mailerlite.com/integrations/api
 rotate_every_days: 365
 criticality_hint: 2
+env_var: MAILERLITE_API_KEY
 hosts: [connect.mailerlite.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: "/api/subscribers?limit=1" }

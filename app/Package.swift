@@ -12,7 +12,7 @@ let package = Package(
     targets: [
         .target(name: "KeyreeveVault"),
         .target(name: "KeyreeveCatalog"),
-        .target(name: "KeyreeveUI", dependencies: ["KeyreeveCatalog"]),
+        .target(name: "KeyreeveUI", dependencies: ["KeyreeveCatalog", "KeyreeveVault"]),
         .executableTarget(name: "keyreeve-vault", dependencies: ["KeyreeveVault"]),
         .executableTarget(name: "Keyreeve", dependencies: ["KeyreeveUI"]),
         .testTarget(

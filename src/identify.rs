@@ -8,7 +8,7 @@ use crate::script;
 use crate::secret::Secret;
 use crate::ssh;
 use crate::transport::{exchange_token, HttpTransport, Request, Transport};
-use crate::verify::{inside_folder, load_key, now, resolve, Plan};
+use crate::verify::{inside_folder, now, resolve, Plan, Sealed};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -102,10 +102,11 @@ fn xml_tag(body: &str, tag: &str) -> Option<String> {
 
 /// A provider's answer is not trusted to hold what its name says.
 fn safe_value(value: &str, key: &Secret) -> bool {
-    let is_key_itself = key
-        .expose()
-        .split(':')
-        .any(|part| part.len() >= MIN_KEY_PART && value.contains(part));
+    let whole = key.expose();
+    let is_key_itself = (!whole.is_empty() && value.contains(whole))
+        || whole
+            .split(':')
+            .any(|part| part.len() >= MIN_KEY_PART && value.contains(part));
     !value.is_empty()
         && value.chars().count() <= MAX_FIELD_CHARS
         && !value.chars().any(char::is_control)
@@ -115,18 +116,50 @@ fn safe_value(value: &str, key: &Secret) -> bool {
             .all(|word| word.len() < 16 || kind_of(word).is_none())
 }
 
-/// Fills `{field}`. With a field missing there is nothing to suggest.
+/// The same promise as for an answer over HTTP: only what the file declares, and nothing like the key.
+fn program_fields(
+    fields: BTreeMap<String, String>,
+    recipe: &Recipe,
+    key: &Secret,
+) -> BTreeMap<String, String> {
+    let declared = recipe.identify.as_ref().map(|found| &found.fields);
+    fields
+        .into_iter()
+        .filter(|field| declared.is_some_and(|names| names.contains_key(&field.0)))
+        .filter(|field| safe_field(field, key))
+        .collect()
+}
+
+/// A program can get the name wrong as easily as the value, and both are written to a file.
+fn safe_field(field: &(String, String), key: &Secret) -> bool {
+    safe_value(&field.1, key) && safe_value(&field.0, key)
+}
+
+/// Fills `{field}` in the file's own template, once. A value is a provider's answer, so a brace in
+/// it is text and is never read as another field.
 pub fn suggest(template: &str, fields: &BTreeMap<String, String>) -> Option<String> {
-    let mut out = template.to_owned();
-    while let Some(start) = out.find('{') {
-        let end = start + out[start..].find('}')?;
-        let value = fields.get(&out[start + 1..end])?;
-        out.replace_range(start..=end, value);
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        let end = start + rest[start..].find('}')?;
+        out.push_str(&rest[..start]);
+        out.push_str(fields.get(&rest[start + 1..end])?);
+        rest = &rest[end + 1..];
     }
+    out.push_str(rest);
     Some(out)
 }
 
 pub fn run_plan(plan: &Path, keys: &Path, details: &Path) -> Result<Vec<(String, String)>, String> {
+    run_plan_with(plan, keys, details, &Sealed::default())
+}
+
+pub fn run_plan_with(
+    plan: &Path,
+    keys: &Path,
+    details: &Path,
+    sealed: &Sealed,
+) -> Result<Vec<(String, String)>, String> {
     let text = fs::read_to_string(plan).map_err(|e| format!("{}: {e}", plan.display()))?;
     let plan: Plan =
         serde_norway::from_str(&text).map_err(|e| format!("{}: {e}", plan.display()))?;
@@ -140,36 +173,34 @@ pub fn run_plan(plan: &Path, keys: &Path, details: &Path) -> Result<Vec<(String,
         let result = inside_folder(&entry.file)
             .and_then(|()| resolve(&entry.recipe, entry.host.as_deref()))
             .and_then(|recipe| {
-                let file = keys.join(&entry.file);
+                let source = sealed.source(keys, &entry.file);
                 if recipe.auth.kind.as_deref() == Some("ssh") {
                     let mut fields = BTreeMap::new();
-                    if let ssh::Reply::Accepted(account) = ssh::greet(&recipe, &file)? {
+                    if let ssh::Reply::Accepted(account) = source.greet(&recipe)? {
                         fields.insert("account".to_owned(), account);
                     }
-                    return Ok((recipe, fields));
+                    return Ok((recipe, fields, None));
                 }
-                let key = load_key(&file, entry.field.as_deref(), &recipe)?;
+                let key = source.load(entry.field.as_deref(), &recipe)?;
                 if let Some(run) = &recipe.auth.run {
                     let answer =
                         script::run(&providers::programs_folder(), run, "identify", Some(&key))?;
-                    let fields = answer
-                        .fields
-                        .into_iter()
-                        .filter(|(_, value)| safe_value(value, &key))
-                        .collect();
-                    return Ok((recipe, fields));
+                    let fields = program_fields(answer.fields, &recipe, &key);
+                    return Ok((recipe, fields, Some(key)));
                 }
                 let mut transport = HttpTransport::for_recipe(&recipe);
-                identify(&recipe, &key, &mut transport).map(|fields| (recipe, fields))
+                identify(&recipe, &key, &mut transport).map(|fields| (recipe, fields, Some(key)))
             });
         // The output says how much was found, and the values stay in the private file.
         match result {
-            Ok((recipe, fields)) if !fields.is_empty() => {
+            Ok((recipe, fields, key)) if !fields.is_empty() => {
                 lines.push((label, format!("identified, {} fields", fields.len())));
+                // Pieces that each pass the filter can spell the key once they are joined.
                 let suggested_name = recipe
                     .suggested_name
                     .as_deref()
-                    .and_then(|t| suggest(t, &fields));
+                    .and_then(|t| suggest(t, &fields))
+                    .filter(|name| key.as_ref().is_none_or(|key| safe_value(name, key)));
                 saved.insert(
                     entry.file.clone(),
                     Details {
@@ -332,5 +363,51 @@ mod tests {
         assert!(lines[0].1.contains("inside the keys folder"));
         assert!(fs::read_to_string(&details).unwrap().contains("old.txt"));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_key_used_as_a_field_name_is_dropped() {
+        let key = Secret::new("CANARYkey1234567890");
+        let named = ("CANARYkey1234567890".to_owned(), "account".to_owned());
+        assert!(!safe_field(&named, &key));
+        assert!(safe_field(&("account".to_owned(), "me".to_owned()), &key));
+    }
+
+    #[test]
+    fn a_brace_in_an_answer_is_only_text() {
+        let fields = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                .collect()
+        };
+        assert_eq!(
+            suggest("GitHub · {account}", &fields(&[("account", "{account}")])).as_deref(),
+            Some("GitHub · {account}")
+        );
+        assert_eq!(
+            suggest("{a}", &fields(&[("a", "x{b}"), ("b", "y")])).as_deref(),
+            Some("x{b}")
+        );
+        assert_eq!(suggest("{missing}", &fields(&[])), None);
+    }
+
+    #[test]
+    fn a_program_keeps_only_the_fields_its_file_declares() {
+        let declared = Recipe::parse("schema: 1\nprovider: p\nhosts: []\nauth: { type: command, run: { program: p.sh } }\nidentify: { request: { method: GET, path: / }, fields: { account: \"reply:\" } }\n").unwrap();
+        let bare = Recipe::parse(
+            "schema: 1\nprovider: p\nhosts: []\nauth: { type: command, run: { program: p.sh } }\n",
+        )
+        .unwrap();
+        let key = Secret::new("CANARYkey1234567890");
+        let answer = || -> BTreeMap<String, String> {
+            [("account", "me"), ("private_note", "other")]
+                .into_iter()
+                .map(|(a, b)| (a.to_owned(), b.to_owned()))
+                .collect()
+        };
+        let kept = program_fields(answer(), &declared, &key);
+        assert_eq!(kept.keys().collect::<Vec<_>>(), ["account"]);
+        assert!(program_fields(answer(), &bare, &key).is_empty());
     }
 }

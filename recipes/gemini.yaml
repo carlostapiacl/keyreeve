@@ -4,6 +4,8 @@ name: Gemini
 dashboard: https://aistudio.google.com/app/apikey
 rotate_every_days: 365
 criticality_hint: 3
+tested: { check: 2026-11 }
+env_var: GEMINI_API_KEY
 hosts: [generativelanguage.googleapis.com]
 auth: { type: url }
 verify: { method: GET, path: "/v1beta/models?pageSize=1&key={key}", reject: [400] }

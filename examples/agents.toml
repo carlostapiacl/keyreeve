@@ -1,0 +1,7 @@
+# Keep this at ~/.keyreeve/agents.toml, or edit it in the app, on each key.
+# Which programs an agent may run with each key. Each use asks for your fingerprint. The agent chooses
+# the arguments, so allow programs that do one job and never print what they get.
+
+[[allow]]
+key = "hosting-token.txt"
+programs = ["/usr/local/bin/deploy-site"]

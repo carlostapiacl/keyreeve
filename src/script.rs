@@ -112,9 +112,11 @@ pub fn run(
 /// A program of yours is still not trusted to keep the key out of what it says.
 fn safe_message(message: &str, key: Option<&Secret>) -> String {
     let leaked = key.is_some_and(|key| {
-        key.expose()
-            .split(':')
-            .any(|part| part.len() >= 8 && message.contains(part))
+        let whole = key.expose();
+        (!whole.is_empty() && message.contains(whole))
+            || whole
+                .split(':')
+                .any(|part| part.len() >= 8 && message.contains(part))
     });
     if leaked || message.chars().any(char::is_control) {
         return String::new();

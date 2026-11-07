@@ -1,4 +1,5 @@
 import Foundation
+import KeyreeveUI
 import Testing
 
 @testable import KeyreeveCatalog
@@ -56,8 +57,23 @@ struct ActionTests {
         ProviderInfo(id: "acme", name: "Acme", hosts: ["a.co"], source: "local", approved: false, can_identify: true),
     ])
 
+    @Test func testAKeyWithNoProviderIsOfferedTheOneItsTagsPointTo() {
+        let list = ProviderDirectory([
+            ProviderInfo(id: "github", name: "GitHub"), ProviderInfo(id: "aws", name: "AWS"),
+            ProviderInfo(id: "acme", name: "Acme", source: "local", approved: false),
+        ])
+        let offer = { (item: CatalogItem) in list.likelyProvider(of: item)?.id }
+        #expect(offer(CatalogItem(path: "a", tags: ["kind:github", "provider:aws"])) == "github")
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:github"])) == "github")
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:github", "provider:aws"])) == nil)
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:acme"])) == nil, "not approved")
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:unknown"])) == nil)
+        #expect(offer(CatalogItem(path: "a", level: "never", tags: ["provider:github"])) == nil)
+        #expect(offer(CatalogItem(path: "a", tags: ["provider:github"], recipes: ["aws"])) == nil)
+    }
+
     @Test func testProvidersComeFromTheirFiles() {
-        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"self_hosted":false,"suggested_name":null,"problem":null,"programs":[],"actions":[]}]"#.utf8)
+        let data = Data(#"[{"id":"x","name":"X","dashboard":null,"hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"can_rotate_by_hand":false,"single_rotation":false,"tested":{},"self_hosted":false,"suggested_name":null,"problem":null,"programs":[],"actions":[]}]"#.utf8)
         XCTAssertEqual(ProviderDirectory.parse(data).name(of: "x"), "X")
         XCTAssertEqual(ProviderDirectory.parse(Data("nope".utf8)).all.count, 0)
         XCTAssertEqual(directory.usable.map(\.id), ["langsmith", "aws"])
@@ -420,5 +436,104 @@ struct CheckTests {
         let refreshed = try CatalogParser.parse(String(contentsOf: files.catalog, encoding: .utf8))
         XCTAssertEqual(refreshed.first?.mode, "600")
         XCTAssertEqual(refreshed.first?.lastResult, "rejected")
+    }
+}
+
+/// What the app hands the command, seen by a stand-in command that writes down what it got.
+struct SealedRunTests {
+    func standIn() throws -> (root: URL, binary: URL, files: KeyreeveFiles) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-run-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let binary = root.appendingPathComponent("stand-in.sh")
+        try """
+            #!/bin/sh
+            printf '%s\\n' "$@" > '\(root.path)/args'
+            env > '\(root.path)/env'
+            cat > '\(root.path)/stdin'
+            """.write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: binary.path)
+        return (root, binary, KeyreeveFiles(directory: root))
+    }
+
+    func read(_ root: URL, _ name: String) throws -> String {
+        try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+    }
+
+    @Test func testASealedCopyTravelsOnStdinAlone() throws {
+        let (root, binary, files) = try standIn()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = CatalogItem(path: "a.txt", recipes: ["github"])
+        // The stand-in writes no catalog, and the run stops there, after the part under test.
+        _ = try? CheckRunner.run([item], binary: binary, keysFolder: root, files: files, sealed: ["a.txt": "CANARY-value"])
+        #expect(try read(root, "stdin").contains("CANARY-value"))
+        #expect(try read(root, "args").contains("--sealed-stdin"))
+        XCTAssertFalse(try read(root, "args").contains("CANARY"))
+        XCTAssertFalse(try read(root, "env").contains("CANARY"))
+    }
+
+    @Test func testWithNoSealedCopyNothingIsSentOrAsked() throws {
+        let (root, binary, files) = try standIn()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = CatalogItem(path: "a.txt", recipes: ["github"])
+        _ = try? CheckRunner.run([item], binary: binary, keysFolder: root, files: files)
+        XCTAssertFalse(try read(root, "args").contains("--sealed-stdin"))
+    }
+
+    @Test func testAnActionGetsItsKeyOnStdin() throws {
+        let (root, binary, _) = try standIn()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let action = CustomAction(id: "go", label: "Go", needs_key: true)
+        _ = try? CheckRunner.runAction(
+            provider: "p", action: action, item: CatalogItem(path: "a.txt"), binary: binary, keysFolder: root,
+            sealed: "CANARY-value")
+        XCTAssertEqual(try read(root, "stdin"), "CANARY-value")
+        XCTAssertFalse(try read(root, "args").contains("CANARY"))
+        XCTAssertFalse(try read(root, "args").contains("a.txt"))
+    }
+
+    @Test func testEachEndingSaysWhatIsTrue() throws {
+        func message(_ outcome: String, _ manual: [String]) throws -> String {
+            let list = String(decoding: try JSONEncoder().encode(manual), as: UTF8.self)
+            return rotationMessage(try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"\#(outcome)","manual":\#(list)}"#.utf8)))
+        }
+        let done = try message("completed", ["broken still holds the old key: update it by hand"])
+        #expect(done == T("Rotated. Some steps need you: see Vault."))
+        #expect(try message("completed", ["the id of the previous key is unknown: revoke it by hand"]) == T("Rotated. The old key still works: revoke it at the provider."))
+        #expect(try message("completed", ["revoke the old key at the provider"]) == T("Rotated. The old key still works: revoke it at the provider."))
+        #expect(try message("rolled_back", ["a key may have been created: check the provider"]) == T("Undone, but check the provider: see Vault."))
+        #expect(try message("rolled_back", ["revoke the unused key x by hand"]) == T("Undone, but the new key is still alive at the provider: revoke it by hand (see Vault)."))
+    }
+
+    @Test @MainActor func testACompletedRotationDoesNotClaimARevocationItDidNotDo() throws {
+        let manual = try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"completed","manual":["x"]}"#.utf8))
+        let clean = try JSONDecoder().decode(RotationReport.self, from: Data(#"{"outcome":"completed","manual":[]}"#.utf8))
+        XCTAssertFalse(rotationMessage(manual) == rotationMessage(clean))
+    }
+
+    @Test func testARotationPlanHidesThePathFromTheProvider() throws {
+        var places = KeyPlaces()
+        places.files = ["/a/.env"]
+        places.overlapMinutes = 60
+        let item = CatalogItem(path: "private/client.env", recipes: ["resend"], field: "TOKEN")
+        let plan = RotationPlan(item: item, places: places, admin: nil, original: nil)
+        XCTAssertEqual(plan.overlap_secs, 3600)
+        XCTAssertEqual(plan.field, "TOKEN")
+        XCTAssertFalse(plan.issued_name.contains("client"))
+        XCTAssertFalse(KeyPlaces().isDecided)
+        XCTAssertNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate: false)]).rotator(of: item))
+        XCTAssertNotNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate: true)]).rotator(of: item))
+        XCTAssertNotNil(ProviderDirectory([ProviderInfo(id: "resend", name: "R", can_rotate_by_hand: true)]).rotator(of: item))
+    }
+
+    @Test func testTheFirstKeysOfferedAreLiveAndLeastCritical() {
+        let list = vaultCandidates([
+            CatalogItem(path: "dead-low", lastResult: "rejected", criticality: 1),
+            CatalogItem(path: "live-high", lastResult: "works", criticality: 5),
+            CatalogItem(path: "live-low", lastResult: "works", criticality: 2),
+            CatalogItem(path: "live-unrated", lastResult: "works"),
+            CatalogItem(path: "public", level: "none", lastResult: "works"),
+            CatalogItem(path: "binary", format: "binary", lastResult: "works"),
+        ])
+        XCTAssertEqual(list.map(\.path), ["live-low", "live-high", "live-unrated", "dead-low"])
     }
 }

@@ -8,7 +8,7 @@ cargo build --release --locked --manifest-path ../Cargo.toml
 swift build -c release
 BIN=$(swift build -c release --show-bin-path)
 APP="dist/Keyreeve.app"
-rm -f "$APP/Contents/MacOS/Keyreeve" "$APP/Contents/MacOS/keyreeve-cli"
+rm -f "$APP/Contents/MacOS/Keyreeve" "$APP/Contents/MacOS/keyreeve-cli" "$APP/Contents/MacOS/keyreeve-vault"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swift Tools/make-icon.swift .build/AppIcon.iconset
 iconutil -c icns .build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
@@ -16,6 +16,8 @@ cp "$BIN/Keyreeve" "$APP/Contents/MacOS/Keyreeve"
 # Not "keyreeve": most Mac disks ignore case, so it would replace the app itself.
 cp ../target/release/keyreeve "$APP/Contents/MacOS/keyreeve-cli"
 cp "$BIN/keyreeve-vault" dist/keyreeve-vault
+# A rotation saves each new key through this, since saving needs no fingerprint.
+cp "$BIN/keyreeve-vault" "$APP/Contents/MacOS/keyreeve-vault"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -34,5 +36,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 codesign --force --sign - dist/keyreeve-vault
 codesign --force --sign - "$APP/Contents/MacOS/keyreeve-cli"
+codesign --force --sign - "$APP/Contents/MacOS/keyreeve-vault"
 codesign --force --sign - "$APP"
 echo "Built $APP and dist/keyreeve-vault"

@@ -5,6 +5,7 @@ dashboard: https://gitlab.com/-/user_settings/personal_access_tokens
 prefixes: [glpat-]
 rotate_every_days: 90
 criticality_hint: 4
+env_var: GITLAB_TOKEN
 hosts: [gitlab.com]
 auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /api/v4/user }
@@ -12,3 +13,11 @@ identify:
   request: { method: GET, path: /api/v4/user }
   fields: { account: $.username, email: $.email, name: $.name }
 suggested_name: "GitLab · {account}"
+# Rotating ends the old token at once. Reusing a replaced token makes GitLab revoke the whole family, so a
+# lost answer means making a new one at the page above. Needs the self_rotate or api scope.
+rotation: single
+create:
+  method: POST
+  path: /api/v4/personal_access_tokens/self/rotate
+  value_from: $.token
+  id_from: $.id

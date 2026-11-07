@@ -5,11 +5,16 @@
 
 pub mod catalog;
 pub mod engine;
+pub mod history;
 pub mod identify;
 pub mod inventory;
 pub mod journal;
+pub mod keys;
+pub mod places;
 pub mod providers;
+pub mod proxy;
 pub mod recipe;
+pub mod rotate;
 pub mod schedule;
 pub mod script;
 pub mod secret;

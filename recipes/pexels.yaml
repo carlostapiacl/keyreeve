@@ -4,6 +4,8 @@ name: Pexels
 dashboard: https://www.pexels.com/api/key/
 rotate_every_days: 365
 criticality_hint: 1
+tested: { check: 2026-11 }
+env_var: PEXELS_API_KEY
 hosts: [api.pexels.com]
 auth: { header: Authorization }
 verify: { method: GET, path: "/v1/curated?per_page=1" }

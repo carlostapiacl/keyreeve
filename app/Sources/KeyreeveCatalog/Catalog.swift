@@ -2,6 +2,16 @@ import Foundation
 
 /// One row of `catalog.csv`. It has names and results, never a key's value.
 public struct CatalogItem: Identifiable, Hashable, Sendable {
+    /// Whether the vault holds this file, which it knows with no fingerprint.
+    public enum VaultCopy: Hashable, Sendable {
+        case none, sealed, outdated
+        /// Sealed from a different folder, where this same path can be another key. It is left alone.
+        case otherFolder
+    }
+
+    public var vault: VaultCopy = .none
+    /// The file was moved out of the keys folder, so the vault's copy is the one in use.
+    public var originalMoved = false
     public var path: String
     public var level: String
     public var tags: [String]
@@ -230,6 +240,7 @@ public enum Sidebar: Hashable, Sendable {
     case result(String)
     case level(String)
     case tag(String)
+    case vault
 }
 
 public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String) -> [CatalogItem] {
@@ -238,6 +249,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .home, .all: return !item.isArchived
         case .attention: return item.attention != nil
         case .archive: return item.isArchived
+        case .vault: return item.vault != .none && item.vault != .otherFolder && !item.isArchived
         case .checkable: return item.canCheck && !item.isArchived
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()
@@ -275,12 +287,20 @@ public func projectTags(in items: [CatalogItem]) -> [(tag: String, count: Int)] 
 }
 
 
+/// Reads `yyyy-MM-dd` as UTC midnight. Lists call this for every key on every draw, so it does no
+/// date formatting, which costs far more than this arithmetic.
 private func catalogDate(_ text: String) -> Date? {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd"
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(identifier: "UTC")
-    return formatter.date(from: text)
+    let parts = text.split(separator: "-")
+    guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+        (1...12).contains(month), (1...31).contains(day)
+    else { return nil }
+    // Days from the civil calendar, by Howard Hinnant's published algorithm.
+    let y = month <= 2 ? year - 1 : year
+    let era = (y >= 0 ? y : y - 399) / 400
+    let yearOfEra = y - era * 400
+    let dayOfYear = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1
+    let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
+    return Date(timeIntervalSince1970: Double((era * 146_097 + dayOfEra - 719_468) * 86_400))
 }
 
 /// The figures on the home screen, worked out from the catalog alone.
@@ -399,4 +419,17 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
             }
         return Array(all.sorted { ($0.at, $0.key) > ($1.at, $1.key) }.prefix(limit))
     }
+}
+
+/// Keys a person could put in the vault first: live ones they would miss least if something went
+/// wrong while they learn it. A key with no rating comes after the rated ones.
+public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
+    let rank = { (item: CatalogItem) in item.criticality == 0 ? 6 : item.criticality }
+    return items
+        .filter { $0.vault == .none && !$0.originalMoved && $0.isSecret && !$0.isArchived && $0.format != "binary" }
+        .sorted {
+            let first = ($0.lastResult == "works" ? 0 : 1, rank($0), $0.path)
+            let second = ($1.lastResult == "works" ? 0 : 1, rank($1), $1.path)
+            return first < second
+        }
 }

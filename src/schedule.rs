@@ -3,7 +3,7 @@
 
 use crate::catalog;
 use crate::providers;
-use crate::verify::{append_history, now, parse_history, run_at, HistoryEntry};
+use crate::verify::{append_history, now, parse_history, run_at, HistoryEntry, KeySource};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,7 +71,7 @@ pub fn run(home: &Path) -> Result<Summary, String> {
         let host = (!row.host.is_empty()).then_some(row.host.as_str());
         let mut worked = false;
         for recipe in &row.recipes {
-            let verdict = run_at(recipe, &keys.join(&row.path), field, host);
+            let verdict = run_at(recipe, &KeySource::File(keys.join(&row.path)), field, host);
             let (result, reason) = match &verdict {
                 Ok(verdict) => (verdict.code(), verdict.reason()),
                 Err(why) => (

@@ -1,7 +1,9 @@
 import AppKit
+import CryptoKit
 import KeyreeveCatalog
+@testable import KeyreeveVault
 import Foundation
-import KeyreeveUI
+@testable import KeyreeveUI
 import SwiftUI
 import Testing
 
@@ -9,7 +11,7 @@ import Testing
 @MainActor
 struct RenderTests {
     static let sample = [
-        CatalogItem(path: "old-cloud.csv", tags: ["revoke", "provider:aws", "infra"], modified: "2024-02-13", lastResult: "works", lastChecked: "2026-11-06", recipes: ["aws"], name: "AWS · gitlab-user", description: "Old deploy user", details: KeyDetails(provider: "aws", fields: ["account": "111122223333", "arn": "arn:aws:iam::111122223333:user/gitlab-user"], suggested_name: "AWS · 111122223333"), criticality: 4),
+        CatalogItem(path: "old-cloud.csv", tags: ["revoke", "provider:aws", "infra"], modified: "2024-02-13", lastResult: "works", lastChecked: "2026-11-06", recipes: ["aws"], name: "AWS · deploy-user", description: "Old deploy user", details: KeyDetails(provider: "aws", fields: ["account": "111122223333", "arn": "arn:aws:iam::111122223333:user/deploy-user"], suggested_name: "AWS · 111122223333"), criticality: 4),
         CatalogItem(path: "backups/billing-old.env", tags: ["shop", "status:backup"], modified: "2025-03-02", lastResult: "works", lastChecked: "2026-11-06", recipes: ["github"], labels: ["GITHUB_TOKEN", "OTHER"]),
         CatalogItem(path: "hosting-readonly.txt", level: "free", tags: ["infra", "read-only"], modified: "2026-04-19", lastResult: "works", lastChecked: "2026-11-06", criticality: 4, criticalitySuggested: true, rotateDays: 180),
         CatalogItem(path: "notes/legacy-mail.txt", tags: ["blog"], modified: "2024-02-13", mode: "644"),
@@ -82,6 +84,45 @@ struct RenderTests {
             try render(WelcomeView(choose: {}), named: "welcome-\(code)", appearance: .aqua)
             try render(SettingsView(model: model), named: "settings-\(code)", appearance: .aqua)
             try render(LockedView(message: nil, unlock: {}), named: "locked-\(code)", appearance: .aqua)
+
+            try render(MainView(model: model, initial: .vault), named: "vault-intro-\(code)", appearance: .aqua)
+            let setup = self.model()
+            setup.vaultDraft = VaultDraft(enclave: SoftwareRecipient(), blob: Data())
+            try render(MainView(model: setup, initial: .vault), named: "vault-recovery-\(code)", appearance: .aqua)
+            let ready = self.model()
+            ready.hasVault = true
+            ready.items[2].vault = .sealed
+            ready.items[4].vault = .outdated
+            ready.message = nil
+            ready.vaultComparison = {
+                var report = VaultKeeper.CompareReport()
+                report.same = ["hosting-readonly.txt"]
+                report.different = ["payments.json"]
+                return report
+            }()
+            try render(MainView(model: ready, initial: .vault), named: "vault-ready-\(code)", appearance: .darkAqua)
+            ready.items[3].originalMoved = true
+            ready.rotations = [RotationStatus(key: "mail-token.txt", phase: "waiting", manual: ["the id of the previous key is unknown: revoke it by hand"])]
+            try render(MainView(model: ready, initial: .vault), named: "vault-rotations-\(code)", appearance: .aqua)
+            ready.providers = ProviderDirectory([ProviderInfo(id: "aws", name: "AWS", can_rotate: true)])
+            ready.items[0].vault = .sealed
+            try render(MainView(model: ready, initial: .vault), named: "vault-sealed-\(code)", appearance: .aqua)
+            try render(MainView(model: ready, initial: .all, chosen: "old-cloud.csv"), named: "rotate-\(code)", appearance: .aqua)
+            let log = AuditLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("usage-\(UUID().uuidString).jsonl"))
+            defer { try? FileManager.default.removeItem(at: log.url) }
+            let caller = AuditLog.Observed(pid: 1, program: "/usr/bin/ssh", chain: ["ssh", "zsh", "claude"])
+            try log.append(event: "granted", key: "vps", grant: "g-1", observed: caller, detail: "3600 seconds, ssh")
+            try log.append(event: "signed", key: "vps", grant: "g-1", observed: caller, detail: "root at SHA256:ab12cd34")
+            try log.append(event: "server", key: "vps", grant: "g-1", detail: "SHA256:ef56, asked")
+            try log.append(event: "copied", key: "vps", detail: "to the clipboard")
+            ready.keyIndex = KeyIndex(keys: [KeyIndex.Key(id: "vps", source: "old-cloud.csv", provider: KeyService.sshProvider)])
+            ready.usage.entries = try log.entries().reversed()
+            ready.usage.grants = [KeyService.GrantInfo(id: "g-1", key: "vps", program: "ssh", expires: Date().addingTimeInterval(1800))]
+            try render(
+                KeyUsagePanel(item: ready.items[0], model: ready).padding(24).frame(width: 420).background(Theme.background),
+                named: "usage-\(code)", appearance: .darkAqua)
+            ready.usage.brokenLine = 3
+            try render(UsageLogSheet(model: ready), named: "usage-log-\(code)", appearance: .aqua)
         }
     }
 }

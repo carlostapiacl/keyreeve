@@ -6,10 +6,18 @@ public struct VaultError: Error, CustomStringConvertible, Equatable {
     public init(_ description: String) { self.description = description }
 }
 
-/// Someone who can open what was sealed for their public key.
-public protocol VaultRecipient {
+/// A chip's key, or a stand-in for one in tests. It agrees on a secret without showing its key.
+public protocol VaultRecipient: Age.Identity {
     var publicKey: P256.KeyAgreement.PublicKey { get }
     func sharedSecret(with other: P256.KeyAgreement.PublicKey) throws -> SharedSecret
+}
+
+extension VaultRecipient {
+    public func unwrap(_ stanza: Age.Stanza) throws -> Data? {
+        try Age.unwrapTag(stanza, publicKey: publicKey) { try sharedSecret(with: $0) }
+    }
+
+    public var ageRecipient: Age.TagRecipient { Age.TagRecipient(publicKey: publicKey) }
 }
 
 public struct SoftwareRecipient: VaultRecipient {
@@ -21,179 +29,113 @@ public struct SoftwareRecipient: VaultRecipient {
     }
 }
 
-/// The contents of the vault file. Each value has its own random key, sealed separately for
-/// the Secure Enclave and for the recovery key, so either one can open it.
+/// The contents of the vault file. Each value is an age file, sealed for the chip and for the
+/// recovery key, so either one opens it, with keyreeve or with any age tool.
 public struct VaultFile: Codable, Equatable {
-    public var schema = 1
-    public var enclavePublicKey: Data
-    public var recoveryPublicKey: Data
+    public var schema = 2
+    /// `age1tag1...`, the chip's public key.
+    public var enclave: String
+    /// `age1...`, the recovery key's public key.
+    public var recovery: String
     public var entries: [String: Entry] = [:]
+    /// Copies that a newer one replaced, oldest first. Nothing in the vault is ever lost by replacing.
+    public var replaced: [String: [Entry]]?
 
     public struct Entry: Codable, Equatable {
         public var added: Date
-        public var sealedValue: Data
-        public var enclaveWrap: Wrap
-        public var recoveryWrap: Wrap
+        /// The folder this file was sealed from, because a path means nothing without its folder.
+        public var source: String?
+        /// A whole age file. Its text starts with a line naming the key, then the value.
+        public var sealed: Data
     }
 
-    public struct Wrap: Codable, Equatable {
-        public var ephemeralPublicKey: Data
-        public var sealedKey: Data
+    public init(enclave: P256.KeyAgreement.PublicKey, recovery: Age.X25519Recipient) {
+        self.enclave = Age.TagRecipient(publicKey: enclave).string
+        self.recovery = recovery.string
     }
 
-    public init(enclave: P256.KeyAgreement.PublicKey, recovery: P256.KeyAgreement.PublicKey) {
-        enclavePublicKey = enclave.rawRepresentation
-        recoveryPublicKey = recovery.rawRepresentation
+    private static func nameLine(_ name: String) -> Data { Data("keyreeve-name: \(name)\n".utf8) }
+
+    private func seal(name: String, value: Data, now: Date, source: String?) throws -> Entry {
+        // Needs no fingerprint, because sealing uses only public keys. The name goes inside, so
+        // a program that can edit this file cannot swap two values under each other's names.
+        let file = try Age.encrypt(
+            Self.nameLine(name) + value,
+            to: [try Age.TagRecipient(string: enclave), try Age.X25519Recipient(string: recovery)])
+        return Entry(added: now, source: source, sealed: file)
     }
 
-    /// Needs no fingerprint, because sealing uses only public keys.
-    public mutating func add(name: String, value: Data, now: Date = Date()) throws {
+    public mutating func add(name: String, value: Data, now: Date = Date(), source: String? = nil) throws {
         try Self.check(name: name)
         if entries[name] != nil { throw VaultError("\(name) already exists") }
-        let valueKey = SymmetricKey(size: .bits256)
-        let box = try AES.GCM.seal(value, using: valueKey, authenticating: Data(name.utf8))
-        guard let sealedValue = box.combined else { throw VaultError("could not seal the value") }
-        let keyBytes = valueKey.withUnsafeBytes { Data($0) }
-        entries[name] = Entry(
-            added: now,
-            sealedValue: sealedValue,
-            enclaveWrap: try Self.wrap(keyBytes, for: enclavePublicKey, name: name),
-            recoveryWrap: try Self.wrap(keyBytes, for: recoveryPublicKey, name: name)
-        )
+        entries[name] = try seal(name: name, value: value, now: now, source: source)
     }
 
-    public func open(name: String, with recipient: VaultRecipient) throws -> Data {
+    /// Seals a new value under this name, and keeps the old one where it can still be opened.
+    public mutating func replace(name: String, value: Data, now: Date = Date()) throws {
+        try Self.check(name: name)
+        let old = entries[name]
+        entries[name] = try seal(name: name, value: value, now: now, source: old?.source)
+        if let old { replaced = (replaced ?? [:]).merging([name: [old]]) { $0 + $1 } }
+    }
+
+    /// Opens a copy that was replaced. Index 0 is the oldest.
+    public func openReplaced(name: String, index: Int, with identity: Age.Identity) throws -> Data {
+        guard let list = replaced?[name], list.indices.contains(index) else {
+            throw VaultError("\(name) has no such old copy")
+        }
+        return try open(entry: list[index], name: name, with: identity)
+    }
+
+    public func open(name: String, with identity: Age.Identity) throws -> Data {
         guard let entry = entries[name] else { throw VaultError("\(name) is not in the vault") }
-        let valueKey = try unwrap(entry: entry, name: name, recipient: recipient)
-        do {
-            let box = try AES.GCM.SealedBox(combined: entry.sealedValue)
-            return try AES.GCM.open(box, using: valueKey, authenticating: Data(name.utf8))
-        } catch {
+        return try open(entry: entry, name: name, with: identity)
+    }
+
+    private func open(entry: Entry, name: String, with identity: Age.Identity) throws -> Data {
+        let plain = try Age.decrypt(entry.sealed, with: identity)
+        let line = Self.nameLine(name)
+        guard plain.starts(with: line) else {
             throw VaultError("\(name) could not be opened: the file was changed or damaged")
         }
+        return plain.dropFirst(line.count)
     }
 
-    /// Moves the vault to a new Secure Enclave key, using the recovery key.
+    /// Moves the vault to a new chip, using the recovery key. Each value is sealed again.
     public mutating func moveToNewEnclave(
-        _ enclave: P256.KeyAgreement.PublicKey,
-        recovery: VaultRecipient
+        _ newEnclave: P256.KeyAgreement.PublicKey, recovery identity: Age.X25519Identity
     ) throws {
-        guard recovery.publicKey.rawRepresentation == recoveryPublicKey else {
+        guard identity.recipient.string == recovery else {
             throw VaultError("this is not the recovery key of this vault")
         }
-        let target = enclave.rawRepresentation
-        var moved = entries
+        var moved = self
+        moved.enclave = Age.TagRecipient(publicKey: newEnclave).string
         for (name, entry) in entries {
-            let valueKey = try unwrap(entry: entry, name: name, recipient: recovery)
-            let keyBytes = valueKey.withUnsafeBytes { Data($0) }
-            moved[name]?.enclaveWrap = try Self.wrap(keyBytes, for: target, name: name)
+            let value = try open(entry: entry, name: name, with: identity)
+            moved.entries[name] = try moved.seal(name: name, value: value, now: entry.added, source: entry.source)
         }
-        entries = moved
-        enclavePublicKey = target
-    }
-
-    private func unwrap(entry: Entry, name: String, recipient: VaultRecipient) throws -> SymmetricKey {
-        let wrap: Wrap
-        switch recipient.publicKey.rawRepresentation {
-        case enclavePublicKey: wrap = entry.enclaveWrap
-        case recoveryPublicKey: wrap = entry.recoveryWrap
-        default: throw VaultError("this key cannot open this vault")
+        for (name, list) in replaced ?? [:] {
+            let sealedAgain = try list.map { entry in
+                let value = try open(entry: entry, name: name, with: identity)
+                return try moved.seal(name: name, value: value, now: entry.added, source: entry.source)
+            }
+            moved.replaced?[name] = sealedAgain
         }
-        let ephemeral = try P256.KeyAgreement.PublicKey(rawRepresentation: wrap.ephemeralPublicKey)
-        // A failed fingerprint surfaces here and is not a damaged file, so it passes through.
-        let secret = try recipient.sharedSecret(with: ephemeral)
-        let wrapKey = Self.derive(
-            secret, ephemeral: wrap.ephemeralPublicKey,
-            recipient: recipient.publicKey.rawRepresentation, name: name)
-        do {
-            let box = try AES.GCM.SealedBox(combined: wrap.sealedKey)
-            return SymmetricKey(data: try AES.GCM.open(box, using: wrapKey, authenticating: Data(name.utf8)))
-        } catch {
-            throw VaultError("\(name) could not be opened: the file was changed or damaged")
-        }
+        self = moved
     }
 
-    private static func wrap(_ keyBytes: Data, for recipient: Data, name: String) throws -> Wrap {
-        let target = try P256.KeyAgreement.PublicKey(rawRepresentation: recipient)
-        let ephemeral = P256.KeyAgreement.PrivateKey()
-        let secret = try ephemeral.sharedSecretFromKeyAgreement(with: target)
-        let wrapKey = derive(
-            secret, ephemeral: ephemeral.publicKey.rawRepresentation, recipient: recipient, name: name)
-        let box = try AES.GCM.seal(keyBytes, using: wrapKey, authenticating: Data(name.utf8))
-        guard let sealedKey = box.combined else { throw VaultError("could not seal the key") }
-        return Wrap(ephemeralPublicKey: ephemeral.publicKey.rawRepresentation, sealedKey: sealedKey)
+    /// Names a rotation keeps for itself, so a key can never be overwritten by one.
+    public static func isTemporary(_ name: String) -> Bool {
+        name.hasSuffix("#pending") || name.hasSuffix("#previous")
     }
 
-    private static func derive(
-        _ secret: SharedSecret, ephemeral: Data, recipient: Data, name: String
-    ) -> SymmetricKey {
-        secret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data("keyreeve-vault-v1".utf8),
-            sharedInfo: ephemeral + recipient + Data(name.utf8),
-            outputByteCount: 32)
-    }
-
+    /// A name can be a file's path, which can hold spaces and accents. What matters is that it
+    /// stays on one line when a person reads it, and inside the sealed text.
     public static func check(name: String) throws {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-/"))
-        guard !name.isEmpty, name.count <= 200, name.isASCII_,
-            name.unicodeScalars.allSatisfy(allowed.contains)
+        guard !name.isEmpty, name.count <= 200,
+            !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
         else {
-            throw VaultError("a name uses only letters, digits, dot, dash, underscore and slash")
+            throw VaultError("a name is one line of at most 200 characters")
         }
-    }
-}
-
-extension String {
-    fileprivate var isASCII_: Bool { utf8.allSatisfy { $0 < 128 } }
-}
-
-/// The recovery key, written so a person can copy it. It ends in a checksum, to catch a typo.
-public enum RecoveryKey {
-    private static let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
-
-    public static func encode(_ key: P256.KeyAgreement.PrivateKey) -> String {
-        let raw = key.rawRepresentation
-        let bytes = raw + Data(SHA256.hash(data: raw).prefix(2))
-        var bits = 0
-        var count = 0
-        var out = ""
-        for byte in bytes {
-            bits = (bits << 8) | Int(byte)
-            count += 8
-            while count >= 5 {
-                count -= 5
-                out.append(alphabet[(bits >> count) & 31])
-            }
-            bits &= (1 << count) - 1
-        }
-        if count > 0 { out.append(alphabet[(bits << (5 - count)) & 31]) }
-        return stride(from: 0, to: out.count, by: 5).map { start in
-            let from = out.index(out.startIndex, offsetBy: start)
-            let to = out.index(from, offsetBy: min(5, out.count - start))
-            return String(out[from..<to])
-        }.joined(separator: "-")
-    }
-
-    public static func decode(_ text: String) throws -> P256.KeyAgreement.PrivateKey {
-        var bits = 0
-        var count = 0
-        var bytes = Data()
-        for character in text.uppercased() where character != "-" && !character.isWhitespace {
-            guard let value = alphabet.firstIndex(of: character) else {
-                throw VaultError("the recovery key has a character it should not have")
-            }
-            bits = (bits << 5) | value
-            count += 5
-            if count >= 8 {
-                count -= 8
-                bytes.append(UInt8((bits >> count) & 255))
-                bits &= (1 << count) - 1
-            }
-        }
-        guard bytes.count == 34,
-            Data(SHA256.hash(data: bytes.prefix(32)).prefix(2)) == bytes.suffix(2)
-        else { throw VaultError("the recovery key is not right: check for a typo") }
-        return try P256.KeyAgreement.PrivateKey(rawRepresentation: bytes.prefix(32))
     }
 }

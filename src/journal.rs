@@ -3,23 +3,39 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
-    Started { old_id: Option<String> },
-    Created { new_id: String },
+    Started {
+        old_id: Option<String>,
+    },
+    Created {
+        new_id: String,
+    },
     PendingStored,
     Verified,
-    SinkUpdated { sink: String },
-    Promoted { revoke_after: u64 },
+    SinkUpdated {
+        sink: String,
+    },
+    Promoted {
+        revoke_after: u64,
+    },
     OldRevoked,
     Completed,
-    RollbackStarted { reason: String },
-    RolledBack { reason: String },
-    ManualAction { what: String },
+    RollbackStarted {
+        reason: String,
+    },
+    RolledBack {
+        reason: String,
+    },
+    ManualAction {
+        what: String,
+    },
+    /// The key was replaced by hand, so the id on record belongs to a key this one is not.
+    Replaced,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,7 +148,7 @@ impl Journal {
                 Event::OldRevoked => Phase::OldRevoked,
                 Event::RollbackStarted { .. } => Phase::RollingBack,
                 Event::Completed | Event::RolledBack { .. } => Phase::Idle,
-                Event::SinkUpdated { .. } | Event::ManualAction { .. } => phase,
+                Event::SinkUpdated { .. } | Event::ManualAction { .. } | Event::Replaced => phase,
             };
         }
         phase
@@ -146,6 +162,10 @@ impl Journal {
             match &entry.event {
                 Event::Created { new_id } => candidate = Some(new_id.clone()),
                 Event::Promoted { .. } => current = candidate.clone(),
+                Event::Replaced => {
+                    current = None;
+                    candidate = None;
+                }
                 _ => {}
             }
         }
@@ -166,17 +186,45 @@ impl FileBackend {
     }
 }
 
+/// A crash can leave half a line at the end. Writing after it would bury it in the middle, and the
+/// journal refuses damage in the middle, so the half line goes first. A whole line missing only its
+/// break keeps its content.
+fn repair_torn_end(path: &Path) -> io::Result<()> {
+    let mut text = Vec::new();
+    File::open(path)?.read_to_end(&mut text)?;
+    if text.is_empty() || text.ends_with(b"\n") {
+        return Ok(());
+    }
+    let start = text
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |at| at + 1);
+    let mut file = OpenOptions::new().write(true).open(path)?;
+    if serde_json::from_slice::<Entry>(&text[start..]).is_ok() {
+        file.seek(SeekFrom::End(0))?;
+        file.write_all(b"\n")?;
+    } else {
+        file.set_len(start as u64)?;
+    }
+    file.sync_all()
+}
+
 impl Backend for FileBackend {
     fn read_lines(&self) -> io::Result<Vec<String>> {
-        let mut text = String::new();
+        let mut bytes = Vec::new();
         match File::open(&self.path) {
             Ok(mut file) => {
-                file.read_to_string(&mut text)?;
+                file.read_to_end(&mut bytes)?;
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error),
         }
-        Ok(text.lines().map(str::to_owned).collect())
+        // A crash can cut a line inside a letter, and that must read as a torn line and not stop
+        // every rotation on this machine from resuming.
+        Ok(String::from_utf8_lossy(&bytes)
+            .lines()
+            .map(str::to_owned)
+            .collect())
     }
 
     fn append(&mut self, line: &str) -> io::Result<()> {
@@ -189,6 +237,7 @@ impl Backend for FileBackend {
             options.mode(0o600);
         }
         let mut file = options.open(&self.path)?;
+        repair_torn_end(&self.path)?;
         file.write_all(format!("{line}\n").as_bytes())?;
         file.sync_all()?;
         if created {
@@ -228,6 +277,60 @@ mod tests {
         let journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
         assert_eq!(journal.entries().len(), 2);
         assert_eq!(journal.phase("k"), Phase::PendingStored);
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn writing_after_a_torn_line_leaves_a_journal_that_opens() {
+        let path = temp_path("torn-append");
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal
+            .append("k", 1, Event::Started { old_id: None })
+            .unwrap();
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b"{\"rotation\":1,\"ke").unwrap();
+
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal.append("k", 2, Event::PendingStored).unwrap();
+        journal.append("k", 3, Event::Verified).unwrap();
+        let journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        assert_eq!(journal.entries().len(), 3);
+        assert_eq!(journal.phase("k"), Phase::Verified);
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_line_cut_inside_a_letter_still_opens() {
+        let path = temp_path("torn-utf8");
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal
+            .append("ñ", 1, Event::Started { old_id: None })
+            .unwrap();
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(&"{\"key\":\"ñ".as_bytes()[..8]).unwrap();
+        let journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        assert_eq!(journal.entries().len(), 1);
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn replacing_a_key_forgets_its_id() {
+        let path = temp_path("replaced");
+        let mut journal = Journal::open(Box::new(FileBackend::new(&path))).unwrap();
+        journal
+            .append("k", 1, Event::Started { old_id: None })
+            .unwrap();
+        journal
+            .append("k", 2, Event::Created { new_id: "b".into() })
+            .unwrap();
+        journal
+            .append("k", 3, Event::Promoted { revoke_after: 0 })
+            .unwrap();
+        journal.append("k", 4, Event::Completed).unwrap();
+        assert_eq!(journal.current_id("k").as_deref(), Some("b"));
+        journal.append("k", 5, Event::Replaced).unwrap();
+        assert_eq!(journal.current_id("k"), None);
+        assert_eq!(journal.phase("k"), Phase::Idle);
         fs::remove_file(&path).unwrap();
     }
 

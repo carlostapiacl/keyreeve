@@ -26,15 +26,19 @@ because they can quote the request. The simulator checks the journal, errors and
 test values.
 
 **A check that changes something.** `keyreeve verify` only sends a GET, and refuses a recipe whose check is another
-method. Provider answers are ignored apart from their status. A provider can still count or log the request, and
+method. A provider using OAuth first gets a token, with a POST holding the credentials. Provider answers are ignored apart from their status. A provider can still count or log the request, and
 a bad GET endpoint on its side could have effects.
 
 **A provider answer that holds too much.** `identify` keeps only the fields the provider's file declares, drops any that
 look like a credential or contain the key, and writes them to a private file. The command reports how many fields it found,
 and not their values.
 
+**A new key that is not a key.** A provider's answer ends up in your files, some of which a shell reads, so a new key with
+characters like `$` or a space is refused before it lands. The rotation then undoes itself.
+
 **A provider file you added.** It receives no key until you approve the hosts it lists. Editing its hosts undoes the approval,
-and it cannot take the name of a provider that ships.
+and it cannot take the name of a provider that ships. A plan, your rules and your edits can only name a provider. A path to a
+recipe is accepted only when typed at the `verify` command for one run, and such a recipe cannot run a program.
 
 ## What it does not protect against
 
@@ -53,8 +57,8 @@ and it cannot take the name of a provider that ships.
 
 ## The vault and the Mac app
 
-The vault is a file sealed for two keys: one inside the Secure Enclave, which asks for a fingerprint, and a recovery
-key held by you. Each value is bound to its name, so a value cannot be swapped under another name.
+The vault holds one age file per key, sealed for two keys: one inside the Secure Enclave, which asks for a fingerprint, and a
+recovery key held by you. Each value carries its name inside, so a value cannot be swapped under another name.
 
 - **Any program running as you can ask for your finger,** with text of its own in the prompt. Only touch the sensor
   when you asked for something. The fingerprint is a check on you, and it does not identify the program asking.
@@ -72,15 +76,71 @@ key held by you. Each value is bound to its name, so a value cannot be swapped u
   your files. Turn it off in Settings.
 - **A fingerprint lasts a while.** During the period you choose, 5 minutes by default, the app checks "Ask me" keys without
   asking. It applies to buttons in the app alone. Locking ends it, and the vault asks every time.
+- **One fingerprint opens a whole batch.** The prompt states how many keys, and not which. While a batch runs, its opened
+  values are in the app's memory and the command's, and they reach the command on stdin, so they never appear in arguments
+  or variables. Swift strings are not wiped.
+- **An SSH key checked from the vault touches the disk.** A check through `ssh` reads keys from files, so the sealed copy spends the call in a file
+  only you can read, overwritten and removed afterwards. A crash in between leaves it there.
+- **A program running as you can change the app.** It can replace `keyreeve-cli` or `keyreeve-vault` inside the bundle, and the
+  next fingerprint then hands opened keys to its copy. An agent you run as yourself can do this too, so if you need to keep keys
+  from an agent, run the agent as another macOS user or in a sandbox that cannot write here. Without an Apple signature
+  the app cannot check its own parts.
+- **A rotation writes where you pointed it.** `places.json` names files and buttons that receive the new key, and a program
+  running as you could add one. A file must already hold the key, and a button must come from a file you approved, but a
+  program that can edit your files could meet both.
+- **A moved original is still a key.** It stays in plain text in `~/.keyreeve/originals` until you delete it, and a rotation does
+  not update it.
+- **Replacing keeps the old value.** Old copies stay sealed in the vault, including keys already revoked.
+- **A copy's folder is written in plain text.** Each copy notes the folder it came from, so the same path in another folder is
+  not mistaken for it. A program running as you could edit that note.
+- **Sealing is not moving.** Until you remove an original, the file is as readable as before, and anything that reads it
+  gets the key with no fingerprint. The weekly check still reads files.
+- **The screen shows the recovery key.** Anything recording your screen can see it, and the app cannot tell.
 - **A key in the address.** Some providers accept a key only in the URL. It travels inside HTTPS, but such a provider may
   log its own addresses, which is why this is a declared `auth: { type: url }` and never a default.
 - **The app's settings decide where a key is sent.** `edits.json` and your rules name the recipe for each key. A program
   running as you could change them, and the next check would send the key to another listed provider.
 - **Pressing "I already revoked it" is proof only with a check.** A key with no recipe is marked on your word alone.
-- **The format has had no outside review.** It uses standard CryptoKit parts (P-256, HKDF, AES-GCM), put together here.
+- **This code has had no outside review.** The file format is age's, and tests compare it with the official tool in both
+  directions, including `p256tag` for the chip. Writing it here is what lets one fingerprint cover a batch and leaves no plugin to
+  trust. Decrypting with the chip was never compared with age's plugin for it.
+- **An agent's program holds the key.** Over MCP an agent runs programs a person allowed, with a fingerprint each time. The output
+  hides the plain key and its base64, and a program can hide it another way, so the allowed list is the protection. The agent runs as
+  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it names the program and the key.
+- **A copied key is on the clipboard for up to 60 seconds.** Any program running as you can read it in that time. The marks that ask
+  history tools to skip it are a convention, and a tool can ignore them.
+- **The list of programs that cannot be allowed is not complete.** It stops the obvious ways to read a key. A program you allow
+  and the arguments an agent gives it can still reach it.
+- **A stand-in does not confine a program.** The real key stays in the proxy's memory and the command holds a stand-in, so
+  `printenv` and a leaked variable give nothing. A program running as you can still use the key through the proxy while a permission lasts,
+  doing whatever that key allows at its provider, and it can read your original files or replace these binaries. keyreeve is not a
+  sandbox. If that matters, run the agent in one, and keep the keys folder and `~/.keyreeve` out of its reach.
+- **The stand-in is a credential for the proxy.** Any program that gets it can use the key through the proxy while the permission
+  lasts, and any local program can open a plain tunnel through the proxy, which gives it nothing it could not do alone.
+- **The proxy reads that traffic.** It ends TLS for a key's hosts, with a CA made for each run whose key stays in memory. Only commands
+  started by `use` are pointed at that CA. The system's own trust store is never touched.
+- **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a
+  stand-in, and a reply is scrubbed, including across chunks. A provider that compresses a reply it was asked not to compress is not scrubbed.
+- **`--real` is the real key.** A fingerprint is asked each time, and from there it is in the command's hands. So is the MCP server's
+  `run_with_key` and `env`, which give the real value to the program they run.
+- **An SSH permission lets anything running as you log in.** The key stays in `ssh-agent`, out of reach through the door, and no signature is made for
+  anything but a login. While a permission lasts, any program of yours that finds the socket can use it to log in. The server check holds for a real
+  `ssh`, which names its server truthfully. A program that speaks the protocol itself can name a server key of its own, and the agent accepts that as long as the
+  signature matches, so it can take the free first server under an invented name, or trigger a prompt with the wrong fingerprint, while logging in somewhere else.
+  The log then shows that invented fingerprint. Listing `servers` in `keys.toml` removes the free one, so only a prompt with a fingerprint you do not recognize is left.
+- **A passphrase passes through a dialog.** It goes from a system dialog to `ssh-add` over a pipe, and any program running as you could show a dialog that looks the same.
+- **An SSH key sits in a system process.** `ssh-agent` holds it opened until the permission ends, at the limit given to `ssh-add`. If the service is killed the agent stays with
+  the key until that limit or until the service starts again. A login already open keeps working after the permission ends.
+- **The usage log shows who, not proof of who.** A process and its parents come from the system. An agent can start a command through
+  something else, and everything under your user looks alike. It can also rewrite the log and its hashes.
+- **An env file's references name your keys.** `keyreeve://` holds no value, but it says which keys exist.
+- **A key you paste by hand** passes through the app's memory on its way to the vault, and Swift strings are not wiped.
+- **A single rotation cannot be undone.** A provider that ends the old key at once leaves you with whatever comes back. If the
+  answer is lost, or the new key fails, you make another at its page.
 
 ## Known limits of the simulator
 
 It tests the engine against a fake built from the recipe, so it cannot catch a recipe that is wrong
 about the real provider. It also assumes a new key works as soon as it is created. A provider that
 takes time to activate a key would fail `verify` and roll back, and there are no retries yet.
+No rotation has run against a real provider yet.

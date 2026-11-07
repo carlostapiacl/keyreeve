@@ -4,6 +4,7 @@ name: GitHub deploy key
 dashboard: https://github.com/settings/keys
 rotate_every_days: 365
 criticality_hint: 3
+tested: { check: 2026-11 }
 hosts: [github.com]
 # An SSH key. GitHub answers with the repository or account it belongs to.
 auth: { type: ssh, user: git, reply_between: ["Hi ", "!"] }

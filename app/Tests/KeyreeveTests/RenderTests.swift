@@ -140,10 +140,31 @@ struct RenderTests {
             ready.usage.brokenLine = 3
             try render(UsageLogSheet(model: ready), named: "usage-log-\(code)", appearance: .aqua)
             ready.usage.brokenLine = nil
-            ready.agentPolicy = AgentPolicy(commands: ["vps": ["/Users/a/.keyreeve/agent-tools/check-hosting.sh"]])
+            ready.keyIndex = KeyIndex(keys: [
+                KeyIndex.Key(id: "vps", source: "old-cloud.csv", provider: KeyService.sshProvider),
+                KeyIndex.Key(id: "hosting", source: "hosting-readonly.txt", provider: "hosting", variable: "HOSTING_TOKEN"),
+                KeyIndex.Key(id: "legacy", source: "notes/legacy-mail.txt"),
+            ])
+            ready.items[1].vault = .sealed
+            ready.items[3].originalMoved = true
+            ready.agentPolicy = AgentPolicy(
+                commands: ["legacy": ["/Users/a/.keyreeve/agent-tools/check-mail.sh"]], levels: ["hosting": .free, "vps": .ask],
+                agents: ["vps": ["claude"]], hashes: ["/Users/a/.keyreeve/agent-tools/check-mail.sh": "abc"])
+            let runs = AgentTranscript(url: ready.files.directory.appendingPathComponent(AgentTranscript.fileName))
+            try? FileManager.default.createDirectory(at: ready.files.directory, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: runs.url)
+            runs.append(AgentTranscript.Entry(
+                at: Date(timeIntervalSince1970: 1_793_900_000), agent: "claude", key: "hosting", command: "curl -s https://api.hosting.example/v1/sites",
+                reason: "list the sites before deploying", exit: 0, output: "{\"sites\":[{\"name\":\"blog\"}]}", milliseconds: 412))
+            runs.append(AgentTranscript.Entry(
+                at: Date(timeIntervalSince1970: 1_793_900_060), agent: "codex", key: "vps", command: "ssh root@203.0.113.7 uptime", reason: "check the server",
+                exit: 255, output: "Permission denied (publickey).", milliseconds: 1830))
             try render(MainView(model: ready, initial: .agents), named: "agents-\(code)", appearance: .aqua)
             try render(MainView(model: ready, initial: .agents), named: "agents-dark-\(code)", appearance: .darkAqua)
-            try render(AllowAgentSheet(model: ready).background(Theme.background), named: "agents-allow-\(code)", appearance: .aqua)
+            try render(
+                VStack(alignment: .leading, spacing: 10) { ForEach(Array(runs.entries().enumerated()), id: \.offset) { TerminalRow(run: $0.element) } }
+                    .padding(24).frame(width: 700).background(Theme.background),
+                named: "agents-terminal-\(code)", appearance: .darkAqua)
         }
     }
 }

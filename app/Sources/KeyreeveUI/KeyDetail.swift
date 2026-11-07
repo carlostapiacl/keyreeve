@@ -38,7 +38,7 @@ struct KeyDetail: View {
                 if item.isSecret { checkPlace }
                 fact(T("Who can use it")) {
                     Picker("", selection: levelBinding) {
-                        Text(T("Agents can use it")).tag("free")
+                        Text(T("Checked without asking")).tag("free")
                         Text(T("Ask me each time")).tag("ask")
                         Text(T("Only me")).tag("never")
                         Text(T("Not secret")).tag("none")

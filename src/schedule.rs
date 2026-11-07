@@ -38,7 +38,7 @@ pub fn rows(home: &Path) -> Result<Vec<catalog::Row>, String> {
     Ok(catalog::build(&items, &rules, &history))
 }
 
-/// Which keys this check may touch. Only those you set to "agents can use it", which is the same
+/// Which keys this check may touch. Only those you set to "checked without asking", which is the same
 /// promise: no fingerprint.
 pub fn eligible(rows: &[catalog::Row]) -> Vec<&catalog::Row> {
     rows.iter()

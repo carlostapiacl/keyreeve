@@ -7,14 +7,9 @@ import SwiftUI
 struct AgentsView: View {
     @ObservedObject var model: AppModel
     @State private var connection = AgentConnection.none
-    @State private var adding = false
-
-    private var allowed: [(key: String, programs: [String])] {
-        model.agentPolicy.commands.keys.sorted().compactMap { key in
-            let programs = model.agentPolicy.commands[key] ?? []
-            return programs.isEmpty ? nil : (key, programs)
-        }
-    }
+    @State private var runs: [AgentTranscript.Entry] = []
+    /// Read again while this is on screen, off the main thread, so the window stays live and quick.
+    private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     private static let agentEvents: Set<String> = ["granted", "used", "denied", "refused", "handed", "closed", "request", "signed"]
     private var recent: [AuditLog.Entry] {
@@ -24,12 +19,13 @@ struct AgentsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text(T("An agent asks keyreeve to run a program with a key and says why. You allow the pair here. When it asks, you choose once or for 1 to 24 hours, then confirm with your finger. The agent never sees the value."))
+                Text(T("An agent asks keyreeve to run a command with a key and says why. The command gets a stand-in, and the real key only travels to the key's provider. The agent never sees the value."))
                     .font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 connectionCard
                 allowedCard
                 if !model.usage.grants.isEmpty { openCard }
+                terminalCard
                 activityCard
             }
             .padding(Theme.pagePadding)
@@ -38,8 +34,9 @@ struct AgentsView: View {
         .onAppear {
             connection = AgentConnection.read()
             model.reloadUsage()
+            loadRuns()
         }
-        .sheet(isPresented: $adding) { AllowAgentSheet(model: model) }
+        .onReceive(ticker) { _ in loadRuns() }
     }
 
     private var connectionCard: some View {
@@ -75,40 +72,24 @@ struct AgentsView: View {
 
     private var allowedCard: some View {
         Card {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     SectionTitle(T("2. What agents may use"))
                     Spacer()
                     Button(T("Make them ask again")) { model.endAgentApprovals() }
                         .buttonStyle(KRButtonStyle())
                         .help(T("Ends what you allowed for 1 to 24 hours. Locking the app does the same."))
-                    Button(T("Allow a key…")) { adding = true }
-                        .buttonStyle(KRButtonStyle(primary: true))
-                        .disabled(model.agentKeys.isEmpty)
                 }
+                Text(T("Only me: no agent. Ask: you choose once or for some hours, then your finger. Free: your finger once, then no questions until you lock the app."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
                 if model.agentKeys.isEmpty {
                     Text(T("Only sealed keys can be given to agents. Seal one in Vault first."))
                         .font(Theme.caption).foregroundStyle(Theme.muted)
-                } else if allowed.isEmpty {
-                    Text(T("Nothing yet. An agent that asks gets told no key is allowed."))
-                        .font(Theme.caption).foregroundStyle(Theme.muted)
                 }
-                ForEach(allowed, id: \.key) { entry in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.key).font(Theme.rowTitle).foregroundStyle(Theme.text)
-                        ForEach(entry.programs, id: \.self) { program in
-                            HStack(spacing: 6) {
-                                Image(systemName: "terminal").foregroundStyle(Theme.muted)
-                                Text(URL(fileURLWithPath: program).lastPathComponent)
-                                    .font(Theme.code).foregroundStyle(Theme.text).lineLimit(1)
-                                    .help(program)
-                                Spacer(minLength: 4)
-                                Button(T("Remove")) { model.disallow(program: program, keyID: entry.key) }
-                                    .buttonStyle(KRButtonStyle())
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
+                ForEach(model.agentKeys) { key in
+                    AgentKeyRow(key: key, model: model)
+                    Divider()
                 }
                 if model.sealedWithoutIdentifier > 0 {
                     HStack {
@@ -120,6 +101,30 @@ struct AgentsView: View {
                         Button(T("Give them identifiers")) { model.assignIdentifiers() }.buttonStyle(KRButtonStyle())
                     }
                 }
+            }
+            .padding(14)
+        }
+    }
+
+    private func loadRuns() {
+        let transcript = AgentTranscript(url: model.files.directory.appendingPathComponent(AgentTranscript.fileName))
+        Task.detached(priority: .utility) {
+            let latest = transcript.entries(limit: 30)
+            await MainActor.run { if latest != runs { runs = latest } }
+        }
+    }
+
+    private var terminalCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionTitle(T("Agent terminal"))
+                Text(T("Each command an agent ran with a key, and what came back. The key and its stand-in never appear here."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if runs.isEmpty {
+                    Text(T("No agent has run a command with a key yet.")).font(Theme.caption).foregroundStyle(Theme.muted)
+                }
+                ForEach(Array(runs.enumerated()), id: \.offset) { _, run in TerminalRow(run: run) }
             }
             .padding(14)
         }
@@ -161,55 +166,106 @@ struct AgentsView: View {
     }
 }
 
-/// Picks a sealed key and a program, then allows the pair.
-struct AllowAgentSheet: View {
+/// One key: who may use it, and how they are asked.
+struct AgentKeyRow: View {
+    let key: KeyIndex.Key
     @ObservedObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var key = ""
-    @State private var program = ""
 
-    private var chosenKey: KeyIndex.Key? { model.agentKeys.first { $0.id == key } }
+    private var level: AgentPolicy.Level? { model.agentPolicy.levels[key.id] }
+    private var agents: [String] { model.agentPolicy.agents[key.id] ?? [] }
+    private var programs: [String] { model.agentPolicy.commands[key.id] ?? [] }
+    private var usesProxy: Bool { key.provider != nil }
+
+    private var how: String {
+        if key.provider == KeyService.sshProvider { return T("SSH: signs in, the key stays in keyreeve") }
+        if usesProxy { return T("Proxy: the command gets a stand-in") }
+        return T("No provider, so only through a program you choose")
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(T("Allow a key for agents")).font(Theme.section).foregroundStyle(Theme.text)
-            Picker(T("Key"), selection: $key) {
-                ForEach(model.agentKeys) { item in
-                    Text(item.provider.map { "\(item.id) · \($0)" } ?? item.id).tag(item.id)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(key.id).font(Theme.rowTitle).foregroundStyle(Theme.text)
+                    Text(how).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if usesProxy {
+                    Picker(T("Level"), selection: Binding(get: { level }, set: { model.setAgentLevel($0, for: key.id) })) {
+                        Text(T("Only me")).tag(AgentPolicy.Level?.none)
+                        Text(T("Ask")).tag(AgentPolicy.Level?.some(.ask))
+                        Text(T("Free")).tag(AgentPolicy.Level?.some(.free))
+                    }
+                    .labelsHidden().fixedSize()
+                } else {
+                    Text(programs.isEmpty ? T("Only me") : T("Ask")).font(Theme.caption).foregroundStyle(Theme.muted)
+                }
+                Picker(T("Agents"), selection: Binding(get: { agents }, set: { model.setAgents($0, for: key.id) })) {
+                    Text(T("Any agent")).tag([String]())
+                    Text("Claude").tag(["claude"])
+                    Text("Codex").tag(["codex"])
+                    if ![[], ["claude"], ["codex"]].contains(agents) { Text(agents.joined(separator: ", ")).tag(agents) }
+                }
+                .labelsHidden().fixedSize()
+                .disabled(level == nil && programs.isEmpty)
+            }
+            ForEach(programs, id: \.self) { program in
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal").foregroundStyle(Theme.muted)
+                    Text(URL(fileURLWithPath: program).lastPathComponent)
+                        .font(Theme.code).foregroundStyle(Theme.text).lineLimit(1).help(program)
+                    if model.agentPolicy.hashes[program] == nil {
+                        Text(T("allow it again to pin it")).font(Theme.caption).foregroundStyle(Theme.warn)
+                    }
+                    Spacer(minLength: 4)
+                    Button(T("Remove")) { model.disallow(program: program, keyID: key.id) }.buttonStyle(KRButtonStyle())
                 }
             }
-            HStack {
-                Text(program.isEmpty ? T("No program chosen") : URL(fileURLWithPath: program).lastPathComponent)
-                    .font(Theme.code).foregroundStyle(program.isEmpty ? Theme.muted : Theme.text)
-                    .lineLimit(1).truncationMode(.middle).help(program)
-                Spacer()
-                Button(T("Choose a program…")) { model.chooseProgram { program = $0 } }.buttonStyle(KRButtonStyle())
-            }
-            Text(T("Pick a program that does one thing, such as a script that checks or deploys. Shells, curl and similar tools cannot be allowed, since the agent would choose what they do with the key."))
-                .font(Theme.caption).foregroundStyle(Theme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            if !program.isEmpty && AgentPolicy.isNeverAllowed(program) {
-                Text(T("%@ can print or send whatever it gets, so it cannot be allowed.", URL(fileURLWithPath: program).lastPathComponent))
-                    .font(Theme.caption).foregroundStyle(Theme.bad)
-            }
-            if let variable = chosenKey?.variable {
-                Text(T("The agent passes the key in a variable it names. This key's usual one is %@.", variable))
-                    .font(Theme.caption).foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Spacer()
-                Button(T("Cancel")) { dismiss() }.buttonStyle(KRButtonStyle())
-                Button(T("Allow")) {
-                    model.allow(program: program, keyID: key)
-                    dismiss()
-                }
-                .buttonStyle(KRButtonStyle(primary: true))
-                .disabled(key.isEmpty || program.isEmpty || AgentPolicy.isNeverAllowed(program))
+            if !usesProxy || !programs.isEmpty {
+                Button(T("Allow a program…")) { model.chooseProgram { model.allow(program: $0, keyID: key.id) } }
+                    .buttonStyle(KRButtonStyle())
             }
         }
-        .padding(20)
-        .frame(width: 440)
-        .onAppear { if key.isEmpty { key = model.agentKeys.first?.id ?? "" } }
+        .padding(.vertical, 2)
+    }
+}
+
+/// One command an agent ran, as a terminal would show it.
+struct TerminalRow: View {
+    let run: AgentTranscript.Entry
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(run.agent).font(Theme.caption).foregroundStyle(Theme.accent)
+                Text(run.key).font(Theme.caption).foregroundStyle(Theme.muted)
+                Text(run.reason).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                Text(T("exit %d", Int(run.exit))).font(Theme.code).foregroundStyle(run.exit == 0 ? Theme.good : Theme.bad)
+                Text("\(run.milliseconds) ms").font(Theme.caption).foregroundStyle(Theme.faint)
+                Text(run.at, format: .dateTime.day().month().hour().minute().second())
+                    .font(Theme.caption).foregroundStyle(Theme.faint)
+            }
+            Button {
+                expanded.toggle()
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("$ " + run.command).font(Theme.code).foregroundStyle(Theme.text)
+                        .lineLimit(expanded ? nil : 1).truncationMode(.middle)
+                    if !run.output.isEmpty {
+                        Text(run.output).font(Theme.code).foregroundStyle(Theme.muted)
+                            .lineLimit(expanded ? 40 : 2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: Theme.smallRadius).fill(Theme.raised))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .textSelection(.enabled)
+            .help(expanded ? T("Show less") : T("Show all"))
+        }
     }
 }

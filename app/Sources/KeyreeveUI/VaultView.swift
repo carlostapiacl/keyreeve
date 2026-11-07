@@ -203,7 +203,7 @@ struct VaultView: View {
 
     private var agentsCard: some View {
         let count = sealed.filter { item in
-            model.keyIndex.keys(forSource: item.path).contains { !(model.agentPolicy.commands[$0.id] ?? []).isEmpty }
+            model.keyIndex.keys(forSource: item.path).contains { model.agentPolicy.level(of: $0.id) != nil }
         }.count
         return Card {
             VStack(alignment: .leading, spacing: 8) {

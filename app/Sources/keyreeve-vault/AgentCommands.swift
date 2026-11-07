@@ -54,6 +54,9 @@ func runWithEnv() throws {
 
 func serveAgents() throws {
     let policyFile = home.appendingPathComponent(AgentPolicy.fileName)
+    // This server's parent is the agent that started it. The tree is the system's word, not the agent's.
+    let observed = CallerIdentity.observe(pid: getpid())
+    let agent = AgentBridge.agentName(chain: observed.chain)
     func indexed(_ id: String) throws -> KeyIndex.Key {
         guard let key = try KeyIndex.load(from: keysFile).key(id) else { throw VaultError("no key is called \(id)") }
         return key
@@ -76,7 +79,19 @@ func serveAgents() throws {
             store.recordUse(of: $0, by: "agent:\(program)", reason: $2)
         },
         approve: askApproval,
-        endedAt: { AgentBridge.endedAt(home: home) })
+        endedAt: { AgentBridge.endedAt(home: home) },
+        agent: agent,
+        service: askService,
+        log: { event, key, detail, reason in
+            try? auditLog.append(
+                event: event, key: key, observed: observed,
+                declared: AuditLog.Declared(agent: agent, reason: reason), detail: detail)
+        },
+        describe: {
+            let keys = (try? KeyIndex.load(from: keysFile).keys) ?? []
+            return Dictionary(keys.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        },
+        transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) })
     while let line = readLine() {
         if let answer = bridge.handle(line) {
             FileHandle.standardOutput.write(Data((answer + "\n").utf8))
@@ -100,9 +115,10 @@ func askApproval(_ request: AgentRequest) -> AgentApproval? {
         ? "Un agente quiere usar la clave \(request.key)"
         : "An agent wants to use the key \(request.key)"
     let said = request.reason.isEmpty ? "-" : "\u{201C}\(request.reason)\u{201D}"
+    let command = request.command.isEmpty ? request.program : request.command
     alert.informativeText = spanish
-        ? "Programa: \(request.program)\n\nLo que dice el agente, en sus palabras:\n\(said)\n\nDespués te pide la huella. Lo que permitas por un tiempo vale solo para este programa en esta sesión del agente, y termina al bloquear la app."
-        : "Program: \(request.program)\n\nWhat the agent says, in its own words:\n\(said)\n\nYour fingerprint comes next. A yes for a while covers only this program in this agent session, and ends when you lock the app."
+        ? "Comando:\n\(command)\n\nLo que dice el agente, en sus palabras:\n\(said)\n\nDespués te pide la huella. Si eliges horas, vale para \(request.program) con esta clave hasta que pase el tiempo o bloquees la app."
+        : "Command:\n\(command)\n\nWhat the agent says, in its own words:\n\(said)\n\nYour fingerprint comes next. Hours cover \(request.program) with this key until the time is up or you lock the app."
     for choice in AgentApproval.choices {
         alert.addButton(withTitle: labels[choice.label] ?? choice.label)
     }

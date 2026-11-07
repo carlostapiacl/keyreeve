@@ -208,8 +208,29 @@ extension AppModel {
             message = T("%@ can print or send whatever it gets, so it cannot be allowed.", URL(fileURLWithPath: program).lastPathComponent)
             return
         }
+        guard let hash = AgentPolicy.fingerprint(of: program) else {
+            message = T("That program could not be read")
+            return
+        }
         var policy = agentPolicy
         if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
+        // Pinned as it is now: if it changes, agents cannot run it until you allow it again.
+        policy.hashes[program] = hash
+        savePolicy(policy)
+    }
+
+    /// How agents may use a key: nil keeps it yours alone.
+    public func setAgentLevel(_ level: AgentPolicy.Level?, for id: String) {
+        var policy = agentPolicy
+        policy.levels[id] = level
+        if level == nil { policy.agents[id] = nil }
+        savePolicy(policy)
+    }
+
+    /// Which agents may use a key. Empty means any.
+    public func setAgents(_ agents: [String], for id: String) {
+        var policy = agentPolicy
+        policy.agents[id] = agents.isEmpty ? nil : agents
         savePolicy(policy)
     }
 

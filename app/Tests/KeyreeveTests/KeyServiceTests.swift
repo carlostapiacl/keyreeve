@@ -337,6 +337,21 @@ struct KeyServiceTests {
         #expect(f.prompts == ["run netlify with the key netlify (mi-cuenta)", "run netlify with the key mail"])
     }
 
+    @Test func testAFreeKeyCoversEveryProgramAndOneGrantEndsAlone() throws {
+        let f = Fixture()
+        let first = f.service.handle(
+            .init(op: "use", key: "netlify", seconds: KeyService.maxSeconds, program: "/usr/bin/curl", agent: "claude", anyProgram: true),
+            caller: f.caller)
+        #expect(first.ok && first.grant != nil)
+        #expect(f.use("netlify", "/usr/local/bin/netlify").grant == first.grant)
+        #expect(f.prompts.count == 1)
+        let mail = f.use("mail")
+        // Ending one permission by its id leaves the others.
+        _ = f.service.handle(.init(op: "revoke", key: "netlify", grant: first.grant), caller: f.caller)
+        let left = f.service.handle(.init(op: "grants"), caller: f.caller).grants ?? []
+        #expect(left.map(\.id) == [mail.grant].compactMap { $0 })
+    }
+
     @Test func testAPermissionForOneProgramDoesNotCoverAnother() throws {
         let f = Fixture()
         _ = f.use("netlify")

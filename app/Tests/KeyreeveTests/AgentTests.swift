@@ -5,6 +5,11 @@ import Testing
 struct AgentTests {
     static let canary = "CANARY-value-0123456789"
 
+    /// Programs allowed the way the app allows them, with a pin, which these tests accept.
+    static func pinnedPolicy(_ commands: [String: [String]]) -> AgentPolicy {
+        AgentPolicy(commands: commands, hashes: Dictionary(commands.values.flatMap { $0 }.map { ($0, "pin") }, uniquingKeysWith: { a, _ in a }))
+    }
+
     final class Log: @unchecked Sendable {
         var opened: [String] = []
         var prompts: [String] = []
@@ -14,7 +19,7 @@ struct AgentTests {
 
     func bridge(_ log: Log, output: String = "done", commands: [String: [String]] = ["a.env": ["deploy.sh"]]) -> AgentBridge {
         AgentBridge(
-            policy: AgentPolicy(commands: commands),
+            policy: Self.pinnedPolicy(commands),
             names: { ["a.env", "other.env"] },
             open: { key, prompt in
                 log.opened.append(key)
@@ -25,7 +30,8 @@ struct AgentTests {
                 log.ran.append(command)
                 return AgentBridge.Output(status: 0, text: output)
             },
-            record: { key, program, reason in log.recorded.append("\(key) \(program) \(reason)") })
+            record: { key, program, reason in log.recorded.append("\(key) \(program) \(reason)") },
+            pinned: { _, _ in true })
     }
 
     func call(_ bridge: AgentBridge, _ name: String, _ arguments: [String: Any]) throws -> (text: String, error: Bool) {
@@ -62,11 +68,11 @@ struct AgentTests {
             policy: { box.policy }, names: { ["a.env"] },
             open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
             run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
-            record: { _, _, _ in })
+            record: { _, _, _ in }, pinned: { _, _ in true })
         #expect(try call(live, "list_keys", [:]).text == "No key is allowed for agents yet.")
         #expect(try call(live, "run_with_key", run).error)
-        box.policy = AgentPolicy(commands: ["a.env": ["deploy.sh"]])
-        #expect(try call(live, "list_keys", [:]).text == "a.env: deploy.sh")
+        box.policy = Self.pinnedPolicy(["a.env": ["deploy.sh"]])
+        #expect(try call(live, "list_keys", [:]).text == "a.env: asks the person; run_with_key with deploy.sh")
         #expect(!(try call(live, "run_with_key", run).error))
         // Taking it away also counts before the next use, and no finger is asked.
         box.policy = AgentPolicy()
@@ -83,7 +89,7 @@ struct AgentTests {
 
     func approving(_ log: Log, _ clock: Clock) -> AgentBridge {
         AgentBridge(
-            policy: { AgentPolicy(commands: ["a.env": ["deploy.sh", "check.sh"]]) }, names: { ["a.env"] },
+            policy: { Self.pinnedPolicy(["a.env": ["deploy.sh", "check.sh"]]) }, names: { ["a.env"] },
             open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
             run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
             record: { key, _, _ in log.recorded.append(key) },
@@ -91,7 +97,7 @@ struct AgentTests {
                 clock.asked.append(request)
                 return clock.answers.isEmpty ? nil : clock.answers.removeFirst()
             },
-            endedAt: { clock.ended }, now: { clock.now })
+            endedAt: { clock.ended }, now: { clock.now }, pinned: { _, _ in true })
     }
 
     @Test func testOnceAsksEachTimeAndANoOpensNothing() throws {
@@ -188,7 +194,7 @@ struct AgentTests {
     @Test func testListingHoldsNoValue() throws {
         let log = Log()
         let text = try call(bridge(log), "list_keys", [:]).text
-        #expect(text == "a.env: deploy.sh")
+        #expect(text == "a.env: asks the person; run_with_key with deploy.sh")
         #expect(log.opened.isEmpty)
     }
 
@@ -295,7 +301,7 @@ struct AgentTests {
             #expect(log.opened.isEmpty)
         }
         let listed = try call(bridge(Log(), commands: ["a.env": ["/bin/sh", "/opt/deploy"]]), "list_keys", [:]).text
-        #expect(listed == "a.env: /opt/deploy")
+        #expect(listed == "a.env: asks the person; run_with_key with /opt/deploy")
     }
 
     @Test func testFieldsFromOtherShapesOfFile() throws {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Reads `keyreeve://name` references from an env file, so a repository or an agent's working folder
@@ -70,14 +71,52 @@ public enum EnvReferences {
     }
 }
 
-/// Which programs an agent may run with which keys, written by a person, in `agents.toml`. Empty means
-/// nothing, so an agent gets no key until someone says so. Each use still asks for a fingerprint.
+/// What agents may do with each key, written by a person in `agents.toml`. A key that is not listed is
+/// yours alone, so an agent gets nothing until someone says so.
 public struct AgentPolicy: Equatable, Sendable {
-    public var commands: [String: [String]]
+    /// How an agent's request is answered.
+    public enum Level: String, Equatable, Sendable, CaseIterable {
+        /// You choose once or for some hours, then confirm with your finger.
+        case ask
+        /// One fingerprint, then no more questions until you lock the app.
+        case free
+    }
 
-    public init(commands: [String: [String]] = [:]) { self.commands = commands }
+    /// Programs allowed to receive the key itself, for what the proxy cannot do.
+    public var commands: [String: [String]]
+    /// Keys open to agents through the proxy, and how. A key with programs and no level is `ask`.
+    public var levels: [String: Level]
+    /// The agents a key is limited to. Missing or empty means any agent.
+    public var agents: [String: [String]]
+    /// Each allowed program's SHA-256, taken when a person allowed it. A program that changed since is refused.
+    public var hashes: [String: String]
+
+    public init(
+        commands: [String: [String]] = [:], levels: [String: Level] = [:], agents: [String: [String]] = [:],
+        hashes: [String: String] = [:]
+    ) {
+        self.commands = commands
+        self.levels = levels
+        self.agents = agents
+        self.hashes = hashes
+    }
 
     public static let fileName = "agents.toml"
+
+    /// The level for a key, or nil when agents cannot use it.
+    public func level(of key: String) -> Level? {
+        levels[key] ?? ((commands[key] ?? []).isEmpty ? nil : .ask)
+    }
+
+    /// Every key open to agents in some way.
+    public var keys: [String] {
+        Set(levels.keys).union(commands.filter { !$0.value.isEmpty }.keys).sorted()
+    }
+
+    public func admits(agent: String, for key: String) -> Bool {
+        let limited = agents[key] ?? []
+        return limited.isEmpty || limited.contains(agent)
+    }
 
     /// A program that does whatever its arguments say, or prints what it is given. Since the agent
     /// chooses the arguments, allowing one of these would hand it the key.
@@ -91,6 +130,12 @@ public struct AgentPolicy: Equatable, Sendable {
         neverAllowed.contains(URL(fileURLWithPath: program).lastPathComponent.lowercased())
     }
 
+    /// The SHA-256 of a program's file, in hex, or nil if it cannot be read.
+    public static func fingerprint(of path: String) -> String? {
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// A file that cannot be read allows nothing, so a typo never widens what an agent can do.
     public static func load(from url: URL) -> AgentPolicy {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return AgentPolicy() }
@@ -102,57 +147,85 @@ public struct AgentPolicy: Equatable, Sendable {
         !Self.isNeverAllowed(program) && (commands[key]?.contains(program) ?? false)
     }
 
-    /// Reads the part of TOML this file uses: `[[allow]]` tables with a `key` and a list of `programs`.
-    /// Anything else is an error, and not something to guess at.
+    /// Reads the part of TOML this file uses: `[[key]]` tables, and the older `[[allow]]` ones. Anything
+    /// else is an error, and not something to guess at.
     public static func parse(_ text: String) throws -> AgentPolicy {
-        var commands: [String: [String]] = [:]
+        var policy = AgentPolicy()
         var key: String?
         var programs: [String]?
-        func finish() throws {
-            guard key != nil || programs != nil else { return }
-            guard let key, let programs else { throw VaultError("each [[allow]] needs a key and programs") }
-            commands[key, default: []] += programs
+        var hashes: [String]?
+        var level: Level?
+        var agents: [String]?
+        var table: String?
+        func finish(_ bad: VaultError) throws {
+            guard let table else { return }
+            guard let key else { throw VaultError("each [[\(table)]] needs a key") }
+            if table == "allow" && programs == nil { throw VaultError("each [[allow]] needs a key and programs") }
+            if let hashes {
+                guard hashes.count == (programs ?? []).count else { throw bad }
+                for (program, hash) in zip(programs ?? [], hashes) where !hash.isEmpty { policy.hashes[program] = hash }
+            }
+            if let programs { policy.commands[key, default: []] += programs }
+            if let level { policy.levels[key] = level }
+            if let agents, !agents.isEmpty { policy.agents[key] = agents }
         }
-        var inTable = false
         for (index, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
             let bad = VaultError("agents.toml, line \(index + 1), is not something this reads")
             if line.isEmpty || line.hasPrefix("#") { continue }
-            if line == "[[allow]]" {
-                try finish()
-                key = nil
-                programs = nil
-                inTable = true
+            if line == "[[allow]]" || line == "[[key]]" {
+                try finish(bad)
+                key = nil; programs = nil; hashes = nil; level = nil; agents = nil
+                table = line == "[[allow]]" ? "allow" : "key"
                 continue
             }
-            guard inTable, let equals = line.firstIndex(of: "=") else { throw bad }
+            guard let table, let equals = line.firstIndex(of: "=") else { throw bad }
             let name = line[..<equals].trimmingCharacters(in: .whitespaces)
             var scanner = TomlScanner(text: String(line[line.index(after: equals)...]))
-            switch name {
-            case "key":
+            switch (table, name) {
+            case (_, "key"):
                 guard key == nil else { throw bad }
                 key = try scanner.string(bad)
-            case "programs":
+            case (_, "programs"):
                 guard programs == nil else { throw bad }
                 programs = try scanner.list(bad)
+            case ("key", "hashes"):
+                guard hashes == nil else { throw bad }
+                hashes = try scanner.list(bad)
+            case ("key", "level"):
+                guard level == nil, let parsed = Level(rawValue: try scanner.string(bad)) else { throw bad }
+                level = parsed
+            case ("key", "agents"):
+                guard agents == nil else { throw bad }
+                agents = try scanner.list(bad)
             default:
                 throw bad
             }
             try scanner.end(bad)
         }
-        try finish()
-        return AgentPolicy(commands: commands)
+        try finish(VaultError("agents.toml does not hold together"))
+        return policy
     }
 
     public var toml: String {
         var out = """
-            # Which programs an agent may run with each key in your vault. Each use asks for your fingerprint.
-            # The agent chooses the arguments, so allow programs that do one job and never print what they get.
+            # What agents may do with each key in your vault. A key that is not here is yours alone.
+            # level = "ask" asks you each time, once or for some hours; "free" asks once, until you lock the app.
+            # agents limits a key to some agents, such as ["claude"]. programs receive the key itself, and each
+            # is pinned by its SHA-256 in hashes, so a program that changed is refused.
 
             """
-        for key in commands.keys.sorted() where !(commands[key] ?? []).isEmpty {
-            let list = (commands[key] ?? []).map(Self.quoted).joined(separator: ", ")
-            out += "\n[[allow]]\nkey = \(Self.quoted(key))\nprograms = [\(list)]\n"
+        for key in keys {
+            out += "\n[[key]]\nkey = \(Self.quoted(key))\n"
+            if let level = levels[key] { out += "level = \(Self.quoted(level.rawValue))\n" }
+            if let limited = agents[key], !limited.isEmpty {
+                out += "agents = [\(limited.map(Self.quoted).joined(separator: ", "))]\n"
+            }
+            let programs = commands[key] ?? []
+            if !programs.isEmpty {
+                out += "programs = [\(programs.map(Self.quoted).joined(separator: ", "))]\n"
+                out += "hashes = [\(programs.map { Self.quoted(hashes[$0] ?? "") }.joined(separator: ", "))]\n"
+            }
         }
         return out
     }
@@ -166,12 +239,26 @@ public struct AgentRequest: Equatable, Sendable {
     public let key: String
     public let program: String
     public let reason: String
+    /// The whole command, as the agent sent it, on one line and cut.
+    public let command: String
 
-    public init(key: String, program: String, reason: String) {
+    public init(key: String, program: String, reason: String, command: [String] = []) {
         self.key = key
         self.program = URL(fileURLWithPath: program).lastPathComponent
-        let flat = String(reason.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
-        self.reason = String(flat.trimmingCharacters(in: .whitespaces).prefix(200))
+        self.reason = String(Self.oneLine(reason).prefix(200))
+        self.command = String(Self.oneLine(Self.shown(command)).prefix(300))
+    }
+
+    static func oneLine(_ text: String) -> String {
+        String(text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A command as a person would type it, with quotes where a word needs them.
+    public static func shown(_ command: [String]) -> String {
+        command.map { word in
+            word.isEmpty || word.contains(where: { " \"'$`\\".contains($0) }) ? "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'" : word
+        }.joined(separator: " ")
     }
 }
 
@@ -233,15 +320,29 @@ public struct AgentBridge {
     /// When the person last ended every approval, if ever.
     let endedAt: () -> Date?
     let now: () -> Date
+    /// Who started this server, as the process tree says: `claude`, `codex`, or the program's name.
+    let agent: String
+    /// The key service, which opens keys with a fingerprint and holds them behind the proxy.
+    let service: ((KeyService.Request) throws -> KeyService.Response)?
+    let runPrepared: (_ environment: UseEnvironment) throws -> Output
+    /// Writes a line in the usage log for what this server decides on its own.
+    let log: (_ event: String, _ key: String, _ detail: String, _ reason: String?) -> Void
+    /// Whether a program's file still is the one a person allowed.
+    let pinned: (_ program: String, _ hash: String?) -> Bool
+    /// Every key's provider and usual variable, from the identifiers file, read once per listing.
+    let describe: () -> [String: KeyIndex.Key]
+    /// Keeps what ran and what came back, for the person to read.
+    let transcript: (AgentTranscript.Entry) -> Void
     let held = Held()
 
     public init(
         policy: AgentPolicy, names: @escaping () throws -> [String],
         open: @escaping (_ key: String, _ prompt: String) throws -> Data,
         run: @escaping (_ command: [String], _ variable: String, _ value: String) throws -> Output,
-        record: @escaping (_ key: String, _ program: String, _ reason: String) -> Void
+        record: @escaping (_ key: String, _ program: String, _ reason: String) -> Void,
+        pinned: @escaping (_ program: String, _ hash: String?) -> Bool = AgentBridge.matchesPin
     ) {
-        self.init(policy: { policy }, names: names, open: open, run: run, record: record)
+        self.init(policy: { policy }, names: names, open: open, run: run, record: record, pinned: pinned)
     }
 
     public init(
@@ -251,7 +352,14 @@ public struct AgentBridge {
         record: @escaping (_ key: String, _ program: String, _ reason: String) -> Void,
         approve: @escaping (AgentRequest) -> AgentApproval? = { _ in .once },
         endedAt: @escaping () -> Date? = { nil },
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        agent: String = "agent",
+        service: ((KeyService.Request) throws -> KeyService.Response)? = nil,
+        runPrepared: @escaping (_ environment: UseEnvironment) throws -> Output = { try AgentRunner.run($0) },
+        log: @escaping (_ event: String, _ key: String, _ detail: String, _ reason: String?) -> Void = { _, _, _, _ in },
+        pinned: @escaping (_ program: String, _ hash: String?) -> Bool = AgentBridge.matchesPin,
+        describe: @escaping () -> [String: KeyIndex.Key] = { [:] },
+        transcript: @escaping (AgentTranscript.Entry) -> Void = { _ in }
     ) {
         currentPolicy = policy
         self.names = names
@@ -261,6 +369,43 @@ public struct AgentBridge {
         self.approve = approve
         self.endedAt = endedAt
         self.now = now
+        self.agent = agent
+        self.service = service
+        self.runPrepared = runPrepared
+        self.log = log
+        self.pinned = pinned
+        self.describe = describe
+        self.transcript = transcript
+    }
+
+    /// Runs and writes down what ran, with the key and its stand-in taken out of what is kept.
+    private func ran(
+        key: String, command: [String], reason: String, hiding secrets: [String], _ body: () throws -> Output
+    ) throws -> String {
+        let started = Date()
+        let output = try body()
+        var text = output.text
+        for secret in secrets { text = Self.redact(text, value: secret) }
+        let kept = String(decoding: Data(text.utf8).prefix(AgentRunner.maxOutput), as: UTF8.self)
+        transcript(AgentTranscript.Entry(
+            at: started, agent: agent, key: key, command: AgentRequest.shown(command), reason: reason, exit: output.status,
+            output: kept, milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
+        return "exit \(output.status)\n\(kept)"
+    }
+
+    public static func matchesPin(_ program: String, _ hash: String?) -> Bool {
+        guard let hash, !hash.isEmpty else { return false }
+        return AgentPolicy.fingerprint(of: program) == hash
+    }
+
+    /// The agent behind a process chain, which starts with this server.
+    public static func agentName(chain: [String]) -> String {
+        for name in chain.dropFirst() {
+            let lower = name.lowercased()
+            if lower.contains("claude") { return "claude" }
+            if lower.contains("codex") { return "codex" }
+        }
+        return chain.dropFirst().first ?? "agent"
     }
 
     /// The opened key, if the person approved this pair for a while and nothing ended it since.
@@ -317,11 +462,25 @@ public struct AgentBridge {
         case "list_keys":
             let policy = self.policy
             let known = Set(try names())
-            let lines = policy.commands.keys.sorted().filter(known.contains).compactMap { key -> String? in
+            let described = describe()
+            let lines = policy.keys.filter { known.contains($0) && policy.admits(agent: agent, for: $0) }.compactMap { key -> String? in
+                guard let level = policy.level(of: key) else { return nil }
+                var parts = [level == .free ? "free until the person locks the app" : "asks the person"]
+                let info = described[key]
+                if policy.levels[key] != nil {
+                    if info?.provider == KeyService.sshProvider {
+                        parts.append("use_key for ssh, scp, sftp, git or rsync")
+                    } else {
+                        parts.append("use_key with any command" + (info?.variable.map { ", as \($0)" } ?? ""))
+                    }
+                }
                 let programs = (policy.commands[key] ?? []).filter { policy.allows($0, with: key) }
-                return programs.isEmpty ? nil : "\(key): \(programs.joined(separator: ", "))"
+                if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
+                return "\(key): " + parts.joined(separator: "; ")
             }
             return lines.isEmpty ? "No key is allowed for agents yet." : lines.joined(separator: "\n")
+        case "use_key":
+            return try useKey(arguments)
         case "run_with_key":
             return try runWithKey(arguments)
         default:
@@ -336,9 +495,21 @@ public struct AgentBridge {
             let reason = arguments["reason"] as? String, !reason.isEmpty
         else { throw VaultError("this needs key, variable, command and reason") }
         guard Self.isVariableName(variable) else { throw VaultError("that is not a variable name") }
+        let name = URL(fileURLWithPath: program).lastPathComponent
         // Checked first, so a refused request never reaches the person's finger.
+        let policy = self.policy
+        try admit(key, policy: policy, reason: reason)
         guard policy.allows(program, with: key) else {
-            throw VaultError("\(program) is not allowed to use \(key). A person allows it in the app, on that key")
+            log("refused", key, "\(name) is not allowed", reason)
+            throw VaultError("\(name) may not run with \(key). A person allows programs in the app, under Agents")
+        }
+        guard policy.hashes[program] != nil else {
+            log("refused", key, "\(name) was allowed before programs were pinned", reason)
+            throw VaultError("\(name) was allowed before keyreeve pinned programs, so a person has to allow it again in the app")
+        }
+        guard pinned(program, policy.hashes[program]) else {
+            log("refused", key, "\(name) changed since it was allowed", reason)
+            throw VaultError("\(name) changed since a person allowed it, so it is refused until they allow it again")
         }
         let slot = key + "\u{0}" + program
         let sealed: Data
@@ -346,23 +517,98 @@ public struct AgentBridge {
             sealed = opened
         } else {
             // The person sees the request with the agent's reason, set apart, and chooses how long a yes lasts.
-            guard let approval = approve(AgentRequest(key: key, program: program, reason: reason)) else {
-                throw VaultError("the person said no to \(key) for \(URL(fileURLWithPath: program).lastPathComponent)")
+            guard let approval = approve(AgentRequest(key: key, program: program, reason: reason, command: command)) else {
+                log("denied", key, "the person said no to \(name)", reason)
+                throw VaultError("the person said no to \(key) for \(name)")
             }
             // The agent's words stay out of the fingerprint prompt, where they could pose as the app.
-            let prompt = "let an agent run \(URL(fileURLWithPath: program).lastPathComponent) with \(key)"
-            sealed = try open(key, prompt)
+            let prompt = "let an agent run \(name) with \(key)"
+            do {
+                sealed = try open(key, prompt)
+            } catch {
+                log("denied", key, "fingerprint for \(name)", reason)
+                throw error
+            }
             if case .lasting(let seconds) = approval {
                 let start = now()
                 held.entries[slot] = (start, start.addingTimeInterval(seconds), sealed)
+                log("granted", key, "\(Int(seconds)) seconds, \(name)", reason)
+            } else {
+                log("granted", key, "once, \(name)", reason)
             }
         }
         let value = try EnvReferences.value(in: sealed, field: arguments["field"] as? String)
         record(key, program, reason)
-        let output = try run(command, variable, value)
         // Hidden first and cut after, so the cut cannot leave half a key showing.
-        let clean = String(decoding: Data(Self.redact(output.text, value: value).utf8).prefix(AgentRunner.maxOutput), as: UTF8.self)
-        return "exit \(output.status)\n\(clean)"
+        return try ran(key: key, command: command, reason: reason, hiding: [value]) { try run(command, variable, value) }
+    }
+
+    /// Refuses, and writes down, a key that is not open to agents or not to this one.
+    private func admit(_ key: String, policy: AgentPolicy, reason: String) throws {
+        guard policy.level(of: key) != nil else {
+            log("refused", key, "not open to agents", reason)
+            throw VaultError("\(key) is not open to agents. A person opens keys in the app, under Agents")
+        }
+        guard policy.admits(agent: agent, for: key) else {
+            log("refused", key, "not open to \(agent)", reason)
+            throw VaultError("\(key) is not open to \(agent). A person chooses which agents in the app, under Agents")
+        }
+    }
+
+    /// Runs a command with a stand-in for the key. The proxy swaps in the real key only on the way to the
+    /// key's provider, so the command and the agent never hold it.
+    private func useKey(_ arguments: [String: Any]) throws -> String {
+        guard let key = arguments["key"] as? String,
+            let command = arguments["command"] as? [String], let program = command.first, !program.isEmpty,
+            let reason = arguments["reason"] as? String, !reason.isEmpty
+        else { throw VaultError("this needs key, command and reason") }
+        let variable = arguments["variable"] as? String
+        if let variable, !Self.isVariableName(variable) { throw VaultError("that is not a variable name") }
+        let policy = self.policy
+        try admit(key, policy: policy, reason: reason)
+        guard let level = policy.levels[key] else {
+            log("refused", key, "only through allowed programs", reason)
+            throw VaultError("\(key) is open to agents only through run_with_key with an allowed program")
+        }
+        guard let service else { throw VaultError("the key service is not available") }
+        let name = URL(fileURLWithPath: program).lastPathComponent
+        var request = KeyService.Request(
+            op: "use", key: key, program: program, arguments: command.count - 1, agent: agent, reason: reason)
+        var once = false
+        switch level {
+        case .free:
+            // One fingerprint covers every command until the app locks, at most a day.
+            request.anyProgram = true
+            request.seconds = KeyService.maxSeconds
+            request.prompt = "let \(agent) use \(key) until you lock the app"
+        case .ask:
+            let open = (try? service(KeyService.Request(op: "grants")))?.grants ?? []
+            let covered = open.contains { $0.key == key && ($0.program == name || $0.program == KeyService.anyProgram) }
+            if !covered {
+                guard let approval = approve(AgentRequest(key: key, program: program, reason: reason, command: command)) else {
+                    log("denied", key, "the person said no to \(name)", reason)
+                    throw VaultError("the person said no to \(key) for \(name)")
+                }
+                switch approval {
+                case .once:
+                    once = true
+                    request.seconds = Int(AgentRunner.limit) + 30
+                case .lasting(let seconds):
+                    request.seconds = Int(seconds)
+                }
+                request.prompt = "let \(agent) run \(name) with \(key)"
+                    + (once ? "" : " for \(Int(request.seconds ?? 0) / 3600) hours")
+            }
+        }
+        let answer = try service(request)
+        guard answer.ok else { throw VaultError(answer.error ?? "the key could not be used") }
+        defer {
+            if once, let grant = answer.grant { _ = try? service(KeyService.Request(op: "revoke", key: key, grant: grant)) }
+        }
+        let prepared = try UseEnvironment(answer: answer, command: command, variable: variable ?? answer.variable)
+        return try ran(key: key, command: command, reason: reason, hiding: [answer.standIn].compactMap { $0 }) {
+            try runPrepared(prepared)
+        }
     }
 
     /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.
@@ -403,8 +649,23 @@ public struct AgentBridge {
     private static let tools: [[String: Any]] = [
         [
             "name": "list_keys",
-            "description": "List the keys an agent may use and the programs allowed with each. No values.",
+            "description": "List the keys this agent may use, how, and whether the person is asked. No values.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
+        ],
+        [
+            "name": "use_key",
+            "description":
+                "Run a command with a key. The command gets a stand-in in the key's variable, and a local proxy swaps in the real key only for requests to the key's provider, so any command works, including curl. For an SSH key, ssh, scp, sftp, git and rsync sign in through keyreeve. The person may be asked first. The key is never returned.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "key": ["type": "string"],
+                    "command": ["type": "array", "items": ["type": "string"]],
+                    "variable": ["type": "string", "description": "The variable for the stand-in, if not the key's usual one"],
+                    "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
+                ],
+                "required": ["key", "command", "reason"],
+            ],
         ],
         [
             "name": "run_with_key",
@@ -433,6 +694,14 @@ public enum AgentRunner {
     public static func run(
         _ command: [String], variable: String, value: String, limit: TimeInterval = limit
     ) throws -> AgentBridge.Output {
+        var environment = UseEnvironment.plain(command: command)
+        environment.set[variable] = value
+        return try run(environment, keep: value.utf8.count, limit: limit)
+    }
+
+    /// Runs a command prepared by the key service: a stand-in and the proxy, or an SSH socket.
+    public static func run(_ environment: UseEnvironment, keep extra: Int = 0, limit: TimeInterval = limit) throws -> AgentBridge.Output {
+        let command = environment.command
         let process = Process()
         let pipe = Pipe()
         // A program started later must not inherit this, or the output would never end.
@@ -440,14 +709,17 @@ public enum AgentRunner {
         _ = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETFD, FD_CLOEXEC)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = command
-        process.environment = ProcessInfo.processInfo.environment.merging([variable: value]) { _, new in new }
+        process.environment = environment.applied(to: ProcessInfo.processInfo.environment)
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = pipe
         process.standardError = pipe
+        // Told when it ends. waitUntilExit polls a run loop and added tens of milliseconds to each command.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
 
         // Room past the cap, so a key that starts before the cap arrives whole and can be hidden.
-        let keep = maxOutput + value.utf8.count * 2 + 16
+        let keep = maxOutput + extra * 2 + 16
         let collected = Collected()
         let reader = DispatchGroup()
         reader.enter()
@@ -469,7 +741,7 @@ public enum AgentRunner {
             Thread.sleep(forTimeInterval: 1)
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }
-        if finished { process.waitUntilExit() }
+        if finished { exited.wait() }
         let status: Int32 = finished ? process.terminationStatus : -1
         return AgentBridge.Output(status: status, text: String(decoding: collected.data, as: UTF8.self))
     }

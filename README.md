@@ -126,7 +126,7 @@ open app/dist/Keyreeve.app
 ```
 
 Check all sends each key to its own provider, at most six at a time, with progress and a summary. In Settings you can
-also check keys set to "Agents can use it" every week, which needs no fingerprint and notifies you if one stops working. It
+also check keys set to "Checked without asking" every week, which needs no fingerprint and notifies you if one stops working. It
 reads files, so a key whose original left the folder is skipped, and you check it from the app.
 
 The first time, choose your keys folder. No Terminal is needed after building. The app scans the folder each time it
@@ -337,17 +337,25 @@ keyreeve-vault env app.env -- ./deploy.sh
 One fingerprint opens them all for that command.
 
 An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. The app's **Agents** section shows
-whether Claude Code is connected and copies the command that connects it in every folder. An agent can list the keys it may use and
-run a program with one, and no tool returns a value. Nothing is allowed until you press **Allow a key…** there, or **Allow a program**
-on a key, which writes `~/.keyreeve/agents.toml` ([example](examples/agents.toml)). The server reads that file on each request, so a
-change counts without restarting the agent. A file with a mistake allows nothing.
+whether Claude Code is connected, copies the command that connects it in every folder, and lists each sealed key with two choices:
 
-When an agent asks, a window shows the key, the program and the agent's reason in its own words. You choose **Once**, or 1, 4, 8 or
-24 hours, or **Deny**, and then confirm with your finger. A yes for hours covers that program and key in that agent session alone, and
-ends when you lock the app, run `keyreeve-vault revoke` or press **Make them ask again**. The reason also goes in the usage log.
+- **Level.** *Only me*, the default, keeps agents out. *Ask* shows a window with the key, the command and the agent's reason in its
+  own words, where you choose **Once**, 1, 4, 8 or 24 hours, or **Deny**, then confirm with your finger. *Free* asks for your finger
+  once, then covers any command until you lock the app.
+- **Agents.** Any agent, or only Claude or only Codex. The agent is named from the process that started the server, which is a strong
+  hint and not proof, since everything runs as you.
 
-The agent chooses the arguments, so allow programs that do one job. Shells, interpreters, `curl`, `env` and others like them cannot
-be allowed at all. The output hides the plain key and its base64, but a program can hide it in other ways. A run stops after 2 minutes.
+The agent's `use_key` tool runs a command with a stand-in for the key, through the proxy described above, so any command works,
+including `curl`, and the real key only reaches the key's provider. An SSH key signs in through keyreeve. A key with no provider can
+only go to a program you allow, which gets the real key in a variable and is pinned by its SHA-256: if the file changes, it is refused
+until you allow it again. Shells, interpreters, `curl`, `env` and others like them cannot be allowed that way. A run stops after
+2 minutes, and its output never shows the key or the stand-in.
+
+Locking the app, `keyreeve-vault revoke` or **Make them ask again** end every permission given to agents. The choices live in
+`~/.keyreeve/agents.toml` ([example](examples/agents.toml)), which the server reads on each request, so a change counts without
+restarting the agent. A file with a mistake allows nothing. Every yes, no and refusal goes in the usage log with the agent's reason.
+The window shows the whole command before you choose, and **Agent terminal** in the same section shows each command an agent ran with a
+key, its exit code, how long it took and the first 2,000 characters of what came back, kept in `~/.keyreeve/agent-runs.jsonl`.
 
 **Copy the key**, on a sealed key in the app, puts it on the clipboard after your fingerprint. It is marked so clipboard history tools
 skip it, and it leaves after 60 seconds, or when you lock the app, unless you copied something else by then.

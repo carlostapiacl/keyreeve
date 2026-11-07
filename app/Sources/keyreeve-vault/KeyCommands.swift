@@ -41,42 +41,18 @@ func useKey() throws {
             agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
             reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal))
     guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
-    if let socket = answer.sshSocket {
-        setenv("SSH_AUTH_SOCK", socket, 1)
-        var running = command
-        if let identity = answer.sshIdentity {
-            running = SSHCommand.arguments(for: command, socket: socket, identity: identity)
-            for (name, value) in SSHCommand.variables(socket: socket, identity: identity) { setenv(name, value, 0) }
-        }
-        var pointers: [UnsafeMutablePointer<CChar>?] = running.map { strdup($0) } + [nil]
-        execvp(command[0], &pointers)
-        fail("could not run \(command[0])")
+    let prepared: UseEnvironment
+    do {
+        prepared = try UseEnvironment(answer: answer, command: command, variable: options["--as"] ?? answer.variable, real: wantsReal)
+    } catch let error as VaultError {
+        fail(answer.sshSocket == nil && (options["--as"] ?? answer.variable) == nil
+            ? "\(id) has no variable set, so say which with --as" : error.description, code: 2)
     }
-    guard let variable = options["--as"] ?? answer.variable else {
-        fail("\(id) has no variable set, so say which with --as", code: 2)
-    }
-    if wantsReal {
-        guard let value = answer.value else { fail("the key could not be used", code: 77) }
-        setenv(variable, value, 1)
-    } else {
-        guard let standIn = answer.standIn, let proxy = answer.proxy else {
-            fail("the key could not be used", code: 77)
-        }
-        setenv(variable, standIn, 1)
-        let address = "http://127.0.0.1:\(proxy.port)"
-        for name in ["HTTPS_PROXY", "https_proxy"] { setenv(name, address, 1) }
-        // Node does not read those variables unless it is told to.
-        setenv("NODE_USE_ENV_PROXY", "1", 1)
-        setenv("NODE_EXTRA_CA_CERTS", proxy.ca, 1)
-        // A name on this list would skip the proxy and go straight out with a useless stand-in.
-        unsetenv("NO_PROXY")
-        unsetenv("no_proxy")
-        for name in ["SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT", "AWS_CA_BUNDLE", "CARGO_HTTP_CAINFO", "DENO_CERT"] {
-            setenv(name, proxy.bundle, 1)
-        }
-    }
-    var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
-    execvp(command[0], &pointers)
+    for name in prepared.unset { unsetenv(name) }
+    for (name, value) in prepared.setIfMissing { setenv(name, value, 0) }
+    for (name, value) in prepared.set { setenv(name, value, 1) }
+    var pointers: [UnsafeMutablePointer<CChar>?] = prepared.command.map { strdup($0) } + [nil]
+    execvp(prepared.command[0], &pointers)
     fail("could not run \(command[0])")
 }
 
@@ -169,6 +145,10 @@ func revokeGrants() throws {
 }
 
 func showAudit() throws {
+    if arguments.contains("--help") || arguments.contains("-h") {
+        print("keyreeve-vault audit [--key <id>] [--verify]\n    Show the usage log, or check that its chain holds together.")
+        return
+    }
     if arguments.contains("--verify") {
         if let line = auditLog.firstBrokenLine() { fail("the usage log was changed at line \(line)") }
         print("The usage log holds together: \(try auditLog.entries().count) lines")

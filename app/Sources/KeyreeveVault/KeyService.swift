@@ -71,11 +71,18 @@ public final class KeyService: @unchecked Sendable {
         public var cwd: String?
         /// Asks for the value itself, for what cannot use a stand-in. It is never remembered.
         public var real: Bool?
+        /// A permission that covers any program, for a key a person left free to agents.
+        public var anyProgram: Bool?
+        /// One permission to end, by its id, and no other.
+        public var grant: String?
 
         public init(
             op: String, key: String? = nil, seconds: Int? = nil, program: String? = nil, arguments: Int? = nil,
-            prompt: String? = nil, agent: String? = nil, reason: String? = nil, cwd: String? = nil, real: Bool? = nil
+            prompt: String? = nil, agent: String? = nil, reason: String? = nil, cwd: String? = nil, real: Bool? = nil,
+            anyProgram: Bool? = nil, grant: String? = nil
         ) {
+            self.anyProgram = anyProgram
+            self.grant = grant
             self.op = op
             self.key = key
             self.seconds = seconds
@@ -113,11 +120,15 @@ public final class KeyService: @unchecked Sendable {
         public var sshIdentity: String?
         public var variable: String?
         public var grants: [GrantInfo]?
+        /// The permission this answer used.
+        public var grant: String?
 
         public init(
             ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil,
-            proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, sshIdentity: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
+            proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, sshIdentity: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil,
+            grant: String? = nil
         ) {
+            self.grant = grant
             self.ok = ok
             self.error = error
             self.value = value
@@ -135,6 +146,13 @@ public final class KeyService: @unchecked Sendable {
         public var key: String
         public var program: String
         public var expires: Date
+
+        public init(id: String, key: String, program: String, expires: Date) {
+            self.id = id
+            self.key = key
+            self.program = program
+            self.expires = expires
+        }
     }
 
     private struct Grant {
@@ -235,10 +253,14 @@ public final class KeyService: @unchecked Sendable {
             case "revoke":
                 lock.lock()
                 dropExpired()
-                revocations += 1
-                let closing = grants.filter { request.key == nil || $0.key == request.key }
+                // Ending one permission that is done with does not cancel what others are opening.
+                if request.grant == nil { revocations += 1 }
+                let ends = { (grant: Grant) in
+                    (request.key == nil || grant.key == request.key) && (request.grant == nil || grant.id == request.grant)
+                }
+                let closing = grants.filter(ends)
                 for grant in closing { end(grant) }
-                grants.removeAll { request.key == nil || $0.key == request.key }
+                grants.removeAll(where: ends)
                 lock.unlock()
                 for grant in closing {
                     try? log.append(event: "closed", key: grant.key, grant: grant.id, observed: caller)
@@ -257,17 +279,20 @@ public final class KeyService: @unchecked Sendable {
 
     /// An SSH key's permission covers every program. Any other covers one key with one program, so one
     /// for `netlify` does not also cover something else without showing you that it asked.
+    /// The program name of a permission a person gave for any program.
+    public static let anyProgram = "*"
+
     private func grantInForce(key: String, program: String) -> Grant? {
         lock.lock()
         defer { lock.unlock() }
         dropExpired()
-        return grants.first { $0.key == key && ($0.door != nil || $0.program == program) }
+        return grants.first { $0.key == key && ($0.door != nil || $0.program == program || $0.program == Self.anyProgram) }
     }
 
     private func answer(for grant: Grant, variable: String?) throws -> Response {
-        if let door = grant.door { return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity) }
+        if let door = grant.door { return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity, grant: grant.id) }
         guard let proxy else { throw VaultError("the proxy is not available") }
-        return Response(ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable)
+        return Response(ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable, grant: grant.id)
     }
 
     private func use(_ request: Request, caller: AuditLog.Observed?) throws -> Response {
@@ -344,7 +369,9 @@ public final class KeyService: @unchecked Sendable {
             // From here the value lives in the proxy, and this process keeps only the stand-in.
             let standIn = try proxy.add(
                 grant: grantID, key: id, provider: provider, text: text, field: key.field, expires: expires)
-            granted = Grant(id: grantID, key: id, program: name, expires: expires, standIn: standIn, door: nil)
+            granted = Grant(
+                id: grantID, key: id, program: request.anyProgram == true ? Self.anyProgram : name, expires: expires,
+                standIn: standIn, door: nil)
             detail = "\(seconds) seconds"
         }
         lock.lock()

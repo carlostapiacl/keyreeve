@@ -5,7 +5,7 @@ import SwiftUI
 /// Plain words for each access level. The stored values stay the same in every language.
 func levelName(_ level: String) -> String {
     switch level {
-    case "free": return T("Agents can use it")
+    case "free": return T("Checked without asking")
     case "ask": return T("Ask me")
     case "never": return T("Only me")
     default: return T("Not secret")
@@ -58,7 +58,7 @@ public struct MainView: View {
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
                 sidebarRow(T("All keys"), "key", .all, active.count)
                 sidebarRow(T("Vault"), "lock.shield", .vault, filter(items, by: .vault, search: "").count)
-                sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.commands.values.filter { !$0.isEmpty }.count)
+                sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.keys.count)
                 sidebarRow(T("Archive"), "archivebox", .archive, items.count - active.count)
                 Section(T("Projects")) {
                     ForEach(projectTags(in: active), id: \.tag) { entry in

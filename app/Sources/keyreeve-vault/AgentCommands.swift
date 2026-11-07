@@ -52,13 +52,13 @@ func runWithEnv() throws {
 }
 
 func serveAgents() throws {
-    let policy = AgentPolicy.load(from: home.appendingPathComponent(AgentPolicy.fileName))
+    let policyFile = home.appendingPathComponent(AgentPolicy.fileName)
     func indexed(_ id: String) throws -> KeyIndex.Key {
         guard let key = try KeyIndex.load(from: keysFile).key(id) else { throw VaultError("no key is called \(id)") }
         return key
     }
     let bridge = AgentBridge(
-        policy: policy,
+        policy: { AgentPolicy.load(from: policyFile) },
         names: {
             let sealed = try store.load().entries.keys
             return try KeyIndex.load(from: keysFile).keys.filter { sealed.contains($0.source) }.map(\.id)

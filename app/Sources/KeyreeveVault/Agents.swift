@@ -172,7 +172,9 @@ public struct AgentBridge {
         }
     }
 
-    let policy: AgentPolicy
+    /// Read again for each request, so a permission you change in the app counts without restarting the agent.
+    let currentPolicy: () -> AgentPolicy
+    var policy: AgentPolicy { currentPolicy() }
     /// Names in the vault.
     let names: () throws -> [String]
     /// Opens a key, which asks for a fingerprint. The text is what the person sees in the prompt.
@@ -186,7 +188,16 @@ public struct AgentBridge {
         run: @escaping (_ command: [String], _ variable: String, _ value: String) throws -> Output,
         record: @escaping (_ key: String, _ program: String, _ reason: String) -> Void
     ) {
-        self.policy = policy
+        self.init(policy: { policy }, names: names, open: open, run: run, record: record)
+    }
+
+    public init(
+        policy: @escaping () -> AgentPolicy, names: @escaping () throws -> [String],
+        open: @escaping (_ key: String, _ prompt: String) throws -> Data,
+        run: @escaping (_ command: [String], _ variable: String, _ value: String) throws -> Output,
+        record: @escaping (_ key: String, _ program: String, _ reason: String) -> Void
+    ) {
+        currentPolicy = policy
         self.names = names
         self.open = open
         self.run = run
@@ -234,6 +245,7 @@ public struct AgentBridge {
     private func call(_ tool: String, _ arguments: [String: Any]) throws -> String {
         switch tool {
         case "list_keys":
+            let policy = self.policy
             let known = Set(try names())
             let lines = policy.commands.keys.sorted().filter(known.contains).compactMap { key -> String? in
                 let programs = (policy.commands[key] ?? []).filter { policy.allows($0, with: key) }

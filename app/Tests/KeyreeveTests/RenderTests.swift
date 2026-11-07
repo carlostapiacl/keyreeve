@@ -70,6 +70,22 @@ struct RenderTests {
         XCTAssertEqual((parsed?["StartCalendarInterval"] as? [String: Int])?["Weekday"], 1)
     }
 
+    @Test func testClaudeCodesSettingsSayWhereKeyreeveIsConnected() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("claude-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let server = #"{"type":"stdio","command":"/x/dist/keyreeve-vault","args":["mcp"]}"#
+        try #"{"projects":{"/p/b":{"mcpServers":{"k":\#(server)}},"/p/a":{"mcpServers":{"other":{"command":"/bin/other","args":["mcp"]}}}}}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(AgentConnection.read(from: file), .folders(["/p/b"]))
+        try #"{"mcpServers":{"vault":\#(server)},"projects":{"/p/b":{"mcpServers":{"k":\#(server)}}}}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(AgentConnection.read(from: file), .everywhere)
+        // Another server of the same program that is not the agent server does not count.
+        try #"{"mcpServers":{"k":{"command":"/x/keyreeve-vault","args":["serve"]}}}"#.write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(AgentConnection.read(from: file), .none)
+        XCTAssertEqual(AgentConnection.read(from: file.appendingPathExtension("missing")), .none)
+    }
+
     @Test func testTheViewsDrawInEachLanguageAndAppearance() throws {
         defer { UserDefaults.standard.removeObject(forKey: Language.settingsKey) }
         for language in [Language.english, Language.spanish] {
@@ -123,6 +139,11 @@ struct RenderTests {
                 named: "usage-\(code)", appearance: .darkAqua)
             ready.usage.brokenLine = 3
             try render(UsageLogSheet(model: ready), named: "usage-log-\(code)", appearance: .aqua)
+            ready.usage.brokenLine = nil
+            ready.agentPolicy = AgentPolicy(commands: ["vps": ["/Users/a/.keyreeve/agent-tools/check-hosting.sh"]])
+            try render(MainView(model: ready, initial: .agents), named: "agents-\(code)", appearance: .aqua)
+            try render(MainView(model: ready, initial: .agents), named: "agents-dark-\(code)", appearance: .darkAqua)
+            try render(AllowAgentSheet(model: ready).background(Theme.background), named: "agents-allow-\(code)", appearance: .aqua)
         }
     }
 }

@@ -58,6 +58,7 @@ public struct MainView: View {
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
                 sidebarRow(T("All keys"), "key", .all, active.count)
                 sidebarRow(T("Vault"), "lock.shield", .vault, filter(items, by: .vault, search: "").count)
+                sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.commands.values.filter { !$0.isEmpty }.count)
                 sidebarRow(T("Archive"), "archivebox", .archive, items.count - active.count)
                 Section(T("Projects")) {
                     ForEach(projectTags(in: active), id: \.tag) { entry in
@@ -87,6 +88,8 @@ public struct MainView: View {
             }
         } else if selection == .vault {
             VaultView(model: model)
+        } else if selection == .agents {
+            AgentsView(model: model)
         } else {
             VStack(spacing: 0) {
                 filterBar
@@ -149,6 +152,7 @@ public struct MainView: View {
         case .all: return T("All keys")
         case .archive: return T("Archive")
         case .vault: return T("Vault")
+        case .agents: return T("Agents")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")

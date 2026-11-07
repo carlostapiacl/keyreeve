@@ -54,6 +54,26 @@ struct AgentTests {
         #expect(log.recorded == ["a.env deploy.sh deploy"])
     }
 
+    @Test func testAPermissionChangedWhileTheAgentRunsCountsAtOnce() throws {
+        final class Box: @unchecked Sendable { var policy = AgentPolicy() }
+        let box = Box()
+        let log = Log()
+        let live = AgentBridge(
+            policy: { box.policy }, names: { ["a.env"] },
+            open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
+            run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
+            record: { _, _, _ in })
+        #expect(try call(live, "list_keys", [:]).text == "No key is allowed for agents yet.")
+        #expect(try call(live, "run_with_key", run).error)
+        box.policy = AgentPolicy(commands: ["a.env": ["deploy.sh"]])
+        #expect(try call(live, "list_keys", [:]).text == "a.env: deploy.sh")
+        #expect(!(try call(live, "run_with_key", run).error))
+        // Taking it away also counts before the next use, and no finger is asked.
+        box.policy = AgentPolicy()
+        #expect(try call(live, "run_with_key", run).error)
+        #expect(log.opened == ["a.env"])
+    }
+
     @Test func testBase64OfTheValueIsCaughtToo() throws {
         let encoded = Data(Self.canary.utf8).base64EncodedString()
         let result = try call(bridge(Log(), output: encoded), "run_with_key", run)

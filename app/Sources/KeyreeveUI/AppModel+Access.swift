@@ -198,9 +198,36 @@ extension AppModel {
             return
         }
         guard let id = keyIndex.keys(forSource: item.path).first?.id else { return }
+        allow(program: program, keyID: id)
+    }
+
+    /// Lets agents run `program` with the key called `keyID`. Each use still asks for your finger.
+    public func allow(program: String, keyID id: String) {
+        guard !AgentPolicy.isNeverAllowed(program) else {
+            message = T("%@ can print or send whatever it gets, so it cannot be allowed.", URL(fileURLWithPath: program).lastPathComponent)
+            return
+        }
         var policy = agentPolicy
         if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
         savePolicy(policy)
+    }
+
+    public func disallow(program: String, keyID id: String) {
+        var policy = agentPolicy
+        policy.commands[id]?.removeAll { $0 == program }
+        if policy.commands[id]?.isEmpty == true { policy.commands[id] = nil }
+        savePolicy(policy)
+    }
+
+    /// Keys an agent could be allowed: sealed, with an identifier.
+    public var agentKeys: [KeyIndex.Key] {
+        let sealed = Set(items.filter { $0.vault == .sealed || $0.vault == .outdated || $0.originalMoved }.map(\.path))
+        return keyIndex.keys.filter { sealed.contains($0.source) }.sorted { $0.id < $1.id }
+    }
+
+    /// Sealed keys that still need an identifier before an agent can be allowed.
+    public var sealedWithoutIdentifier: Int {
+        items.filter { ($0.vault == .sealed || $0.vault == .outdated) && keyIndex.keys(forSource: $0.path).isEmpty }.count
     }
 
     public func disallow(program: String, for item: CatalogItem) {
@@ -224,6 +251,8 @@ extension AppModel {
         panel.canChooseDirectories = false
         panel.showsHiddenFiles = true
         panel.message = T("Choose the program an agent may run with this key")
+        let tools = files.directory.appendingPathComponent("agent-tools")
+        if FileManager.default.fileExists(atPath: tools.path) { panel.directoryURL = tools }
         panel.prompt = T("Choose")
         if panel.runModal() == .OK, let url = panel.url { then(url.path) }
     }
@@ -233,7 +262,7 @@ extension AppModel {
         let tool = (binary?.deletingLastPathComponent().appendingPathComponent("keyreeve-vault").path ?? "keyreeve-vault")
         let board = NSPasteboard.general
         board.clearContents()
-        board.setString("claude mcp add keyreeve -- \"\(tool)\" mcp", forType: .string)
+        board.setString("claude mcp add --scope user keyreeve -- \"\(tool)\" mcp", forType: .string)
         message = T("The command to connect Claude Code is copied. Run it in a terminal.")
     }
 }

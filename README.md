@@ -336,10 +336,11 @@ keyreeve-vault env app.env -- ./deploy.sh
 
 One fingerprint opens them all for that command.
 
-An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`, and **Vault** copies the command that
-connects Claude Code. An agent can list the keys it may use and run a program with one, and no tool returns a value. Nothing is allowed
-until you open a key in the app and press **Allow a program**, which writes `~/.keyreeve/agents.toml` ([example](examples/agents.toml)).
-A file with a mistake allows nothing. Each use asks for your finger, with a prompt that shows the program and the key, and the agent's
+An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. The app's **Agents** section shows
+whether Claude Code is connected and copies the command that connects it in every folder. An agent can list the keys it may use and
+run a program with one, and no tool returns a value. Nothing is allowed until you press **Allow a key…** there, or **Allow a program**
+on a key, which writes `~/.keyreeve/agents.toml` ([example](examples/agents.toml)). The server reads that file on each request, so a
+change counts without restarting the agent. A file with a mistake allows nothing. Each use asks for your finger, with a prompt that shows the program and the key, and the agent's
 reason goes in the usage log.
 
 The agent chooses the arguments, so allow programs that do one job. Shells, interpreters, `curl`, `env` and others like them cannot

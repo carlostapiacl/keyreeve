@@ -5,7 +5,7 @@ import Testing
 struct KeyIndexTests {
     @Test func testTheFileRoundTrips() throws {
         var index = KeyIndex()
-        try index.add(.init(id: "mail-restoiq", source: "dir/a b.env", field: "API_KEY", provider: "resend", project: "restoiq", account: "hola@restoiq.cl", description: "Say \"hi\"", variable: "RESEND_API_KEY"))
+        try index.add(.init(id: "mail-shop", source: "dir/a b.env", field: "API_KEY", provider: "resend", project: "shop", account: "hello@shop.example", description: "Say \"hi\"", variable: "RESEND_API_KEY"))
         try index.add(.init(id: "netlify", source: "netlify-pat.txt"))
         #expect(try KeyIndex.parse(index.toml) == index)
     }
@@ -25,7 +25,7 @@ struct KeyIndexTests {
         for id in ["", "Upper", "a b", "-a", "a-", "ñ", "a/b", "a.b", String(repeating: "a", count: 65)] {
             #expect(!KeyIndex.isValid(id: id), "\(id)")
         }
-        #expect(KeyIndex.isValid(id: "mail-restoiq-2"))
+        #expect(KeyIndex.isValid(id: "mail-shop-2"))
         var index = KeyIndex()
         try index.add(.init(id: "a", source: "x"))
         XCTAssertThrowsError(try index.add(.init(id: "a", source: "y")))
@@ -42,9 +42,9 @@ struct KeyIndexTests {
         var index = KeyIndex()
         #expect(index.suggestion(provider: "netlify", project: "infra", source: "netlify-pat.txt") == "netlify")
         try index.add(.init(id: "netlify", source: "a"))
-        #expect(index.suggestion(provider: "netlify", project: "Hernán Zurita", source: "b") == "netlify-hernan-zurita")
-        try index.add(.init(id: "netlify-hernan-zurita", source: "b"))
-        #expect(index.suggestion(provider: "netlify", project: "Hernán Zurita", source: "c") == "netlify-hernan-zurita-2")
+        #expect(index.suggestion(provider: "netlify", project: "Ramón Ortiz", source: "b") == "netlify-ramon-ortiz")
+        try index.add(.init(id: "netlify-ramon-ortiz", source: "b"))
+        #expect(index.suggestion(provider: "netlify", project: "Ramón Ortiz", source: "c") == "netlify-ramon-ortiz-2")
         #expect(index.suggestion(provider: nil, project: nil, source: "dir/My Secret.env.bak") == "my-secret")
         #expect(KeyIndex.isValid(id: index.suggestion(provider: nil, project: nil, source: "...")))
     }

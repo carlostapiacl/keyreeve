@@ -256,7 +256,7 @@ writes it is mine, and it has had no outside review.
 
 ## Keys and agents
 
-Each key can have an identifier, separate from its file: `netlify`, `mail-restoiq`. A file with several values can have several, and
+Each key can have an identifier, separate from its file: `netlify`, `mail-shop`. A file with several values can have several, and
 renaming or moving a file breaks nothing that uses one. The app suggests them and keeps them in `~/.keyreeve/keys.toml`, which holds no value.
 An identifier can also say whose key it is, its `account`, which tells apart several keys of one provider. It comes from the provider when its
 file can ask, and from you when it cannot, and the fingerprint prompt shows it.
@@ -320,7 +320,7 @@ An env file can hold references in place of values, so it is safe in a repositor
 ```bash
 # app.env
 HOSTING_TOKEN=keyreeve://hosting
-MAIL_KEY=keyreeve://mail-restoiq
+MAIL_KEY=keyreeve://mail-shop
 LOG_LEVEL=info
 ```
 

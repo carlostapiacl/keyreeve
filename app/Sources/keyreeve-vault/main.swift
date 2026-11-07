@@ -12,6 +12,7 @@ do {
     case "names": try listNames()
     case "list": try listKeys()
     case "use": try useKey()
+    case "get": try getKey()
     case "serve": try serveKeys()
     case "grant": try grantKey()
     case "grants": try showGrants()

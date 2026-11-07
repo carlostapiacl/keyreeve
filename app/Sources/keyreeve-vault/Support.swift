@@ -26,6 +26,10 @@ let help = """
           With an SSH key (provider = "ssh"), `ssh`, `scp`, `sftp`, `git` and `rsync` sign through an agent and
           never hold it. A permission covers the first server, or those in `servers` in keys.toml. Others ask.
           --real hands the command the real key, for what cannot use a stand-in. It asks every time.
+      keyreeve-vault get <id> [--reason TEXT]
+          Print the real key on stdout, for a tool that takes a key from a command, such as seisin's
+          key providers. It asks for your finger every time and is never remembered, so nothing can
+          ride on an earlier yes. Prefer `use`, where the command holds a stand-in.
       keyreeve-vault list
           Show the identifiers and what each one is. Needs no fingerprint.
       keyreeve-vault grant <id> [--for 1h] [--program NAME]

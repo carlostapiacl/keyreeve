@@ -279,7 +279,7 @@ keyreeve-vault audit --verify
 `use` runs one command with one key, and the command never holds it. Its variable holds a stand-in of the same shape, and a local proxy puts
 the real key on requests to that provider's hosts, which come from its file. `printenv` shows the stand-in, and sent anywhere else it is useless.
 Your finger is asked once for that key with that program, and the permission lasts 5 minutes unless `--for` says otherwise. A small service keeps
-it, and stops on its own when idle. Locking the app ends every permission. The variable comes from the provider's file, or from `--as`.
+it, and stops on its own when idle. Quitting the app ends every permission. The variable comes from the provider's file, or from `--as`.
 
 The swap happens in headers and in Basic passwords, and in the address for a provider that takes its key there. A body keeps the stand-in, so a
 tool that sends its key in a body fails and leaks nothing. A reply that echoes the key gets the stand-in back. Other hosts get a tunnel, with TLS
@@ -341,7 +341,7 @@ whether Claude Code is connected, copies the command that connects it in every f
 
 - **Level.** *Only me*, the default, keeps agents out. *Ask* shows a window with the key, the command and the agent's reason in its
   own words, where you choose **Once**, 1, 4, 8 or 24 hours, or **Deny**, then confirm with your finger. *Free* asks for your finger
-  once, then covers any command until you lock the app.
+  once, then covers any command until you quit Keyreeve, for a day at most.
 - **Agents.** Any agent, or only Claude or only Codex. The agent is named from the process that started the server, which is a strong
   hint and not proof, since everything runs as you.
 
@@ -351,11 +351,67 @@ only go to a program you allow, which gets the real key in a variable and is pin
 until you allow it again. Shells, interpreters, `curl`, `env` and others like them cannot be allowed that way. A run stops after
 2 minutes, and its output never shows the key or the stand-in.
 
-Locking the app, `keyreeve-vault revoke` or **Make them ask again** end every permission given to agents. The choices live in
+Quitting Keyreeve, `keyreeve-vault revoke`, **Close all** in the menu bar or **Make them ask again** end every permission given to
+agents. Locking the window only hides your keys, so an agent's work does not stop when you look away. The choices live in
 `~/.keyreeve/agents.toml` ([example](examples/agents.toml)), which the server reads on each request, so a change counts without
 restarting the agent. A file with a mistake allows nothing. Every yes, no and refusal goes in the usage log with the agent's reason.
 The window shows the whole command before you choose, and **Agent terminal** in the same section shows each command an agent ran with a
 key, its exit code, how long it took and the first 2,000 characters of what came back, kept in `~/.keyreeve/agent-runs.jsonl`.
+
+### When an agent asks for a key
+
+`list_keys` shows the keys an agent may use, the ones closed to it, by name and provider, and the providers you have no key for yet.
+With `request_access` the agent asks for one, says why and suggests for how long. You get one window: **Allow** for 1, 4, 8 or 24
+hours or always, or **Deny**. After a yes the key is free to that agent alone, with one fingerprint and no more questions, until the
+time is up. A no stops that agent asking again in its session. A key already open to another agent is not reopened on new terms:
+you add the second agent under **Agents**.
+
+When the agent asks for a provider whose key is not saved, the request waits in the app. Pick the file that holds it and press
+**Save and allow**: it is sealed, named and opened to that agent in one step. With no file, **Paste a new one** takes a key you copy
+from the provider.
+
+### Add a key
+
+**Add a key** (the **+** in the window, or the menu bar) reads the clipboard, tells the provider from how the key starts, and seals it
+with no file on disk. The key itself is never shown, only its known start and its length, and the clipboard is cleared. A link opens
+the provider's page where keys are made.
+
+### The menu bar
+
+Keyreeve stays in the menu bar with its window closed. The icon counts the requests waiting. Its menu shows them, what agents hold
+now and until when, the latest uses, and **Lock everything**: it ends every permission, locks the window and pauses agents, so each
+request is refused with no window until you press **Resume agents**.
+
+### One log for everything
+
+```bash
+keyreeve-vault log --since 7d            # one JSON line per event, oldest first
+keyreeve-vault log --key resend --csv    # for a spreadsheet
+```
+
+It joins the usage log, what agents ran, every check of a key and your own uses, with names in place of file paths. Each decision
+you make in the app goes in it too: a level changed, a request answered, a pause. No value is in any of them.
+
+### With seisin
+
+[seisin](https://github.com/carlostapiacl/seisin) gives each agent its own folders and keys, and takes a key from any command that
+prints it. `keyreeve-vault get` is that command: it prints the real key after your fingerprint, every time, and logs it.
+
+```toml
+# seisin.toml
+[keys.providers.keyreeve]
+command = ["/path/to/keyreeve-vault", "get", "{ref}"]
+
+[network]
+allow = ["api.resend.com"]
+
+[roles.mailer]
+keys = ["RESEND_API_KEY=keyreeve://resend"]
+key_mode = "env"
+```
+
+The role gets the key in its environment and can reach only the domains you list. seisin masks it in the output, and no file holds
+it on disk. Here the role holds the real key, so prefer `use` and the proxy wherever the agent runs outside seisin.
 
 **Copy the key**, on a sealed key in the app, puts it on the clipboard after your fingerprint. It is marked so clipboard history tools
 skip it, and it leaves after 60 seconds, or when you lock the app, unless you copied something else by then.
@@ -402,8 +458,8 @@ A key joined from two fields, such as AWS, cannot rotate yet.
 - A scan that finds where each key is used, and which permissions each key has
 - An Apple signature, so the app can be downloaded and not only built
 - Recipes for more providers that can rotate, keys made of two fields, and rotation written as a program of yours
-- Approvals that expire
-- Integration with [seisin](https://github.com/carlostapiacl/seisin), which gives each agent its own keys
+- A stand-in for roles inside [seisin](https://github.com/carlostapiacl/seisin), so they reach a provider through the proxy and never hold the key
+- One fingerprint for several seisin runs, without letting any other program ride on it
 
 ## Security
 

@@ -111,8 +111,11 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it names the program and the key. The reason
   in the request window is the agent's own text, set apart in quotes, and it can say anything.
 - **A yes for hours keeps the key open.** For a program you allowed, the agent server holds the opened key in memory until the time
-  runs out, the agent session ends, or you lock the app. Through the proxy, the key service holds it. Either way, during that time the
-  agent uses it without asking, with whatever command it picks, and a free key works that way until you lock the app.
+  runs out, the agent session ends, or you quit Keyreeve or press Lock everything. Through the proxy, the key service holds it. Either way, during that time the
+  agent uses it without asking, with whatever command it picks, and a free key works that way until you quit Keyreeve. Locking the window does not end it.
+- **`get` hands out the real key.** It is for tools such as seisin that take a key from a command's output. It asks for your finger
+  every time and never remembers a yes, because any program running as you could run it again. What it prints is in the hands of
+  whoever ran it: seisin keeps it inside one role, masks it in the output and limits where the role can connect.
 - **Naming the agent is a hint.** keyreeve reads which program started its server, so "only Claude" keeps an honest Codex out. A program
   running as you can start the server under any name.
 - **The agent terminal keeps what came back.** The first 2,000 characters of each command's output stay in a private file, with the key

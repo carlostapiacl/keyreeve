@@ -189,3 +189,22 @@ func showTimeline() throws {
     if let key = option("--key") { rows = rows.filter { $0.key == key } }
     print(arguments.contains("--csv") ? Timeline.csv(rows) : Timeline.jsonl(rows), terminator: "")
 }
+
+/// The real key on stdout, and nothing else: what seisin and other tools expect from a key provider.
+/// A finger every time, named after the program that asked, so a yes is never reused.
+func getKey() throws {
+    guard arguments.count >= 2, !arguments[1].hasPrefix("-") else { fail(help, code: 2) }
+    let id = arguments[1]
+    var reason: String?
+    if let at = arguments.firstIndex(of: "--reason"), at + 1 < arguments.count { reason = arguments[at + 1] }
+    // Who ran this, as the system says, so the prompt reads "to seisin" and not "to keyreeve-vault".
+    let parent = CallerIdentity.observe(pid: getppid()).program
+    let asker = URL(fileURLWithPath: parent.isEmpty ? "a program" : parent).lastPathComponent
+    let answer = try askService(
+        KeyService.Request(
+            op: "use", key: id, program: asker, prompt: "give the real key \(id) to \(asker)",
+            agent: ProcessInfo.processInfo.environment["KEYREEVE_AGENT"], reason: reason,
+            cwd: FileManager.default.currentDirectoryPath, real: true))
+    guard answer.ok, let value = answer.value, !value.isEmpty else { fail(answer.error ?? "the key could not be read", code: 77) }
+    FileHandle.standardOutput.write(Data(value.utf8))
+}

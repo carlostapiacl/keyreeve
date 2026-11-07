@@ -394,6 +394,13 @@ struct KeyServiceTests {
         #expect(f.proxy.added.count == f.proxy.removed.count)
     }
 
+    @Test func thePauseStopsTheRealKeyToo() throws {
+        let f = Fixture()
+        f.paused = true
+        #expect(!f.use("netlify", real: true).ok)
+        #expect(f.prompts.isEmpty)
+    }
+
     @Test func testAPermissionForOneProgramDoesNotCoverAnother() throws {
         let f = Fixture()
         _ = f.use("netlify")

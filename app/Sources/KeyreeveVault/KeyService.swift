@@ -328,6 +328,11 @@ public final class KeyService: @unchecked Sendable {
         let name = URL(fileURLWithPath: program).lastPathComponent
         // The account is the file's word and not the caller's, and it is how you notice the wrong one.
         let account = key.account.map { " (\($0))" } ?? ""
+        // The emergency stop holds for the real key too, and before any finger is asked.
+        guard !paused() else {
+            try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "paused")
+            throw VaultError("Keyreeve is paused")
+        }
         if request.real == true {
             // Asked every time and never remembered: past this point nothing protects the value.
             asking.lock()
@@ -351,10 +356,6 @@ public final class KeyService: @unchecked Sendable {
         guard provider == Self.sshProvider || proxy != nil else {
             try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "no proxy")
             throw VaultError("the proxy is not available")
-        }
-        guard !paused() else {
-            try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "paused")
-            throw VaultError("Keyreeve is paused")
         }
         if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)

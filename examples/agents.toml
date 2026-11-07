@@ -1,5 +1,5 @@
 # Keep this at ~/.keyreeve/agents.toml, or edit it in the app, under Agents. A key that is not here is yours alone.
-# level = "ask" asks you each time, once or for some hours; "free" asks once, until you lock the app.
+# level = "ask" asks you each time, once or for some hours; "free" asks once, until you quit Keyreeve.
 # agents limits a key to some agents. programs get the real key, each pinned by its SHA-256 in hashes.
 
 [[key]]

@@ -84,6 +84,7 @@ public struct MainView: View {
                 if !Set(new).subtracting(old).isEmpty { selection = .agents }
             }
             .onChange(of: model.showRequests) { _, _ in selection = .agents }
+            .sheet(item: $model.addingKey) { _ in AddKeySheet(model: model) }
             .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
         }
     }
@@ -193,6 +194,14 @@ public struct MainView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            Button {
+                model.startAddingKey()
+            } label: {
+                Label(T("Add a key"), systemImage: "plus")
+            }
+            .help(T("Paste a key and seal it, with no file"))
+        }
         if selection != .home {
             ToolbarItem(placement: .automatic) {
                 Menu {

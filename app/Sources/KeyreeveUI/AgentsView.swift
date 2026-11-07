@@ -329,7 +329,7 @@ struct RequestRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if candidates.isEmpty {
-                Text(T("No file in your keys folder is a %@ key. Add one, or decline.", request.provider))
+                Text(T("No file in your keys folder is a %@ key. Paste a new one, or decline.", request.provider))
                     .font(Theme.caption).foregroundStyle(Theme.warn)
             }
             HStack(spacing: 8) {
@@ -350,6 +350,9 @@ struct RequestRow: View {
                     .help(T("For how long"))
                 }
                 Spacer(minLength: 8)
+                Button(T("Paste a new one")) { model.startAddingKey(for: request) }
+                    .buttonStyle(KRButtonStyle(primary: candidates.isEmpty))
+                    .help(T("Copy a new key from the provider and paste it"))
                 Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
                 if !candidates.isEmpty {
                     Button(T("Save and allow")) {

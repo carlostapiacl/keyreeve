@@ -27,6 +27,11 @@ public struct MenuBarView: View {
             Divider()
             HStack(spacing: 8) {
                 Button(T("Open Keyreeve"), action: openWindow).buttonStyle(KRButtonStyle())
+                Button(T("Add a key")) {
+                    openWindow()
+                    model.startAddingKey()
+                }
+                .buttonStyle(KRButtonStyle())
                 Spacer()
                 Button(T("Quit Keyreeve")) { NSApp.terminate(nil) }.buttonStyle(KRButtonStyle())
                     .help(T("Agent permissions end when you quit."))

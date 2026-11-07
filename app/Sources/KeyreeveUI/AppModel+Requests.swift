@@ -64,30 +64,35 @@ extension AppModel {
                 try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
                 keyIndex = index
             }
-            var policy = AgentPolicy.load(from: files.agents)
-            let before = policy
-            let wasOpen = policy.level(of: id) != nil
-            policy.levels[id] = .free
-            if let limited = policy.agents[id], !limited.isEmpty {
-                if !limited.contains(request.agent) { policy.agents[id] = limited + [request.agent] }
-            } else if !wasOpen {
-                policy.agents[id] = [request.agent]
-            }
-            policy.until[id] = hours.map { Date().addingTimeInterval(TimeInterval($0 * 3600)) }
-            try files.writePrivate(Data(policy.toml.utf8), to: files.agents)
-            agentPolicy = policy
-            audit([(id, "request \(request.id) from \(request.agent) for \(request.provider)")], event: "allowed")
-            audit(policy.changes(from: before))
-            try AccessRequests.append(
-                AccessRequests.Entry(
-                    id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider,
-                    hours: hours, key: id),
-                to: requestsFile)
+            try openToAgent(id, for: request, hours: hours)
             message = T("%@ is saved and open to %@", id, request.agent)
         } catch {
             message = (error as? VaultError)?.description ?? T("The request could not be answered")
         }
         load()
+    }
+
+    /// Opens a saved key to the agent that asked, for the hours chosen or always, and answers its request.
+    func openToAgent(_ id: String, for request: AccessRequests.Entry, hours: Int?) throws {
+        var policy = AgentPolicy.load(from: files.agents)
+        let before = policy
+        let wasOpen = policy.level(of: id) != nil
+        policy.levels[id] = .free
+        if let limited = policy.agents[id], !limited.isEmpty {
+            if !limited.contains(request.agent) { policy.agents[id] = limited + [request.agent] }
+        } else if !wasOpen {
+            policy.agents[id] = [request.agent]
+        }
+        policy.until[id] = hours.map { Date().addingTimeInterval(TimeInterval($0 * 3600)) }
+        try files.writePrivate(Data(policy.toml.utf8), to: files.agents)
+        agentPolicy = policy
+        audit([(id, "request \(request.id) from \(request.agent) for \(request.provider)")], event: "allowed")
+        audit(policy.changes(from: before))
+        try AccessRequests.append(
+            AccessRequests.Entry(
+                id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider,
+                hours: hours, key: id),
+            to: requestsFile)
     }
 
     public func decline(_ request: AccessRequests.Entry) {

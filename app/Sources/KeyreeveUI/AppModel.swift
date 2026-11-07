@@ -48,6 +48,8 @@ public final class AppModel: ObservableObject {
     @Published public var agentsPaused = false
     /// Bumped to bring the window to the requests.
     @Published public var showRequests = 0
+    /// A key being pasted into the vault, while its sheet is open.
+    @Published public var addingKey: AddKeyDraft?
     @Published public var keyIndex = KeyIndex()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
@@ -316,6 +318,15 @@ struct Snapshot: Sendable {
             }
             let changed = source.keysFolder.map { VaultKeeper.isOutdated(entry, path: path, folder: $0) } ?? false
             parsed[index].vault = changed ? .outdated : .sealed
+        }
+        // Keys pasted in the app have no file and no catalog line, and are listed from the vault.
+        let index = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
+        let listed = Set(parsed.map(\.path))
+        for name in (vault?.entries.keys).map(Array.init) ?? [] where name.hasPrefix(AppModel.addedFolder) && !listed.contains(name) {
+            var item = CatalogItem(path: name, recipes: index.keys(forSource: name).first?.provider.map { [$0] } ?? [])
+            item.vault = .sealed
+            item.originalMoved = true
+            parsed.append(item)
         }
         items = parsed
         activity = files.activity()

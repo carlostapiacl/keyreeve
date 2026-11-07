@@ -24,7 +24,9 @@ extension AppModel {
         pendingRequests = AccessRequests.pending(AccessRequests.read(from: requestsFile))
         // Only from a loaded list: a locked window has none, and would tell agents there is nothing to ask for.
         guard unlocked, !items.isEmpty else { return }
-        let offered = Array(Set(items.filter(canBeOffered).compactMap(\.recipes.first))).sorted()
+        // Every provider keyreeve knows can be asked for: one with no file is answered by pasting a new key.
+        let known = providers.all.filter { $0.problem == nil && $0.approved }.map(\.id)
+        let offered = Array(Set(items.filter(canBeOffered).compactMap(\.recipes.first) + known)).sorted()
         if AccessRequests.readOffered(from: offeredFile) != offered, let data = try? JSONEncoder().encode(offered) {
             try? files.writePrivate(data, to: offeredFile)
         }

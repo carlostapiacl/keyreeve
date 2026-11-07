@@ -98,7 +98,11 @@ func serveAgents() throws {
             defer { umask(previous) }
             try Data(policy.toml.utf8).write(to: policyFile, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: policyFile.path)
-        })
+        },
+        offered: { AccessRequests.readOffered(from: home.appendingPathComponent(AccessRequests.offeredFileName)) },
+        requests: { AccessRequests.read(from: home.appendingPathComponent(AccessRequests.fileName)) },
+        addRequest: { try AccessRequests.append($0, to: home.appendingPathComponent(AccessRequests.fileName)) },
+        announce: announceRequest)
     while let line = readLine() {
         if let answer = bridge.handle(line) {
             FileHandle.standardOutput.write(Data((answer + "\n").utf8))
@@ -184,4 +188,39 @@ func askAccess(_ request: AccessRequest) -> AccessDecision? {
     alert.window.level = .floating
     guard answered(alert) == 0 else { return nil }
     return AccessDecision(hours: choices[durations.indexOfSelectedItem])
+}
+
+/// Tells the person an agent asked for a key that is not saved yet. Saving happens in the app, which
+/// knows the keys folder, so this only offers to open it.
+func announceRequest(_ request: AccessRequests.Entry) -> AgentBridge.Announcement {
+    let spanish = Locale.preferredLanguages.first?.hasPrefix("es") ?? false
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    app.activate(ignoringOtherApps: true)
+    let alert = NSAlert()
+    alert.alertStyle = .informational
+    alert.messageText = spanish
+        ? "\(request.agent) pide una clave de \(request.provider)"
+        : "\(request.agent) asks for a \(request.provider) key"
+    let said = request.reason.map { "\u{201C}\($0)\u{201D}" } ?? "-"
+    alert.informativeText = spanish
+        ? "Lo que dice el agente, en sus palabras:\n\(said)\n\nTodavía no tienes una clave de \(request.provider) guardada. En Keyreeve eliges cuál, se guarda y queda permitida en un paso."
+        : "What the agent says, in its own words:\n\(said)\n\nNo \(request.provider) key is saved yet. In Keyreeve you choose which, and it is saved and allowed in one step."
+    alert.addButton(withTitle: spanish ? "Abrir Keyreeve" : "Open Keyreeve")
+    alert.addButton(withTitle: spanish ? "Ahora no" : "Not now")
+    let deny = alert.addButton(withTitle: spanish ? "No permitir" : "Deny")
+    deny.keyEquivalent = "\u{1b}"
+    alert.window.level = .floating
+    switch answered(alert) {
+    case 0:
+        // open(1) hands it to Launch Services at once; this process never runs the loop an async open needs.
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-b", "io.github.carlostapiacl.keyreeve"]
+        open.standardError = FileHandle.nullDevice
+        try? open.run()
+        return .open
+    case 1: return .later
+    default: return .deny
+    }
 }

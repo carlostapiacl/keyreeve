@@ -11,7 +11,9 @@ struct AgentsView: View {
     /// Read again while this is on screen, off the main thread, so the window stays live and quick.
     private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
-    private static let agentEvents: Set<String> = ["granted", "used", "denied", "refused", "handed", "closed", "request", "signed"]
+    private static let agentEvents: Set<String> = [
+        "granted", "used", "denied", "refused", "handed", "closed", "request", "signed", "requested", "opened",
+    ]
     private var recent: [AuditLog.Entry] {
         Array(model.usage.entries.filter { Self.agentEvents.contains($0.event) }.prefix(12))
     }
@@ -22,6 +24,7 @@ struct AgentsView: View {
                 Text(T("An agent asks keyreeve to run a command with a key and says why. The command gets a stand-in, and the real key only travels to the key's provider. The agent never sees the value."))
                     .font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                if !model.pendingRequests.isEmpty { requestsCard }
                 connectionCard
                 allowedCard
                 if !model.usage.grants.isEmpty { openCard }
@@ -36,7 +39,28 @@ struct AgentsView: View {
             model.reloadUsage()
             loadRuns()
         }
-        .onReceive(ticker) { _ in loadRuns() }
+        .onReceive(ticker) { _ in
+            loadRuns()
+            model.reloadRequests()
+        }
+    }
+
+    /// Waiting on you, so it comes first and stands out.
+    private var requestsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Image(systemName: "hand.raised.fill").foregroundStyle(Theme.accent)
+                    SectionTitle(T("Requests"))
+                }
+                ForEach(Array(model.pendingRequests.enumerated()), id: \.element.id) { index, request in
+                    if index > 0 { Divider() }
+                    RequestRow(request: request, model: model)
+                }
+            }
+            .padding(14)
+        }
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent.opacity(0.6)))
     }
 
     private var connectionCard: some View {
@@ -276,5 +300,79 @@ struct TerminalRow: View {
             .textSelection(.enabled)
             .help(expanded ? T("Show less") : T("Show all"))
         }
+    }
+}
+
+/// An agent asking for a key that is not saved yet: choose the file and for how long, and it is saved,
+/// named and allowed at once.
+struct RequestRow: View {
+    let request: AccessRequests.Entry
+    @ObservedObject var model: AppModel
+    @State private var chosen: String?
+    @State private var hours: Int?
+    @State private var started = false
+
+    private static let durations: [Int?] = AccessDecision.hourChoices.map { $0 } + [nil]
+
+    var body: some View {
+        let candidates = model.candidates(for: request)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(T("%@ asks for a %@ key", request.agent, request.provider))
+                    .font(Theme.rowTitle).foregroundStyle(Theme.text)
+                Spacer(minLength: 8)
+                Text(request.at, style: .relative).font(Theme.caption).foregroundStyle(Theme.faint)
+            }
+            if let reason = request.reason {
+                Text("\u{201C}\(reason)\u{201D}").font(Theme.body).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if candidates.isEmpty {
+                Text(T("No file in your keys folder is a %@ key. Add one, or decline.", request.provider))
+                    .font(Theme.caption).foregroundStyle(Theme.warn)
+            }
+            HStack(spacing: 8) {
+                if !candidates.isEmpty {
+                    Picker(T("Which file"), selection: $chosen) {
+                        ForEach(candidates, id: \.path) { item in
+                            Text(label(item)).tag(String?.some(item.path))
+                        }
+                    }
+                    .labelsHidden()
+                    .help(T("Which file"))
+                    Picker(T("For how long"), selection: $hours) {
+                        ForEach(Self.durations, id: \.self) { value in
+                            Text(value.map { T("For %d h", $0) } ?? T("Always")).tag(value)
+                        }
+                    }
+                    .labelsHidden().fixedSize()
+                    .help(T("For how long"))
+                }
+                Spacer(minLength: 8)
+                Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
+                if !candidates.isEmpty {
+                    Button(T("Save and allow")) {
+                        guard let item = candidates.first(where: { $0.path == (chosen ?? candidates.first?.path) }) else { return }
+                        model.allow(request, with: item, hours: hours)
+                    }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .onAppear {
+            guard !started else { return }
+            started = true
+            chosen = candidates.first?.path
+            hours = Self.durations.contains(request.hours) ? request.hours : 1
+        }
+    }
+
+    /// The file's name or path, and what keyreeve knows of it, so the right one is easy to pick.
+    private func label(_ item: CatalogItem) -> String {
+        var parts = [item.name.isEmpty ? item.path : "\(item.name) · \(item.path)"]
+        if item.vault != .none { parts.append(T("sealed already")) }
+        if item.lastResult == "works" { parts.append(T("last check passed")) }
+        return parts.joined(separator: " · ")
     }
 }

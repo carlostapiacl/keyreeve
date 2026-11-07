@@ -384,7 +384,22 @@ public struct AgentBridge {
     let decideAccess: (AccessRequest) -> AccessDecision?
     /// Writes the permissions after the person opened a key.
     let savePolicy: (AgentPolicy) throws -> Void
+    /// Providers the person can save a key for in the app, by name only.
+    let offered: () -> [String]
+    /// Requests for keys not saved yet, read and added to.
+    let requests: () -> [AccessRequests.Entry]
+    let addRequest: (AccessRequests.Entry) throws -> Void
+    /// Tells the person an agent asked for a key that is not saved yet.
+    let announce: (AccessRequests.Entry) -> Announcement
     let held = Held()
+
+    /// What the person answers when told of a request for a key that is not saved yet.
+    public enum Announcement: Equatable, Sendable {
+        /// Opens the app, where the request waits.
+        case open
+        case later
+        case deny
+    }
 
     public init(
         policy: AgentPolicy, names: @escaping () throws -> [String],
@@ -412,7 +427,11 @@ public struct AgentBridge {
         describe: @escaping () -> [String: KeyIndex.Key] = { [:] },
         transcript: @escaping (AgentTranscript.Entry) -> Void = { _ in },
         decideAccess: @escaping (AccessRequest) -> AccessDecision? = { _ in nil },
-        savePolicy: @escaping (AgentPolicy) throws -> Void = { _ in throw VaultError("permissions cannot be saved here") }
+        savePolicy: @escaping (AgentPolicy) throws -> Void = { _ in throw VaultError("permissions cannot be saved here") },
+        offered: @escaping () -> [String] = { [] },
+        requests: @escaping () -> [AccessRequests.Entry] = { [] },
+        addRequest: @escaping (AccessRequests.Entry) throws -> Void = { _ in throw VaultError("requests cannot be kept here") },
+        announce: @escaping (AccessRequests.Entry) -> Announcement = { _ in .later }
     ) {
         currentPolicy = policy
         self.names = names
@@ -431,6 +450,10 @@ public struct AgentBridge {
         self.transcript = transcript
         self.decideAccess = decideAccess
         self.savePolicy = savePolicy
+        self.offered = offered
+        self.requests = requests
+        self.addRequest = addRequest
+        self.announce = announce
     }
 
     /// Runs and writes down what ran, with the key and its stand-in taken out of what is kept.
@@ -545,6 +568,10 @@ public struct AgentBridge {
             }
             if lines.isEmpty { lines.append("No key is allowed for agents yet.") }
             if !closed.isEmpty { lines.append("Closed, ask with request_access: " + closed.joined(separator: ", ")) }
+            let unsaved = offered().filter { !known.contains($0) }.sorted()
+            if !unsaved.isEmpty {
+                lines.append("Not saved yet, ask with request_access by provider: " + unsaved.joined(separator: ", "))
+            }
             return lines.joined(separator: "\n")
         case "use_key":
             return try useKey(arguments)
@@ -696,7 +723,10 @@ public struct AgentBridge {
             throw VaultError("duration is 1h, 4h, 8h, 24h or always")
         }
         // Checked first, so nothing is asked for a key that is not there or already open.
-        guard try names().contains(key) else { throw VaultError("no key called \(key) is in the vault") }
+        guard try names().contains(key) else {
+            guard offered().contains(key) else { throw VaultError("no key called \(key) is in the vault, and none can be saved for that provider") }
+            return try requestUnsaved(provider: key, reason: reason, hours: hours)
+        }
         let date = now()
         let current = policy
         if let level = current.level(of: key, at: date), current.admits(agent: agent, for: key) {
@@ -737,6 +767,41 @@ public struct AgentBridge {
         log("opened", key, "\(how), for \(agent)", reason)
         kept("opened: \(how)")
         return "The person opened \(key) to \(agent): \(how). Use use_key; it asks nothing more than one fingerprint."
+    }
+
+    /// A key for a provider that is not saved yet. The person saves and allows it in the app, so this
+    /// only writes the request down and tells them; the agent asks again, or lists, to learn the answer.
+    private func requestUnsaved(provider: String, reason: String, hours: Int?) throws -> String {
+        if let last = AccessRequests.latest(agent: agent, provider: provider, in: requests()) {
+            switch last.answer?.event {
+            case .allowed?:
+                if let key = last.answer?.key, policy.level(of: key, at: now()) != nil, policy.admits(agent: agent, for: key) {
+                    return "The person saved a \(provider) key as \(key) and opened it to \(agent). Use use_key with key \(key)."
+                }
+            case .declined? where now().timeIntervalSince(last.answer?.at ?? .distantPast) < 3600:
+                throw VaultError("the person said no to a \(provider) key within the hour. Ask them in the conversation instead")
+            case nil:
+                return "Still waiting: the person saves the \(provider) key in Keyreeve. Ask them in the conversation, then call request_access again."
+            default:
+                break
+            }
+        }
+        guard !held.refused.contains(provider) else {
+            throw VaultError("the person already said no to a \(provider) key in this session. Ask them in the conversation instead")
+        }
+        let entry = AccessRequests.Entry(
+            id: AccessRequests.newID(), at: now(), event: .asked, agent: agent, provider: provider, reason: reason, hours: hours)
+        try addRequest(entry)
+        log("requested", provider, "not saved yet", reason)
+        switch announce(entry) {
+        case .deny:
+            held.refused.insert(provider)
+            try addRequest(AccessRequests.Entry(id: entry.id, at: now(), event: .declined, agent: agent, provider: provider))
+            log("denied", provider, "access request", reason)
+            throw VaultError("the person said no to a \(provider) key")
+        case .open, .later:
+            return "Waiting: no \(provider) key is saved yet, and the request is in Keyreeve for the person to save one and allow it. Ask them in the conversation, then call request_access again."
+        }
     }
 
     /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.
@@ -798,7 +863,7 @@ public struct AgentBridge {
         [
             "name": "request_access",
             "description":
-                "Ask the person to open a closed key, one that list_keys shows as closed. Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they lock the app, with one fingerprint and no more questions. Nothing is opened until they decide.",
+                "Ask the person to open a closed key, one that list_keys shows as closed, or to save one for a provider that list_keys shows as not saved yet (give the provider as key). Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they lock the app, with one fingerprint and no more questions. Nothing is opened until they decide.",
             "inputSchema": [
                 "type": "object",
                 "properties": [

@@ -76,6 +76,13 @@ public struct MainView: View {
             .background(Theme.background)
             .navigationTitle(title)
             .toolbar { toolbar }
+            // An agent's request opens the app: show it where it is answered.
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                model.reloadRequests()
+            }
+            .onChange(of: model.pendingRequests.map(\.id)) { old, new in
+                if !Set(new).subtracting(old).isEmpty { selection = .agents }
+            }
         }
     }
 

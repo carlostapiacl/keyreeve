@@ -42,6 +42,8 @@ public final class AppModel: ObservableObject {
     @Published public var rotations: [RotationStatus] = []
     @Published public var places: [String: KeyPlaces] = [:]
     @Published public var agentPolicy = AgentPolicy()
+    /// Agents' requests for keys not saved yet, with no answer.
+    @Published public var pendingRequests: [AccessRequests.Entry] = []
     @Published public var keyIndex = KeyIndex()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
@@ -175,6 +177,7 @@ public final class AppModel: ObservableObject {
         usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
+        reloadRequests()
     }
 
     public func chooseFolder() {

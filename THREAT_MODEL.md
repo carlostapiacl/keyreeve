@@ -66,6 +66,8 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   for its keys, and a deleted file loses your keys. Keep backups, and watch for prompts you did not expect.
 - **A key in use is in memory,** in the variable `run` sets and in the command that receives it.
 - **The recovery key opens everything.** Whoever holds it does not need the Mac.
+- **A copy of the vault is every key, sealed.** It opens only with the recovery key, so keep the two apart. A copy also keeps keys
+  you later replaced or revoked, as they were on that day.
 - **The app's lock covers the window.** The catalog it shows is a plain file with names and results, and it never holds
   a value.
 - **A program of yours is yours.** A provider file you approved can run a program with your permissions, and it sees the
@@ -73,7 +75,7 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   that does not make a bad program safe. Read what you approve. The hash lives in a file you own, so another program running
   as you could change it too.
 - **The weekly check runs with no fingerprint.** It covers only keys you set to "Agents can use it", and it reads them from
-  your files. Turn it off in Settings.
+  your files, so a key whose file left the folder is skipped and not reported. Turn it off in Settings.
 - **A fingerprint lasts a while.** During the period you choose, 5 minutes by default, the app checks "Ask me" keys without
   asking. It applies to buttons in the app alone. Locking ends it, and the vault asks every time.
 - **One fingerprint opens a whole batch.** The prompt states how many keys, and not which. While a batch runs, its opened

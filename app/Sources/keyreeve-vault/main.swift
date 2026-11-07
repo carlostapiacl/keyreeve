@@ -23,6 +23,7 @@ do {
     case "export": try exportKey()
     case "check-recovery": try checkRecovery()
     case "recover": try recoverVault()
+    case "backup": try backupVault()
     case "--help", "-h", "help": print(help)
     default: fail(help, code: 2)
     }

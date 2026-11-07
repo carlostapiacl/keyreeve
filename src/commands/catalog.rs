@@ -48,21 +48,8 @@ pub fn run_catalog(args: &[String]) -> ExitCode {
     let result = (|| -> Result<Vec<catalog::Row>, String> {
         let text = fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
         let mut items = catalog::parse_inventory(&text).map_err(|e| format!("{input}: {e}"))?;
-        // Files moved out after sealing stay on the list, since the vault still holds them.
         if let Some(path) = found.get("--moved") {
-            match fs::read_to_string(path) {
-                Ok(text) => {
-                    let moved =
-                        catalog::parse_inventory(&text).map_err(|e| format!("{path}: {e}"))?;
-                    for item in moved {
-                        if !items.iter().any(|known| known.path == item.path) {
-                            items.push(item);
-                        }
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("{path}: {e}")),
-            }
+            catalog::add_moved(&mut items, Path::new(path))?;
         }
         let mut rules = match found.get("--rules") {
             Some(path) => {

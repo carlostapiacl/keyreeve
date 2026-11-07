@@ -250,6 +250,41 @@ struct KeeperTests {
         XCTAssertEqual(moved.paths, [])
     }
 
+    @Test func testASealedKeyDeletedByHandStaysOnTheList() throws {
+        let (root, _, _) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = { (path: String) in #"{"path":"\#(path)","modified":1,"mode":"600","format":"text","fields":[],"kinds":[]}"# }
+        let before = Data(#"{"schema":1,"items":[\#(item("sealed.txt")),\#(item("plain.txt")),\#(item("still.txt"))]}"#.utf8)
+        let inventory = root.appendingPathComponent("inventory.json")
+        try #"{"schema":1,"items":[\#(item("still.txt"))]}"#.write(to: inventory, atomically: true, encoding: .utf8)
+        let moved = MovedOriginals(ledger: root.appendingPathComponent("moved.json"), destination: root.appendingPathComponent("originals"))
+        // Only a sealed key that the scan no longer found is kept. One that is not sealed is gone for good.
+        XCTAssertEqual(try moved.keepSealed(["sealed.txt", "still.txt"], before: before, inventory: inventory), ["sealed.txt"])
+        XCTAssertEqual(moved.paths, ["sealed.txt"])
+        // A second scan adds nothing twice, and there is nothing to put back.
+        XCTAssertEqual(try moved.keepSealed(["sealed.txt"], before: before, inventory: inventory), [])
+        XCTAssertEqual(try moved.putBack(["sealed.txt"], to: root), [])
+    }
+
+    @Test func testABackupIsTheSealedFileAndNeverReplacesAnother() throws {
+        let (root, _, store) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shelf = root.appendingPathComponent("shelf")
+        try FileManager.default.createDirectory(at: shelf, withIntermediateDirectories: true)
+        try store.update { try $0.add(name: "a.txt", value: Data("CANARY".utf8)) }
+        let day = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = try store.backup(to: shelf, now: day)
+        let second = try store.backup(to: shelf, now: day)
+        #expect(first != second)
+        XCTAssertEqual(try Data(contentsOf: first), try Data(contentsOf: store.directory.appendingPathComponent("vault.json")))
+        XCTAssertFalse(try String(contentsOf: first, encoding: .utf8).contains("CANARY"))
+        let mode = try FileManager.default.attributesOfItem(atPath: first.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(mode?.intValue, 0o600)
+        // The chip's part stays behind: it is of no use on another Mac.
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: shelf.path).count, 2)
+        XCTAssertThrowsError(try VaultStore(directory: root.appendingPathComponent("none")).backup(to: shelf))
+    }
+
     @Test func testWritersAtTheSameTimeLoseNothing() throws {
         let (root, _, store) = try folder()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -126,6 +126,13 @@ func askApproval(_ request: AgentRequest) -> AgentApproval? {
     deny.keyEquivalent = "\u{1b}"
     alert.window.level = .floating
     let answer = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+    // This process goes back to reading stdin and never runs an event loop, so the window would stay
+    // on screen after the click. Take it down and let the window server hear it before going on.
+    alert.window.orderOut(nil)
+    let until = Date().addingTimeInterval(0.1)
+    while let event = app.nextEvent(matching: .any, until: until, inMode: .default, dequeue: true) {
+        app.sendEvent(event)
+    }
     guard answer >= 0, answer < AgentApproval.choices.count else { return nil }
     return AgentApproval.choices[answer].approval
 }

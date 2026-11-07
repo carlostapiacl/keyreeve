@@ -474,7 +474,10 @@ public struct AgentBridge {
                         parts.append("use_key with any command" + (info?.variable.map { ", as \($0)" } ?? ""))
                     }
                 }
-                let programs = (policy.commands[key] ?? []).filter { policy.allows($0, with: key) }
+                // Only programs run_with_key would accept, so an agent is not sent to one that is refused.
+                let programs = (policy.commands[key] ?? []).filter {
+                    policy.allows($0, with: key) && policy.hashes[$0] != nil && pinned($0, policy.hashes[$0])
+                }
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
                 return "\(key): " + parts.joined(separator: "; ")
             }

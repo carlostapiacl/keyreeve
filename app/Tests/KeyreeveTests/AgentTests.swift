@@ -191,6 +191,19 @@ struct AgentTests {
         #expect(try call(bridge(Log()), "run_with_key", arguments).error)
     }
 
+    @Test func testListingLeavesOutAProgramThatWouldBeRefused() throws {
+        let unpinned = AgentBridge(
+            policy: AgentPolicy(commands: ["a.env": ["deploy.sh"]], hashes: [:]),
+            names: { ["a.env"] }, open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") },
+            record: { _, _, _ in }, pinned: { _, _ in true })
+        #expect(try call(unpinned, "list_keys", [:]).text == "a.env: asks the person")
+        let changed = AgentBridge(
+            policy: Self.pinnedPolicy(["a.env": ["deploy.sh"]]),
+            names: { ["a.env"] }, open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") },
+            record: { _, _, _ in }, pinned: { _, _ in false })
+        #expect(try call(changed, "list_keys", [:]).text == "a.env: asks the person")
+    }
+
     @Test func testListingHoldsNoValue() throws {
         let log = Log()
         let text = try call(bridge(log), "list_keys", [:]).text

@@ -112,6 +112,12 @@ extension AppModel {
         Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: path, timeout: 2) }
     }
 
+    /// Quitting ends them as locking does. It waits, since the app is gone once this returns.
+    public func closeServicePermissionsBeforeQuitting() {
+        AgentBridge.endAll(home: files.directory)
+        _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: files.keySocket.path, timeout: 2)
+    }
+
     private func provider(of item: CatalogItem) -> ProviderInfo? {
         item.recipes.first.flatMap { id in providers.all.first { $0.id == id } }
     }

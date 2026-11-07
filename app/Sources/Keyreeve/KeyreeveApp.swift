@@ -64,6 +64,10 @@ struct KeyreeveApp: App {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 model.windowGotFocus()
             }
+            // "Until you lock the app" also ends when the app does.
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                model.closeServicePermissionsBeforeQuitting()
+            }
         }
         .defaultSize(width: 1180, height: 720)
         .commands {

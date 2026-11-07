@@ -108,7 +108,14 @@ func serveKeys() throws {
     let descriptor = try KeySocket.listen(path: socketPath)
     // Beside this program, in the app's bundle.
     let command = ownPath().deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
-    let proxy = try? ProxyProcess(binary: command, runFolder: home.appendingPathComponent("run"))
+    let proxy: ProxyProcess?
+    do {
+        proxy = try ProxyProcess(binary: command, runFolder: home.appendingPathComponent("run"))
+    } catch {
+        // SSH keys still work without it, so the service runs, but say why use_key will fail.
+        FileHandle.standardError.write(Data("keyreeve-vault: no proxy, \(command.path) did not start: \(error)\n".utf8))
+        proxy = nil
+    }
     let service = KeyService(
         index: { try KeyIndex.load(from: keysFile) },
         open: { source, prompt in

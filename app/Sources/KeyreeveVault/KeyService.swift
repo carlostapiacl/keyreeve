@@ -330,6 +330,10 @@ public final class KeyService: @unchecked Sendable {
             throw VaultError(
                 "\(id) has no provider, so nothing says where it may go. Set one (`ssh` for an SSH key), or use --real")
         }
+        guard provider == Self.sshProvider || proxy != nil else {
+            try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "no proxy")
+            throw VaultError("the proxy is not available")
+        }
         if let existing = grantInForce(key: id, program: name) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)

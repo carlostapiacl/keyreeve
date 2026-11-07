@@ -47,6 +47,8 @@ let help = """
           Check a recovery key, read from stdin, against this vault.
       keyreeve-vault recover
           Move this vault to this Mac's chip, using a recovery key read from stdin.
+      keyreeve-vault backup <folder>
+          Copy the sealed vault into a folder. It needs no fingerprint and opens with the recovery key.
 
     KEYREEVE_VAULT sets the folder. The default is ~/.keyreeve/vault.
 

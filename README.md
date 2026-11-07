@@ -126,7 +126,8 @@ open app/dist/Keyreeve.app
 ```
 
 Check all sends each key to its own provider, at most six at a time, with progress and a summary. In Settings you can
-also check keys set to "Agents can use it" every week, which needs no fingerprint and notifies you if one stops working.
+also check keys set to "Agents can use it" every week, which needs no fingerprint and notifies you if one stops working. It
+reads files, so a key whose original left the folder is skipped, and you check it from the app.
 
 The first time, choose your keys folder. No Terminal is needed after building. The app scans the folder each time it
 opens, and shows what to do first, with a button on each item. To revoke a key, open the provider's page, revoke it, and
@@ -224,7 +225,12 @@ whether it matches. From then on, checks, identification and your own actions us
 If a file changes after you seal it, the app says so and uses the file, because the sealed copy may be an old key.
 **Seal the changed files again** replaces the copy, and the old one stays sealed. After a comparison, you can move the files that
 matched out of the keys folder to `~/.keyreeve/originals`. They stay readable there, the list keeps showing them and you can put them
-back. keyreeve never deletes them, so that step is yours once you trust the vault.
+back. keyreeve never deletes them, so that step is yours once you trust the vault. A sealed key whose file you remove by hand also
+stays on the list, and if the whole keys folder is gone, the app says so and keeps what the vault holds.
+
+**Copy the vault…** saves the sealed vault file in a folder you choose, with no fingerprint. On another Mac, put that file at
+`~/.keyreeve/vault/vault.json` and run `keyreeve-vault recover` with your recovery key. `keyreeve-vault backup <folder>` does the same
+from a terminal.
 
 The same vault works from a terminal:
 

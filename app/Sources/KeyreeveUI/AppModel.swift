@@ -19,6 +19,7 @@ public enum SettingsKey {
     public static let appearance = "appearance"
     public static let fingerprintMinutes = "fingerprintMinutes"
     public static let doneRotations = "doneRotations"
+    public static let lastVaultBackup = "lastVaultBackup"
 }
 
 @MainActor
@@ -192,11 +193,20 @@ public final class AppModel: ObservableObject {
             if binary == nil { message = T("This app was built without its command") }
             return
         }
+        guard FileManager.default.fileExists(atPath: folder.path) else {
+            message = T("The keys folder is gone. Keys in the vault stay on the list.")
+            return
+        }
         busy = true
         message = T("Scanning…")
         let files = self.files
+        let store = vaultStore
         Task.detached {
-            let result = Result { try CheckRunner.refresh(binary: binary, keysFolder: folder, files: files) }
+            let before = try? Data(contentsOf: files.inventory)
+            let result = Result {
+                try CheckRunner.refresh(binary: binary, keysFolder: folder, files: files)
+                try Self.keepSealed(before: before, folder: folder, files: files, store: store, binary: binary)
+            }
             await MainActor.run {
                 self.busy = false
                 self.load()
@@ -206,6 +216,16 @@ public final class AppModel: ObservableObject {
                     self.message = (error as? CheckError)?.description ?? T("The scan did not finish")
                 }
             }
+        }
+    }
+
+    /// A sealed key whose file left the folder stays on the list, since the vault still holds it.
+    nonisolated static func keepSealed(before: Data?, folder: URL, files: KeyreeveFiles, store: VaultStore, binary: URL) throws {
+        guard let vault = try? store.load() else { return }
+        let sealed = Set(vault.entries.filter { !VaultKeeper.isFromAnotherFolder($0.value, folder: folder) }.keys)
+        let ledger = MovedOriginals(ledger: files.moved, destination: files.originals)
+        if try !ledger.keepSealed(sealed, before: before, inventory: files.inventory).isEmpty {
+            try CheckRunner.rebuildCatalog(binary: binary, files: files)
         }
     }
 

@@ -184,8 +184,8 @@ pub fn run_check_free(args: &[String]) -> ExitCode {
     match schedule::run(&schedule::default_home()) {
         Ok(summary) => {
             println!(
-                "{} checked, {} work, {} stopped working",
-                summary.checked, summary.works, summary.stopped
+                "{} checked, {} work, {} stopped working, {} not in the folder",
+                summary.checked, summary.works, summary.stopped, summary.skipped
             );
             if notify {
                 schedule::notify(&summary, spanish);

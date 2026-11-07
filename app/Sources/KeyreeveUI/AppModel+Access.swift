@@ -107,6 +107,7 @@ extension AppModel {
 
     /// Locking the app ends what the key service holds too. If it is not running, nothing is lost.
     func closeServicePermissions() {
+        AgentBridge.endAll(home: files.directory)
         let path = files.keySocket.path
         Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: path, timeout: 2) }
     }
@@ -210,6 +211,12 @@ extension AppModel {
         var policy = agentPolicy
         if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
         savePolicy(policy)
+    }
+
+    /// Ends what agents were approved for a while, and every permission the key service holds.
+    public func endAgentApprovals() {
+        closeServicePermissions()
+        message = T("Agents must ask again")
     }
 
     public func disallow(program: String, keyID id: String) {

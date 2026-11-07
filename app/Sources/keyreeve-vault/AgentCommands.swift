@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import KeyreeveVault
 
@@ -73,10 +74,42 @@ func serveAgents() throws {
             // Marked here, since a path's folders are dropped from the log.
             let program = URL(fileURLWithPath: $1).lastPathComponent
             store.recordUse(of: $0, by: "agent:\(program)", reason: $2)
-        })
+        },
+        approve: askApproval,
+        endedAt: { AgentBridge.endedAt(home: home) })
     while let line = readLine() {
         if let answer = bridge.handle(line) {
             FileHandle.standardOutput.write(Data((answer + "\n").utf8))
         }
     }
+}
+
+/// A window that shows what the agent asks for and lets the person choose how long a yes lasts.
+/// The fingerprint comes after, with keyreeve's own words.
+func askApproval(_ request: AgentRequest) -> AgentApproval? {
+    let spanish = Locale.preferredLanguages.first?.hasPrefix("es") ?? false
+    let labels: [String: String] = spanish
+        ? ["Once": "Solo esta vez", "1 hour": "1 hora", "4 hours": "4 horas", "8 hours": "8 horas", "24 hours": "24 horas"]
+        : [:]
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    app.activate(ignoringOtherApps: true)
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = spanish
+        ? "Un agente quiere usar la clave \(request.key)"
+        : "An agent wants to use the key \(request.key)"
+    let said = request.reason.isEmpty ? "-" : "\u{201C}\(request.reason)\u{201D}"
+    alert.informativeText = spanish
+        ? "Programa: \(request.program)\n\nLo que dice el agente, en sus palabras:\n\(said)\n\nDespués te pide la huella. Lo que permitas por un tiempo vale solo para este programa en esta sesión del agente, y termina al bloquear la app."
+        : "Program: \(request.program)\n\nWhat the agent says, in its own words:\n\(said)\n\nYour fingerprint comes next. A yes for a while covers only this program in this agent session, and ends when you lock the app."
+    for choice in AgentApproval.choices {
+        alert.addButton(withTitle: labels[choice.label] ?? choice.label)
+    }
+    let deny = alert.addButton(withTitle: spanish ? "No permitir" : "Deny")
+    deny.keyEquivalent = "\u{1b}"
+    alert.window.level = .floating
+    let answer = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+    guard answer >= 0, answer < AgentApproval.choices.count else { return nil }
+    return AgentApproval.choices[answer].approval
 }

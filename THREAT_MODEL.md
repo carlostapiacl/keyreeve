@@ -108,7 +108,10 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   trust. Decrypting with the chip was never compared with age's plugin for it.
 - **An agent's program holds the key.** Over MCP an agent runs programs a person allowed, with a fingerprint each time. The output
   hides the plain key and its base64, and a program can hide it another way, so the allowed list is the protection. The agent runs as
-  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it names the program and the key.
+  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it names the program and the key. The reason
+  in the request window is the agent's own text, set apart in quotes, and it can say anything.
+- **A yes for hours keeps the key open.** The agent server holds the opened key in memory until the time runs out, the agent session
+  ends, or you lock the app. During that time the allowed program runs with it without asking, with whatever arguments the agent picks.
 - **A copied key is on the clipboard for up to 60 seconds.** Any program running as you can read it in that time. The marks that ask
   history tools to skip it are a convention, and a tool can ignore them.
 - **The list of programs that cannot be allowed is not complete.** It stops the obvious ways to read a key. A program you allow

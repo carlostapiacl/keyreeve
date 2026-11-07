@@ -74,6 +74,74 @@ struct AgentTests {
         #expect(log.opened == ["a.env"])
     }
 
+    final class Clock: @unchecked Sendable {
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        var ended: Date?
+        var answers: [AgentApproval?] = []
+        var asked: [AgentRequest] = []
+    }
+
+    func approving(_ log: Log, _ clock: Clock) -> AgentBridge {
+        AgentBridge(
+            policy: { AgentPolicy(commands: ["a.env": ["deploy.sh", "check.sh"]]) }, names: { ["a.env"] },
+            open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
+            run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
+            record: { key, _, _ in log.recorded.append(key) },
+            approve: { request in
+                clock.asked.append(request)
+                return clock.answers.isEmpty ? nil : clock.answers.removeFirst()
+            },
+            endedAt: { clock.ended }, now: { clock.now })
+    }
+
+    @Test func testOnceAsksEachTimeAndANoOpensNothing() throws {
+        let log = Log(), clock = Clock()
+        let bridge = approving(log, clock)
+        clock.answers = [.once, .once]
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(log.opened.count == 2)
+        clock.answers = [nil]
+        let refused = try call(bridge, "run_with_key", run)
+        #expect(refused.error && refused.text.contains("said no"))
+        #expect(log.opened.count == 2 && log.ran.count == 2)
+        #expect(clock.asked.count == 3)
+    }
+
+    @Test func testAYesForHoursCoversThatProgramUntilItEndsOrTheAppLocks() throws {
+        let log = Log(), clock = Clock()
+        let bridge = approving(log, clock)
+        clock.answers = [.lasting(3600)]
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        clock.now += 1800
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(log.opened.count == 1 && clock.asked.count == 1 && log.ran.count == 2)
+        // Another program with the same key asks on its own.
+        var other = run
+        other["command"] = ["check.sh"]
+        clock.answers = [.once]
+        #expect(!(try call(bridge, "run_with_key", other).error))
+        #expect(clock.asked.count == 2)
+        // Past the hour it asks again.
+        clock.now += 1801
+        clock.answers = [.lasting(14_400)]
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(clock.asked.count == 3)
+        // Locking the app ends it at once.
+        clock.now += 60
+        clock.ended = clock.now
+        clock.answers = [nil]
+        #expect(try call(bridge, "run_with_key", run).error)
+        #expect(clock.asked.count == 4)
+    }
+
+    @Test func theAgentsReasonIsOneCleanLine() {
+        let request = AgentRequest(key: "a", program: "/x/y/deploy.sh", reason: "  ship it\nnow\u{7}" + String(repeating: "z", count: 300))
+        #expect(request.program == "deploy.sh")
+        #expect(!request.reason.contains("\n") && request.reason.hasPrefix("ship it now"))
+        #expect(request.reason.count == 200)
+    }
+
     @Test func testBase64OfTheValueIsCaughtToo() throws {
         let encoded = Data(Self.canary.utf8).base64EncodedString()
         let result = try call(bridge(Log(), output: encoded), "run_with_key", run)

@@ -160,9 +160,56 @@ public struct AgentPolicy: Equatable, Sendable {
     private static func quoted(_ text: String) -> String { tomlQuoted(text) }
 }
 
+/// What an agent asks for, shown to the person before the fingerprint. The key and the program come
+/// from keyreeve; the reason is the agent's own words, cleaned and cut.
+public struct AgentRequest: Equatable, Sendable {
+    public let key: String
+    public let program: String
+    public let reason: String
+
+    public init(key: String, program: String, reason: String) {
+        self.key = key
+        self.program = URL(fileURLWithPath: program).lastPathComponent
+        let flat = String(reason.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
+        self.reason = String(flat.trimmingCharacters(in: .whitespaces).prefix(200))
+    }
+}
+
+/// How long the person's yes lasts, for this key and program in this agent's session.
+public enum AgentApproval: Equatable, Sendable {
+    case once
+    case lasting(TimeInterval)
+
+    public static let choices: [(label: String, approval: AgentApproval)] = [
+        ("Once", .once), ("1 hour", .lasting(3600)), ("4 hours", .lasting(4 * 3600)),
+        ("8 hours", .lasting(8 * 3600)), ("24 hours", .lasting(24 * 3600)),
+    ]
+}
+
 /// A small MCP server over stdin and stdout. An agent can learn which keys it may use and run an
 /// allowed program with one, and no tool returns a value.
 public struct AgentBridge {
+    /// Opened keys a person approved for a while, held by this server alone, which ends with the agent's session.
+    final class Held: @unchecked Sendable {
+        var entries: [String: (from: Date, until: Date, opened: Data)] = [:]
+    }
+
+    /// Ends everything agents were approved for a while: the app's lock and `revoke` touch this file, and
+    /// each agent server compares its approvals with it.
+    public static func endedFile(home: URL) -> URL { home.appendingPathComponent("run/agents-ended") }
+
+    public static func endAll(home: URL) {
+        let file = endedFile(home: home)
+        try? FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? Data().write(to: file)
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+    }
+
+    public static func endedAt(home: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: endedFile(home: home).path))?[.modificationDate] as? Date
+    }
+
     public struct Output: Equatable {
         public let status: Int32
         public let text: String
@@ -181,6 +228,12 @@ public struct AgentBridge {
     let open: (_ key: String, _ prompt: String) throws -> Data
     let run: (_ command: [String], _ variable: String, _ value: String) throws -> Output
     let record: (_ key: String, _ program: String, _ reason: String) -> Void
+    /// Asks the person, before the fingerprint. Nil is a no.
+    let approve: (AgentRequest) -> AgentApproval?
+    /// When the person last ended every approval, if ever.
+    let endedAt: () -> Date?
+    let now: () -> Date
+    let held = Held()
 
     public init(
         policy: AgentPolicy, names: @escaping () throws -> [String],
@@ -195,13 +248,30 @@ public struct AgentBridge {
         policy: @escaping () -> AgentPolicy, names: @escaping () throws -> [String],
         open: @escaping (_ key: String, _ prompt: String) throws -> Data,
         run: @escaping (_ command: [String], _ variable: String, _ value: String) throws -> Output,
-        record: @escaping (_ key: String, _ program: String, _ reason: String) -> Void
+        record: @escaping (_ key: String, _ program: String, _ reason: String) -> Void,
+        approve: @escaping (AgentRequest) -> AgentApproval? = { _ in .once },
+        endedAt: @escaping () -> Date? = { nil },
+        now: @escaping () -> Date = Date.init
     ) {
         currentPolicy = policy
         self.names = names
         self.open = open
         self.run = run
         self.record = record
+        self.approve = approve
+        self.endedAt = endedAt
+        self.now = now
+    }
+
+    /// The opened key, if the person approved this pair for a while and nothing ended it since.
+    private func stillHeld(_ slot: String) -> Data? {
+        guard let entry = held.entries[slot] else { return nil }
+        let ended = endedAt().map { $0 >= entry.from } ?? false
+        guard !ended, now() < entry.until else {
+            held.entries[slot] = nil
+            return nil
+        }
+        return entry.opened
     }
 
     /// Answers one line of JSON-RPC, or nothing for a notification.
@@ -270,9 +340,23 @@ public struct AgentBridge {
         guard policy.allows(program, with: key) else {
             throw VaultError("\(program) is not allowed to use \(key). A person allows it in the app, on that key")
         }
-        // The agent's words stay out of the prompt, where they could pose as the app.
-        let prompt = "let an agent run \(URL(fileURLWithPath: program).lastPathComponent) with \(key)"
-        let sealed = try open(key, prompt)
+        let slot = key + "\u{0}" + program
+        let sealed: Data
+        if let opened = stillHeld(slot) {
+            sealed = opened
+        } else {
+            // The person sees the request with the agent's reason, set apart, and chooses how long a yes lasts.
+            guard let approval = approve(AgentRequest(key: key, program: program, reason: reason)) else {
+                throw VaultError("the person said no to \(key) for \(URL(fileURLWithPath: program).lastPathComponent)")
+            }
+            // The agent's words stay out of the fingerprint prompt, where they could pose as the app.
+            let prompt = "let an agent run \(URL(fileURLWithPath: program).lastPathComponent) with \(key)"
+            sealed = try open(key, prompt)
+            if case .lasting(let seconds) = approval {
+                let start = now()
+                held.entries[slot] = (start, start.addingTimeInterval(seconds), sealed)
+            }
+        }
         let value = try EnvReferences.value(in: sealed, field: arguments["field"] as? String)
         record(key, program, reason)
         let output = try run(command, variable, value)

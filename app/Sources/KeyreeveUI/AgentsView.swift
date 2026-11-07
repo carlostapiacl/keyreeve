@@ -24,7 +24,7 @@ struct AgentsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text(T("An agent asks keyreeve to run a program with a key. You allow the pair here, each use asks for your finger, and the agent never sees the value."))
+                Text(T("An agent asks keyreeve to run a program with a key and says why. You allow the pair here. When it asks, you choose once or for 1 to 24 hours, then confirm with your finger. The agent never sees the value."))
                     .font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 connectionCard
@@ -79,6 +79,9 @@ struct AgentsView: View {
                 HStack {
                     SectionTitle(T("2. What agents may use"))
                     Spacer()
+                    Button(T("Make them ask again")) { model.endAgentApprovals() }
+                        .buttonStyle(KRButtonStyle())
+                        .help(T("Ends what you allowed for 1 to 24 hours. Locking the app does the same."))
                     Button(T("Allow a key…")) { adding = true }
                         .buttonStyle(KRButtonStyle(primary: true))
                         .disabled(model.agentKeys.isEmpty)

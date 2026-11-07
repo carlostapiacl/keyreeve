@@ -340,8 +340,11 @@ An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve
 whether Claude Code is connected and copies the command that connects it in every folder. An agent can list the keys it may use and
 run a program with one, and no tool returns a value. Nothing is allowed until you press **Allow a key…** there, or **Allow a program**
 on a key, which writes `~/.keyreeve/agents.toml` ([example](examples/agents.toml)). The server reads that file on each request, so a
-change counts without restarting the agent. A file with a mistake allows nothing. Each use asks for your finger, with a prompt that shows the program and the key, and the agent's
-reason goes in the usage log.
+change counts without restarting the agent. A file with a mistake allows nothing.
+
+When an agent asks, a window shows the key, the program and the agent's reason in its own words. You choose **Once**, or 1, 4, 8 or
+24 hours, or **Deny**, and then confirm with your finger. A yes for hours covers that program and key in that agent session alone, and
+ends when you lock the app, run `keyreeve-vault revoke` or press **Make them ask again**. The reason also goes in the usage log.
 
 The agent chooses the arguments, so allow programs that do one job. Shells, interpreters, `curl`, `env` and others like them cannot
 be allowed at all. The output hides the plain key and its base64, but a program can hide it in other ways. A run stops after 2 minutes.

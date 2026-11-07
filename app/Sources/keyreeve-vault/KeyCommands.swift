@@ -163,6 +163,7 @@ func showGrants() throws {
 }
 
 func revokeGrants() throws {
+    if arguments.count == 1 { AgentBridge.endAll(home: home) }
     _ = try askService(KeyService.Request(op: "revoke", key: arguments.count > 1 ? arguments[1] : nil))
     print("Done")
 }

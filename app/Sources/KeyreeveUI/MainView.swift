@@ -30,6 +30,8 @@ public struct MainView: View {
     @State private var chosenRows: Set<CatalogItem.ID>
     @State private var confirmCheck = false
     @State private var sorting = false
+    /// What this view worked out from the keys, kept until the keys, the filter or the search change.
+    @State private var memo = ViewMemo()
 
     public init(model: AppModel, initial: Sidebar = .home, chosen: CatalogItem.ID? = nil) {
         self.model = model
@@ -64,29 +66,35 @@ public struct MainView: View {
         })
     }
 
-    private var shown: [CatalogItem] { filter(items, by: current, search: search) }
-    private var active: [CatalogItem] { items.filter { !$0.isArchived } }
-    private var toReview: Int { items.filter { $0.attention != nil }.count }
+    private var shown: [CatalogItem] {
+        memo.value("shown", key: [AnyHashable(model.itemsVersion), current, search]) { filter(items, by: current, search: search) }
+    }
 
     private var chosenItem: CatalogItem? {
         guard chosenRows.count == 1, let path = chosenRows.first else { return nil }
         // Only from what the list shows, so the detail never speaks of a key another filter hid.
-        return shown.first { $0.path == path }
+        return memo.value("chosen", key: [AnyHashable(model.itemsVersion), current, search, path]) { shown.first { $0.path == path } }
     }
 
     private var scope: [CatalogItem] {
-        chosenRows.isEmpty ? shown : shown.filter { chosenRows.contains($0.id) }
+        memo.value("scope", key: [AnyHashable(model.itemsVersion), current, search, chosenRows]) {
+            chosenRows.isEmpty ? shown : shown.filter { chosenRows.contains($0.id) }
+        }
     }
-    private var checkable: [CatalogItem] { scope.filter(model.providers.canCheck) }
-    private var identifiable: [CatalogItem] { scope.filter(model.providers.canIdentify) }
+    private var checkable: [CatalogItem] {
+        memo.value("checkable", key: [AnyHashable(model.itemsVersion), current, search, chosenRows]) { scope.filter(model.providers.canCheck) }
+    }
+    private var identifiable: [CatalogItem] {
+        memo.value("identifiable", key: [AnyHashable(model.itemsVersion), current, search, chosenRows]) { scope.filter(model.providers.canIdentify) }
+    }
 
     public var body: some View {
         NavigationSplitView {
             // By task, not by part of the app: what you have, what needs you, how it is kept. The tools follow.
             List(selection: sidebarSelection) {
                 Label(T("Home"), systemImage: "house").tag(Sidebar.home)
-                sidebarRow(T("My keys"), "key", .all, active.count)
-                sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
+                sidebarRow(T("My keys"), "key", .all, model.summary.active)
+                sidebarRow(T("To review"), "exclamationmark.circle", .attention, model.summary.toReview)
                 Label(T("Security and backup"), systemImage: "lock.shield").tag(Sidebar.vault)
                 Section(T("Tools")) {
                     // A request waiting shows here and in the menu bar, and never moves you away from what you were doing.
@@ -119,6 +127,8 @@ public struct MainView: View {
                 content
                 statusBar
             }
+            // Work in progress shows at the top where it is seen, and the app stays usable meanwhile.
+            .safeAreaInset(edge: .top, spacing: 0) { if model.busy { WorkingBanner(message: model.message, progress: model.progress) } }
             .background(Theme.background)
             .navigationTitle(title)
             .toolbar { toolbar }
@@ -146,7 +156,7 @@ public struct MainView: View {
 
     @ViewBuilder private var content: some View {
         if selection == .home {
-            HomeView(stats: CatalogStats(items: items), activity: model.activity, model: model) { target, path in
+            HomeView(stats: model.summary.stats, activity: model.activity, model: model) { target, path in
                 go(target)
                 search = ""
                 chosenRows = path.map { [$0] } ?? []
@@ -204,7 +214,7 @@ public struct MainView: View {
 
     private func filterChip(_ title: String, _ target: Sidebar) -> some View {
         FilterChip(
-            title: title, count: filter(items, by: target, search: "").count,
+            title: title, count: model.summary.count(target),
             isOn: (pressedChip ?? current) == target
         ) {
             // Filtering a long list takes a moment, so the chip answers first and the list follows.
@@ -267,8 +277,10 @@ public struct MainView: View {
     }
 
     private var keyList: some View {
-        List(shown, selection: $chosenRows) { item in
-            KeyRow(item: item, compact: chosenItem != nil)
+        // Worked out once for the whole list, not once for each row.
+        let compact = chosenItem != nil
+        return List(shown, selection: $chosenRows) { item in
+            KeyRow(item: item, compact: compact)
                 .listRowSeparatorTint(Theme.border)
                 .listRowBackground(Color.clear)
         }
@@ -309,7 +321,7 @@ public struct MainView: View {
                     Button(T("Archive")) { go(.archive) }
                     // Projects were sidebar rows; they are filters of My keys now.
                     Menu(T("Projects")) {
-                        ForEach(projectTags(in: active), id: \.tag) { entry in
+                        ForEach(model.summary.projects, id: \.tag) { entry in
                             Button("\(entry.tag) (\(entry.count))") { go(.tag(entry.tag)) }
                         }
                     }
@@ -396,12 +408,10 @@ public struct MainView: View {
 
     private var statusBar: some View {
         HStack(spacing: 8) {
-            if model.busy { ProgressView().controlSize(.mini) }
-            if let progress = model.progress {
-                Text(T("%d of %d keys", progress.done, progress.total)).monospacedDigit()
-            } else if let message = model.message { Text(message).foregroundStyle(Theme.text) }
+            // While something runs, the banner at the top says so; here stays what it last said.
+            if !model.busy, let message = model.message { Text(message).foregroundStyle(Theme.text) }
             Spacer()
-            if showsList { Text(T("%d of %d", shown.count, active.count)).monospacedDigit() }
+            if showsList { Text(T("%d of %d", shown.count, model.summary.active)).monospacedDigit() }
         }
         .font(Theme.caption)
         .foregroundStyle(Theme.muted)
@@ -412,7 +422,6 @@ public struct MainView: View {
     }
 }
 
-/// One filter above the list. It shows it can be pressed before anything is pressed.
 /// Lays its views out in a row, and goes on to the next line when one does not fit.
 struct Wrap: Layout {
     var spacing: CGFloat
@@ -457,6 +466,51 @@ struct Wrap: Layout {
     }
 }
 
+/// Keeps what a view worked out until what it was worked out from changes. A plain class, so filling it
+/// while drawing does not ask for another draw.
+final class ViewMemo {
+    private var kept: [String: (key: AnyHashable, value: Any)] = [:]
+
+    func value<V>(_ name: String, key: [AnyHashable], _ make: () -> V) -> V {
+        let key = AnyHashable(key)
+        if let entry = kept[name], entry.key == key, let value = entry.value as? V { return value }
+        let value = make()
+        kept[name] = (key, value)
+        return value
+    }
+}
+
+/// Says what the app is doing while it works, with how far it got when that is known.
+struct WorkingBanner: View {
+    let message: String?
+    let progress: (done: Int, total: Int)?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let progress, progress.total > 0 {
+                ProgressView(value: Double(progress.done), total: Double(progress.total))
+                    .progressViewStyle(.linear).tint(Theme.onAccent).frame(width: 160)
+            } else {
+                ProgressView().controlSize(.small).tint(Theme.onAccent)
+            }
+            Text(message ?? T("Working…")).fontWeight(.semibold)
+            if let progress, progress.total > 0 {
+                Text(T("%d of %d keys", progress.done, progress.total)).monospacedDigit().opacity(0.8)
+            }
+            Spacer()
+            Text(T("You can keep using the app")).opacity(0.8)
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.onAccent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(Theme.accent)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One filter above the list. It shows it can be pressed before anything is pressed.
 struct FilterChip: View {
     let title: String
     let count: Int

@@ -444,3 +444,29 @@ public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
             return first < second
         }
 }
+
+/// What the lists count, worked out once when the keys change instead of on every draw: with a few
+/// hundred keys, counting them for each chip and each row made a redraw take a noticeable moment.
+public struct CatalogSummary: Sendable {
+    /// The filters with a chip above the list.
+    public static let chips: [Sidebar] = [
+        .all, .checkable, .critical, .result("rejected"), .result("works"), .result("no_answer"), .result(""), .stale, .archive,
+    ]
+
+    public let active: Int
+    public let toReview: Int
+    public let counts: [Sidebar: Int]
+    public let stats: CatalogStats
+    public let projects: [(tag: String, count: Int)]
+
+    public init(items: [CatalogItem], now: Date = Date()) {
+        let unarchived = items.filter { !$0.isArchived }
+        active = unarchived.count
+        toReview = items.filter { $0.attention != nil }.count
+        counts = Dictionary(uniqueKeysWithValues: Self.chips.map { ($0, filter(items, by: $0, search: "").count) })
+        stats = CatalogStats(items: items, now: now)
+        projects = projectTags(in: unarchived)
+    }
+
+    public func count(_ target: Sidebar) -> Int { counts[target] ?? 0 }
+}

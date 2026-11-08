@@ -13,8 +13,12 @@ public enum Language: String, CaseIterable, Sendable {
     /// The language in effect once "system" is resolved.
     public var resolved: Language {
         guard self == .system else { return self }
-        return Locale.preferredLanguages.first?.hasPrefix("es") == true ? .spanish : .english
+        return Self.mac
     }
+
+    /// The Mac's language, read once: every piece of text on screen asks for it, and reading the
+    /// system's list each time made each lookup cost as much as drawing a row.
+    private static let mac: Language = Locale.preferredLanguages.first?.hasPrefix("es") == true ? .spanish : .english
 
     public var locale: Locale {
         Locale(identifier: resolved == .spanish ? "es_CL" : "en_US")
@@ -43,6 +47,8 @@ public let spanish: [String: String] = [
     "Every time": "Cada vez",
     "While this lasts, the app can check keys without asking. Locking it ends the period, and the vault always asks.": "Mientras dure, la app puede probar claves sin preguntar. Bloquearla termina el período, y la bóveda siempre pregunta.",
     "%d of %d keys": "%d de %d claves",
+    "Working…": "Trabajando…",
+    "You can keep using the app": "Puedes seguir usando la app",
     "%d checked": "%d probadas",
     "Check all": "Probar todas",
     "Check all %d keys?": "¿Probar las %d claves?",

@@ -12,11 +12,14 @@ struct VaultView: View {
     /// Opens another section: Rotation and Agents are linked from here, not repeated.
     var go: (Sidebar) -> Void = { _ in }
     @State private var chosen: Set<String> = []
+    /// Lists worked out from the keys, kept until the keys change: each is read many times per draw.
+    @State private var memo = ViewMemo()
 
-    private var sealed: [CatalogItem] { filter(model.items, by: .vault, search: "") }
-    private var candidates: [CatalogItem] { vaultCandidates(model.items) }
-    private var outdated: Int { sealed.filter { $0.vault == .outdated }.count }
-    private var moved: [CatalogItem] { model.items.filter(\.originalMoved) }
+    private var version: [AnyHashable] { [model.itemsVersion] }
+    private var sealed: [CatalogItem] { memo.value("sealed", key: version) { filter(model.items, by: .vault, search: "") } }
+    private var candidates: [CatalogItem] { memo.value("candidates", key: version) { vaultCandidates(model.items) } }
+    private var outdated: Int { memo.value("outdated", key: version) { sealed.filter { $0.vault == .outdated }.count } }
+    private var moved: [CatalogItem] { memo.value("moved", key: version) { model.items.filter(\.originalMoved) } }
     private var openRotations: [RotationStatus] {
         model.rotations.filter { $0.isOpen || (!$0.manual.isEmpty && !model.isDismissed($0)) }
     }

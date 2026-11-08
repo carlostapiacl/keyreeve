@@ -118,14 +118,20 @@ The `hetzner`, `langsmith` and `aws` recipes have passed with a real key.
 ## The Mac app
 
 A native window over your keys, with no web inside, in English and Spanish. It opens with your fingerprint or your
-Mac's password. This lock covers the window. Keys are protected by the vault below.
+Mac's password, or with neither if you turn that off in Settings, since the list holds no value. This lock covers the
+window. Keys are protected by the vault below.
+
+It is laid out by task. **Home** leads with what needs you, each item with its action. **My keys** is the list, with filters
+for archived keys and projects. **To review** holds what needs a look, and **Security and backup** the vault. **Agents**,
+**Rotation** and **Log** sit apart, under Tools. A key's page has four tabs: Summary, Use, Security and History, with the
+technical parts behind "More details and options".
 
 ```bash
 app/build-app.sh
 open app/dist/Keyreeve.app
 ```
 
-Check all sends each key to its own provider, at most six at a time, with progress and a summary. In Settings you can
+**Check all**, in My keys, asks first, then sends each key to its own provider, at most six at a time, with progress and a summary. In Settings you can
 also check keys set to "Checked without asking" every week, which needs no fingerprint and notifies you if one stops working. It
 reads files, so a key whose original left the folder is skipped, and you check it from the app.
 
@@ -215,7 +221,7 @@ real key, and a pass with a real key is what proves a recipe. `self_hosted` reci
 
 ## The vault (Mac)
 
-In the app, open **Vault** and press **Create my vault**. It shows a recovery key once, and saves nothing until you type
+In the app, open **Security and backup** and press **Create my vault**. It shows a recovery key once, and saves nothing until you type
 back its last 6 characters. Keep that key away from this Mac, because if the Mac dies it is the only way back in.
 
 Then choose keys and press **Seal**. Each file is sealed for a key inside your Mac's Secure Enclave, which it cannot leave, and
@@ -426,7 +432,7 @@ then press **Rotate this key**. One fingerprint, and keyreeve:
 1. Creates the new key at the provider, under a name like `keyreeve-2026-11-06`, and seals it.
 2. Tries it. If it fails, the new key is revoked and everything stays as it was.
 3. Updates every place: files where the old value is replaced, and buttons of your own that receive the new key on stdin.
-4. Revokes the old key, right away or later when you press the button in **Vault**.
+4. Revokes the old key, right away or later when you press the button in **Rotation**.
 
 A crash at any step resumes from a journal in `~/.keyreeve/rotations.jsonl`, which holds ids and no values.
 

@@ -636,6 +636,52 @@ pub fn extract(json: &Value, path: &str) -> Option<String> {
     }
 }
 
+/// Every value a path with `*` reaches, such as `$.*.slug` for each organization in a list, joined
+/// with ", " in the order of the answer and without repeats. Only `identify` reads paths like this:
+/// a key or an id taken from a list could be the wrong one.
+pub fn extract_all(json: &Value, path: &str) -> Option<String> {
+    fn walk<'a>(value: &'a Value, segments: &[&str], found: &mut Vec<&'a Value>) {
+        let Some((segment, rest)) = segments.split_first() else {
+            found.push(value);
+            return;
+        };
+        match (value, *segment) {
+            (Value::Array(items), "*") => items.iter().for_each(|item| walk(item, rest, found)),
+            (Value::Object(map), name) => {
+                if let Some(next) = map.get(name) {
+                    walk(next, rest, found);
+                }
+            }
+            (Value::Array(items), index) => {
+                if let Some(next) = index
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|i| i.to_string() == index)
+                    .and_then(|i| items.get(i))
+                {
+                    walk(next, rest, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let segments: Vec<&str> = path.strip_prefix("$.")?.split('.').collect();
+    let mut found = Vec::new();
+    walk(json, &segments, &mut found);
+    let mut values: Vec<String> = Vec::new();
+    for value in found {
+        let text = match value {
+            Value::String(text) if !text.is_empty() => text.clone(),
+            Value::Number(number) => number.to_string(),
+            _ => continue,
+        };
+        if !values.contains(&text) && values.len() < 20 {
+            values.push(text);
+        }
+    }
+    (!values.is_empty()).then(|| values.join(", "))
+}
+
 fn fill_strings(value: &Value, vars: &[(&str, &str)]) -> Value {
     match value {
         Value::String(text) => {
@@ -737,7 +783,7 @@ fn valid_identify_source(path: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
         })
     });
-    named || path == "reply:" || valid_json_path(path)
+    named || path == "reply:" || valid_json_path(&path.replace(".*", ".0"))
 }
 
 fn valid_json_path(path: &str) -> bool {
@@ -929,5 +975,13 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
         assert_eq!(extract(&json, "$.data.list.0").as_deref(), Some("a"));
         assert_eq!(extract(&json, "$.data.missing"), None);
         assert_eq!(extract(&json, "$.data.list.00"), None);
+        let orgs = serde_json::json!([{"slug": "restoiq"}, {"slug": "carlos-tapia"}, {"slug": "restoiq"}, {"name": "x"}]);
+        assert_eq!(
+            extract_all(&orgs, "$.*.slug").as_deref(),
+            Some("restoiq, carlos-tapia")
+        );
+        assert_eq!(extract_all(&orgs, "$.0.slug").as_deref(), Some("restoiq"));
+        assert_eq!(extract_all(&orgs, "$.*.missing"), None);
+        assert_eq!(extract(&orgs, "$.*.slug"), None);
     }
 }

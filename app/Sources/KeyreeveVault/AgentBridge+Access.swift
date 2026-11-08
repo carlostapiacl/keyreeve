@@ -20,7 +20,7 @@ extension AgentBridge {
         // Checked first, so nothing is asked for a key that is not there or already open.
         guard try names().contains(key) else {
             guard offered().contains(key) else { throw VaultError("no key called \(key) is in the vault, and none can be saved for that provider") }
-            return try requestUnsaved(provider: key, reason: reason, hours: hours)
+            return try requestUnsaved(provider: key, reason: reason, hours: hours, account: arguments["account"] as? String)
         }
         let date = now()
         let current = policy
@@ -83,7 +83,7 @@ extension AgentBridge {
 
     /// A key for a provider that is not saved yet. The person saves and allows it in the app, so this
     /// only writes the request down and tells them; the agent asks again, or lists, to learn the answer.
-    func requestUnsaved(provider: String, reason: String, hours: Int?) throws -> String {
+    func requestUnsaved(provider: String, reason: String, hours: Int?, account: String? = nil) throws -> String {
         if let last = AccessRequests.latest(agent: agent, provider: provider, in: requests()) {
             switch last.answer?.event {
             case .allowed?:
@@ -102,7 +102,8 @@ extension AgentBridge {
             throw VaultError("the person already said no to a \(provider) key in this session. Ask them in the conversation instead")
         }
         let entry = AccessRequests.Entry(
-            id: AccessRequests.newID(), at: now(), event: .asked, agent: agent, provider: provider, reason: reason, hours: hours)
+            id: AccessRequests.newID(), at: now(), event: .asked, agent: agent, provider: provider, reason: reason, hours: hours,
+            account: account)
         try addRequest(entry)
         log("requested", provider, "not saved yet", reason)
         switch announce(entry) {

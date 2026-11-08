@@ -12,6 +12,9 @@ public struct SettingsView: View {
     @AppStorage(SettingsKey.scanOnOpen) private var scanOnOpen = true
     @AppStorage(SettingsKey.fingerprintMinutes) private var fingerprintMinutes = 5
     @State private var weekly = WeeklySchedule.isOn
+    @AppStorage(Assistant.settingsKey) private var assistantChoice = AssistantChoice.none
+    @AppStorage(Assistant.customKey) private var assistantCommand = ""
+    @State private var found = Assistants.available()
 
     public init(model: AppModel) { self.model = model }
 
@@ -62,6 +65,26 @@ public struct SettingsView: View {
                 Text(T("Check keys set to Checked without asking every Monday, and notify me if one stops working. It needs no fingerprint, so it covers only those."))
                     .font(.caption)
             }
+            Section {
+                Picker(T("Assistant"), selection: $assistantChoice) {
+                    Text(T("None")).tag(AssistantChoice.none)
+                    ForEach(found) { Text($0.name).tag($0.id) }
+                    Text(T("Another command…")).tag(AssistantChoice.custom)
+                }
+                if assistantChoice == AssistantChoice.custom {
+                    TextField(T("Command, with {prompt} where the words go"), text: $assistantCommand)
+                        .font(Theme.code)
+                }
+                if let chosen = AssistantChoice.current(available: found), chosen.readsFiles {
+                    Text(T("It can read files on your Mac while it works. keyreeve never hands it a key, and cannot stop it reading your folder."))
+                        .font(.caption).foregroundStyle(Theme.warn)
+                }
+            } header: {
+                Text(T("Assistant"))
+            } footer: {
+                Text(T("An AI you already use in your terminal, on your own account, drafts provider files and suggests which provider a key is. What you describe, and the names and labels of your files, go to it. Never a value."))
+                    .font(.caption)
+            }
             Section(T("Files")) {
                 LabeledContent(T("Folder")) {
                     HStack {
@@ -90,20 +113,7 @@ public struct SettingsView: View {
         return T("Sent only to %@", provider.hosts.joined(separator: ", "))
     }
 
-    /// A file that runs a program gets a plain warning, because this is the one thing that runs code.
-    private func approve(_ provider: ProviderInfo) {
-        guard let programs = provider.programs, !programs.isEmpty else {
-            model.approve(provider)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = T("This file runs programs on your Mac")
-        alert.informativeText = T("Approve only if you wrote it or read it. Programs: %@", programs.joined(separator: ", "))
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: T("Approve"))
-        alert.addButton(withTitle: T("Cancel"))
-        if alert.runModal() == .alertFirstButtonReturn { model.approve(provider) }
-    }
+    private func approve(_ provider: ProviderInfo) { approveProvider(provider, model: model) }
 
     private var providers: some View {
         Form {
@@ -129,7 +139,7 @@ public struct SettingsView: View {
                     }
                 }
             } footer: {
-                Text(T("Your files can add more providers, in ~/.keyreeve/providers. Each one needs your approval before it receives a key."))
+                Text(T("Your files can add more providers, in ~/.keyreeve/providers. Each one needs your approval before it receives a key. Make and edit them under Tools, Providers."))
                     .font(.caption)
             }
         }

@@ -221,3 +221,19 @@ fn a_temporary_ssh_key_is_private_and_goes_away() {
     };
     assert!(!path.exists());
 }
+
+#[test]
+fn a_recipe_that_ships_can_be_shown_and_one_that_does_not_cannot() {
+    let shown = std::process::Command::new(env!("CARGO_BIN_EXE_keyreeve"))
+        .args(["recipes", "show", "resend"])
+        .output()
+        .unwrap();
+    assert!(shown.status.success());
+    assert!(String::from_utf8_lossy(&shown.stdout).contains("provider: resend"));
+    let missing = std::process::Command::new(env!("CARGO_BIN_EXE_keyreeve"))
+        .args(["recipes", "show", "../etc/passwd"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+}

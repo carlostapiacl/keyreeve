@@ -43,6 +43,9 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
 
     /// A secret with no provider, such as a signing key, so there is nowhere to check it.
     public var isInternal: Bool { tags.contains("internal") }
+    /// Kept and sealed, with nothing a provider could answer about it: a login, a database, a document, a
+    /// public key. It is not offered for checks and does not count as unchecked.
+    public var isUntestable: Bool { tags.contains("untestable") }
 
     /// True if the file has not changed for longer than its provider suggests for a key.
     public func isOlderThanSuggested(at now: Date = Date()) -> Bool {
@@ -86,7 +89,7 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     }
 
     /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
-    public var canCheck: Bool { (level == "free" || level == "ask") && !recipes.isEmpty && !isInternal }
+    public var canCheck: Bool { (level == "free" || level == "ask") && !recipes.isEmpty && !isInternal && !isUntestable }
 
     /// Why a check is not offered, for the button's help text.
     public var whyNoCheck: String? {
@@ -245,6 +248,8 @@ public enum Sidebar: Hashable, Sendable {
     /// Tools: rotations in progress or waiting on you, and the whole usage log.
     case rotation
     case log
+    /// Tools: the providers keyreeve knows, and yours to add and approve.
+    case providers
 }
 
 public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String) -> [CatalogItem] {
@@ -254,7 +259,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .attention: return item.attention != nil
         case .archive: return item.isArchived
         case .vault: return item.vault != .none && item.vault != .otherFolder && !item.isArchived
-        case .agents, .rotation, .log: return false
+        case .agents, .rotation, .log, .providers: return false
         case .checkable: return item.canCheck && !item.isArchived
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()
@@ -352,7 +357,8 @@ public struct CatalogStats: Sendable {
         works = secretItems.filter { $0.lastResult == "works" }.count
         rejected = secretItems.filter { $0.lastResult == "rejected" }.count
         noAnswer = secretItems.filter { $0.lastResult == "forbidden" || $0.lastResult == "no_result" }.count
-        neverChecked = secretItems.filter { $0.lastResult.isEmpty }.count
+        // Only what could be checked: a key with no way to check it is not waiting on anything.
+        neverChecked = secretItems.filter { $0.canCheck && $0.lastResult.isEmpty }.count
         canCheck = items.filter(\.canCheck).count
 
         let tags = projectTags(in: secretItems)
@@ -437,4 +443,57 @@ public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
             let second = ($1.lastResult == "works" ? 0 : 1, rank($1), $1.path)
             return first < second
         }
+}
+
+/// What the lists count, worked out once when the keys change instead of on every draw: with a few
+/// hundred keys, counting them for each chip and each row made a redraw take a noticeable moment.
+public struct CatalogSummary: Sendable {
+    /// The filters with a chip above the list.
+    public static let chips: [Sidebar] = [
+        .all, .checkable, .critical, .result("rejected"), .result("works"), .result("no_answer"), .result(""), .stale, .archive,
+    ]
+
+    public let active: Int
+    public let toReview: Int
+    public let counts: [Sidebar: Int]
+    public let stats: CatalogStats
+    public let projects: [(tag: String, count: Int)]
+
+    public init(items: [CatalogItem], now: Date = Date()) {
+        let unarchived = items.filter { !$0.isArchived }
+        active = unarchived.count
+        toReview = items.filter { $0.attention != nil }.count
+        counts = Dictionary(uniqueKeysWithValues: Self.chips.map { ($0, filter(items, by: $0, search: "").count) })
+        stats = CatalogStats(items: items, now: now)
+        projects = projectTags(in: unarchived)
+    }
+
+    public func count(_ target: Sidebar) -> Int { counts[target] ?? 0 }
+}
+
+extension CatalogItem {
+    /// The accounts or organizations the provider said this key reaches, for telling apart several keys
+    /// of one provider.
+    public var reaches: String? {
+        guard let fields = details?.fields else { return nil }
+        return fields["organizations"] ?? fields["account"] ?? fields["email"]
+    }
+
+    /// How well this key fits the account an agent named: 2 when what the provider said of the key names
+    /// it, 1 when a tag, the key's name or its path does, 0 otherwise. Whole words only, so "lh" does not
+    /// fit "github".
+    public func fit(account hint: String?) -> Int {
+        func words(_ text: String) -> Set<String> {
+            Set(text.lowercased().split { !($0.isLetter || $0.isNumber) }.map(String.init))
+        }
+        func joined(_ text: String) -> String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
+        guard let hint, !joined(hint).isEmpty else { return 0 }
+        let wanted = joined(hint)
+        let said = (details?.fields ?? [:]).filter { ["account", "organizations", "name", "email"].contains($0.key) }.values
+            .flatMap { $0.split(separator: ",").map { joined(String($0)) } }
+        if said.contains(wanted) { return 2 }
+        let own = tags.map { joined(String($0.split(separator: ":").last ?? "")) } + [joined(name)]
+        if own.contains(wanted) || words(path).union(words(name)).contains(wanted) || words(path).contains(hint.lowercased()) { return 1 }
+        return 0
+    }
 }

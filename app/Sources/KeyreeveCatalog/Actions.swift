@@ -241,6 +241,20 @@ public struct KeyEdit: Codable, Equatable, Sendable {
     public var criticality: Int?
     public var host: String?
 
+    /// What `edit` says, over what `base` already said.
+    public static func merging(_ edit: KeyEdit, into base: KeyEdit) -> KeyEdit {
+        var merged = base
+        merged.tags = edit.tags ?? merged.tags
+        merged.level = edit.level ?? merged.level
+        merged.recipes = edit.recipes ?? merged.recipes
+        merged.field = edit.field ?? merged.field
+        merged.name = edit.name ?? merged.name
+        merged.description = edit.description ?? merged.description
+        merged.criticality = edit.criticality ?? merged.criticality
+        merged.host = edit.host ?? merged.host
+        return merged
+    }
+
     public init(
         tags: [String]? = nil, level: String? = nil, recipes: [String]? = nil, field: String? = nil,
         name: String? = nil, description: String? = nil, criticality: Int? = nil, host: String? = nil
@@ -328,6 +342,13 @@ extension KeyreeveFiles {
         change(&all)
         encoder.outputFormatting.formUnion([.sortedKeys, .prettyPrinted])
         try writePrivate(try encoder.encode(all), to: url)
+    }
+
+    /// Several edits in one write, so sorting a hundred keys rebuilds the list once.
+    public func saveEdits(_ edits: [String: KeyEdit]) throws {
+        try updateJSON(self.edits, as: [String: KeyEdit].self) { all in
+            for (path, edit) in edits { all[path] = KeyEdit.merging(edit, into: all[path] ?? KeyEdit()) }
+        }
     }
 
     public func saveEdit(_ edit: KeyEdit, for path: String) throws {

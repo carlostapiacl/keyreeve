@@ -72,6 +72,102 @@ public enum CheckRunner {
         }
     }
 
+    /// What `keyreeve check` and `simulate` say of a provider file, before it is saved: the same checks CI
+    /// runs on the ones that ship. Nothing is written to the providers folder.
+    public struct RecipeReport: Equatable, Sendable {
+        public let ok: Bool
+        public let lines: [String]
+        /// The provider's id, as the file declares it.
+        public let provider: String?
+
+        public init(ok: Bool, lines: [String], provider: String?) {
+            self.ok = ok
+            self.lines = lines
+            self.provider = provider
+        }
+    }
+
+    public static func validateRecipe(_ text: String, binary: URL) throws -> RecipeReport {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-recipe-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("draft.yaml")
+        try Data(text.utf8).write(to: file)
+        var lines: [String] = []
+        var ok = true
+        for command in ["check", "simulate"] {
+            let process = Process()
+            let output = privatePipe()
+            process.executableURL = binary
+            process.arguments = [command, file.path]
+            process.standardOutput = output
+            process.standardError = output
+            try process.run()
+            watch(process, seconds: 60)
+            let said = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            process.waitUntilExit()
+            ok = ok && process.terminationStatus == 0
+            lines += said.split(separator: "\n").map { $0.replacingOccurrences(of: file.path, with: "draft") }
+            if !ok { break }
+        }
+        return RecipeReport(ok: ok, lines: lines, provider: providerID(in: text))
+    }
+
+    /// A recipe that ships, as written, from `keyreeve recipes show`. Nil for one that does not ship.
+    public static func builtinRecipe(_ id: String, binary: URL) -> String? {
+        let process = Process()
+        let output = privatePipe()
+        process.executableURL = binary
+        process.arguments = ["recipes", "show", id]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        watch(process, seconds: 30)
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        return process.terminationStatus == 0 && !text.isEmpty ? text : nil
+    }
+
+    /// A recipe made into one of your own: a new id and name, everything else as it was.
+    public static func ownCopy(of text: String, id: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+            if line.hasPrefix("provider:") { return "provider: \(id)-mine" }
+            if line.hasPrefix("name:") { return line + " (mine)" }
+            // A copy is yours to try, so the date it was tried on keyreeve's side does not carry over.
+            if line.hasPrefix("tested:") { return "" }
+            return String(line)
+        }.joined(separator: "\n")
+    }
+
+    /// The `provider:` line of a file, if it names a valid id.
+    public static func providerID(in text: String) -> String? {
+        for line in text.split(separator: "\n") where line.hasPrefix("provider:") {
+            let value = line.dropFirst("provider:".count).trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            let allowed = CharacterSet.lowercaseLetters.union(.decimalDigits).union(CharacterSet(charactersIn: "-_"))
+            guard !value.isEmpty, value.count <= 64, value.unicodeScalars.allSatisfy(allowed.contains),
+                value.unicodeScalars.allSatisfy(\.isASCII)
+            else { return nil }
+            return value
+        }
+        return nil
+    }
+
+    /// Saves a checked file among your own providers, where it waits for your approval like any other.
+    /// One that ships with keyreeve cannot be replaced, which the command already refuses.
+    public static func saveProvider(_ text: String, binary: URL, files: KeyreeveFiles) throws -> String {
+        let report = try validateRecipe(text, binary: binary)
+        guard report.ok, let id = report.provider else {
+            throw CheckError(report.lines.last ?? T("That provider file is not valid"))
+        }
+        let folder = files.directory.appendingPathComponent("providers")
+        if !FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        }
+        try files.writePrivate(Data(text.utf8), to: folder.appendingPathComponent("\(id).yaml"))
+        return id
+    }
+
     /// The providers keyreeve knows, from what ships and from your own files.
     public static func providers(binary: URL) -> ProviderDirectory {
         let process = Process()

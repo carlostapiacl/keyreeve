@@ -36,6 +36,9 @@ pub fn identify(
         return Err("this provider's file has no way to identify a key".into());
     };
     let (credential, token_answer) = if recipe.auth.kind.as_deref() == Some("oauth_token") {
+        if let Some(why) = crate::transport::missing_parts(recipe, key) {
+            return Err(why);
+        }
         let answer = exchange_token(recipe, key, transport).map_err(|e| e.to_string())?;
         if !(200..=299).contains(&answer.status) {
             return Err(format!("HTTP {}", answer.status));
@@ -79,6 +82,7 @@ pub fn identify(
             return None;
         }
         match &json {
+            Some(json) if path.contains(".*") => crate::recipe::extract_all(json, path),
             Some(json) => extract(json, path),
             None => xml_tag(body, path),
         }

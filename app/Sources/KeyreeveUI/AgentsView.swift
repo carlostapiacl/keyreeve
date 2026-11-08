@@ -328,6 +328,9 @@ struct RequestRow: View {
                 Text("\u{201C}\(reason)\u{201D}").font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let account = request.account {
+                Text(T("For: %@", account)).font(Theme.caption).foregroundStyle(Theme.text)
+            }
             if candidates.isEmpty {
                 Text(T("No file in your keys folder is a %@ key. Paste a new one, or decline.", request.provider))
                     .font(Theme.caption).foregroundStyle(Theme.warn)
@@ -375,6 +378,9 @@ struct RequestRow: View {
     /// The file's name or path, and what keyreeve knows of it, so the right one is easy to pick.
     private func label(_ item: CatalogItem) -> String {
         var parts = [item.name.isEmpty ? item.path : "\(item.name) · \(item.path)"]
+        // Who the key belongs to, as its provider said: what tells apart several keys of one provider.
+        if let reaches = item.reaches { parts.append(reaches) }
+        if item.fit(account: request.account) > 0 { parts.append(T("Matches what was asked")) }
         if item.vault != .none { parts.append(T("sealed already")) }
         if item.lastResult == "works" { parts.append(T("last check passed")) }
         return parts.joined(separator: " · ")

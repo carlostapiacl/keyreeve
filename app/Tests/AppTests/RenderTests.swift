@@ -100,6 +100,16 @@ struct RenderTests {
             try render(WelcomeView(choose: {}), named: "welcome-\(code)", appearance: .aqua)
             try render(SettingsView(model: model), named: "settings-\(code)", appearance: .aqua)
             try render(LockedView(message: nil, unlock: {}), named: "locked-\(code)", appearance: .aqua)
+            try render(MainView(model: model, initial: .providers), named: "providers-\(code)", appearance: .aqua)
+            let basic = ProviderBuilder(model: model)
+            basic.description = "My Coolify panel at coolify.example.com"
+            basic.yaml = ProviderBuilderTests.good
+            basic.phase = .ready
+            try render(ProviderBuilderView(model: model, builder: basic, close: {}), named: "provider-basic-\(code)", appearance: .aqua)
+            let advanced = ProviderBuilder(model: model)
+            advanced.yaml = ProviderBuilderTests.good
+            advanced.advanced = true
+            try render(ProviderBuilderView(model: model, builder: advanced, close: {}), named: "provider-advanced-\(code)", appearance: .darkAqua)
 
             try render(MainView(model: model, initial: .vault), named: "vault-intro-\(code)", appearance: .aqua)
             let setup = self.model()

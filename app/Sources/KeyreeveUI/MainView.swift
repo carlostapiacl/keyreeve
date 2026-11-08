@@ -29,6 +29,9 @@ public struct MainView: View {
     @State private var pressedChip: Sidebar?
     @State private var chosenRows: Set<CatalogItem.ID>
     @State private var confirmCheck = false
+    @State private var sorting = false
+    /// What this view worked out from the keys, kept until the keys, the filter or the search change.
+    @State private var memo = ViewMemo()
 
     public init(model: AppModel, initial: Sidebar = .home, chosen: CatalogItem.ID? = nil) {
         self.model = model
@@ -37,29 +40,61 @@ public struct MainView: View {
     }
 
     private var items: [CatalogItem] { model.items }
-    private var shown: [CatalogItem] { filter(items, by: selection ?? .all, search: search) }
-    private var active: [CatalogItem] { items.filter { !$0.isArchived } }
-    private var toReview: Int { items.filter { $0.attention != nil }.count }
+    /// A filter of My keys, apart from the sidebar's choice: a list row cannot be selected for a filter
+    /// with no row, and the sidebar would drop it and show every key.
+    @State private var filterOverride: Sidebar?
+    /// What the list shows: a filter when one is on, else the sidebar's section.
+    private var current: Sidebar { filterOverride ?? selection ?? .all }
+
+    /// Goes to a section or a filter. Sections are sidebar rows; a filter shows My keys with it on.
+    private func go(_ target: Sidebar) {
+        switch target {
+        case .home, .all, .attention, .vault, .agents, .providers, .rotation, .log:
+            filterOverride = nil
+            selection = target
+        default:
+            selection = .all
+            filterOverride = target
+        }
+    }
+
+    /// The sidebar's own choice. Clicking a row there takes any filter off.
+    private var sidebarSelection: Binding<Sidebar?> {
+        Binding(get: { filterOverride == nil ? selection : .all }, set: { value in
+            filterOverride = nil
+            selection = value
+        })
+    }
+
+    private var shown: [CatalogItem] {
+        memo.value("shown", key: [AnyHashable(model.itemsVersion), current, search]) { filter(items, by: current, search: search) }
+    }
 
     private var chosenItem: CatalogItem? {
         guard chosenRows.count == 1, let path = chosenRows.first else { return nil }
         // Only from what the list shows, so the detail never speaks of a key another filter hid.
-        return shown.first { $0.path == path }
+        return memo.value("chosen", key: [AnyHashable(model.itemsVersion), current, search, path]) { shown.first { $0.path == path } }
     }
 
     private var scope: [CatalogItem] {
-        chosenRows.isEmpty ? shown : shown.filter { chosenRows.contains($0.id) }
+        memo.value("scope", key: [AnyHashable(model.itemsVersion), current, search, chosenRows]) {
+            chosenRows.isEmpty ? shown : shown.filter { chosenRows.contains($0.id) }
+        }
     }
-    private var checkable: [CatalogItem] { scope.filter(model.providers.canCheck) }
-    private var identifiable: [CatalogItem] { scope.filter(model.providers.canIdentify) }
+    private var checkable: [CatalogItem] {
+        memo.value("checkable", key: [AnyHashable(model.itemsVersion), current, search, chosenRows]) { scope.filter(model.providers.canCheck) }
+    }
+    private var identifiable: [CatalogItem] {
+        memo.value("identifiable", key: [AnyHashable(model.itemsVersion), current, search, chosenRows]) { scope.filter(model.providers.canIdentify) }
+    }
 
     public var body: some View {
         NavigationSplitView {
             // By task, not by part of the app: what you have, what needs you, how it is kept. The tools follow.
-            List(selection: $selection) {
+            List(selection: sidebarSelection) {
                 Label(T("Home"), systemImage: "house").tag(Sidebar.home)
-                sidebarRow(T("My keys"), "key", .all, active.count)
-                sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
+                sidebarRow(T("My keys"), "key", .all, model.summary.active)
+                sidebarRow(T("To review"), "exclamationmark.circle", .attention, model.summary.toReview)
                 Label(T("Security and backup"), systemImage: "lock.shield").tag(Sidebar.vault)
                 Section(T("Tools")) {
                     // A request waiting shows here and in the menu bar, and never moves you away from what you were doing.
@@ -82,6 +117,7 @@ public struct MainView: View {
                     }
                     Label(T("Rotation"), systemImage: "arrow.triangle.2.circlepath").tag(Sidebar.rotation)
                     Label(T("Log"), systemImage: "list.bullet.rectangle").tag(Sidebar.log)
+                    Label(T("Providers"), systemImage: "puzzlepiece.extension").tag(Sidebar.providers)
                 }
             }
             .tint(Theme.accent)
@@ -91,6 +127,8 @@ public struct MainView: View {
                 content
                 statusBar
             }
+            // Work in progress shows at the top where it is seen, and the app stays usable meanwhile.
+            .safeAreaInset(edge: .top, spacing: 0) { if model.busy { WorkingBanner(message: model.message, progress: model.progress) } }
             .background(Theme.background)
             .navigationTitle(title)
             .toolbar { toolbar }
@@ -98,7 +136,8 @@ public struct MainView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 model.reloadRequests()
             }
-            .onChange(of: model.showRequests) { _, _ in selection = .agents }
+            .onChange(of: model.showRequests) { _, _ in go(.agents) }
+            .sheet(isPresented: $sorting) { SortSheet(model: model) }
             .confirmationDialog(
                 T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
             ) {
@@ -107,29 +146,33 @@ public struct MainView: View {
             } message: {
                 Text(T("Each key goes to its own provider, and only to read. Keys set to Only me stay out."))
             }
-            .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
+            .onAppear {
+                if !model.pendingRequests.isEmpty { go(.agents) }
+                // A start on a filter, such as from a link, goes through the same path.
+                if let start = selection { go(start) }
+            }
         }
     }
 
     @ViewBuilder private var content: some View {
         if selection == .home {
-            HomeView(stats: CatalogStats(items: items), activity: model.activity, model: model) { target, path in
-                selection = target
+            HomeView(stats: model.summary.stats, activity: model.activity, model: model) { target, path in
+                go(target)
                 search = ""
                 chosenRows = path.map { [$0] } ?? []
             }
         } else if selection == .vault {
-            VaultView(model: model, part: .security) { selection = $0 }
+            VaultView(model: model, part: .security) { go($0) }
         } else if selection == .rotation {
-            VaultView(model: model, part: .rotation) { selection = $0 }
+            VaultView(model: model, part: .rotation) { go($0) }
         } else if selection == .log {
             UsageLogSheet(model: model, inline: true)
         } else if selection == .agents {
             AgentsView(model: model)
+        } else if selection == .providers {
+            ProvidersView(model: model)
         } else {
-            VStack(spacing: 0) {
-                filterBar
-                HStack(spacing: 0) {
+            HStack(spacing: 0) {
                 if shown.isEmpty {
                     emptyList.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -140,43 +183,45 @@ public struct MainView: View {
                     // Wide enough to read without truncating, with the technical parts behind a disclosure.
                     KeyDetail(item: chosenItem, model: model).frame(width: 440)
                 }
-                }
             }
+            // An inset, not the first row of a stack: a scroll view at the column's top edge reaches under the
+            // toolbar, and its chips are drawn below it while the clicks land behind the toolbar.
+            .safeAreaInset(edge: .top, spacing: 0) { filterBar }
             .searchable(text: $search, prompt: T("Search by name or tag"))
         }
     }
 
-    /// One click to the views people use most.
+    /// One click to the views people use most. The chips wrap to a second line instead of scrolling: a
+    /// scroll view at the top of the column reaches under the toolbar, where its clicks are lost.
     private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                filterChip(T("All"), .all)
-                filterChip(T("Can be checked"), .checkable)
-                filterChip(T("Critical keys"), .critical)
-                filterChip(T("Rejected"), .result("rejected"))
-                filterChip(T("Works"), .result("works"))
-                filterChip(T("No answer"), .result("no_answer"))
-                filterChip(T("Never checked"), .result(""))
-                filterChip(T("Older than suggested"), .stale)
-                filterChip(T("Archive"), .archive)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+        Wrap(spacing: 6, lineSpacing: 6) {
+            filterChip(T("All"), .all)
+            filterChip(T("Can be checked"), .checkable)
+            filterChip(T("Critical keys"), .critical)
+            filterChip(T("Rejected"), .result("rejected"))
+            filterChip(T("Works"), .result("works"))
+            filterChip(T("No answer"), .result("no_answer"))
+            filterChip(T("Never checked"), .result(""))
+            filterChip(T("Older than suggested"), .stale)
+            filterChip(T("Archive"), .archive)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
     }
 
     private func filterChip(_ title: String, _ target: Sidebar) -> some View {
         FilterChip(
-            title: title, count: filter(items, by: target, search: "").count,
-            isOn: (pressedChip ?? selection) == target
+            title: title, count: model.summary.count(target),
+            isOn: (pressedChip ?? current) == target
         ) {
             // Filtering a long list takes a moment, so the chip answers first and the list follows.
             pressedChip = target
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(30))
-                selection = target
+                go(target)
                 chosenRows = []
                 pressedChip = nil
             }
@@ -184,7 +229,7 @@ public struct MainView: View {
     }
 
     private var title: String {
-        switch selection ?? .home {
+        switch filterOverride ?? selection ?? .home {
         case .home: return T("Home")
         case .attention: return T("To review")
         case .all: return T("My keys")
@@ -193,6 +238,7 @@ public struct MainView: View {
         case .agents: return T("Agents")
         case .rotation: return T("Rotation")
         case .log: return T("Log")
+        case .providers: return T("Providers")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")
@@ -209,35 +255,45 @@ public struct MainView: View {
             EmptyHint(
                 title: T("Nothing matches “%@”", search), text: T("Search looks in names, files, notes and what providers said."),
                 action: T("Clear the search"), run: { search = "" })
-        } else if selection == .attention {
+        } else if current == .attention {
             EmptyHint(
                 title: T("No alerts found."), text: T("Keys asking for attention will show here."),
-                action: T("See my keys"), run: { selection = .all })
+                action: T("See my keys"), run: { go(.all) })
         } else if items.isEmpty {
             EmptyHint(
                 title: T("No keys yet"), text: T("Paste a key, or choose the folder that holds your key files."),
                 action: T("Add a key"), run: { model.startAddingKey() })
-        } else if selection == .checkable {
+        } else if current == .checkable {
             EmptyHint(
                 title: T("No key can be checked yet"), text: T("Open a key and choose its provider, under More details and options."),
-                action: T("See my keys"), run: { selection = .all })
-        } else if selection == .archive {
+                action: T("See my keys"), run: { go(.all) })
+        } else if current == .archive {
             EmptyHint(title: T("Nothing archived"), text: T("Archiving hides a key from your lists. It does not stop it."))
         } else {
             EmptyHint(
                 title: T("No keys in this view"), text: T("Another filter may show them."),
-                action: T("See my keys"), run: { selection = .all })
+                action: T("See my keys"), run: { go(.all) })
         }
     }
 
     private var keyList: some View {
-        List(shown, selection: $chosenRows) { item in
-            KeyRow(item: item, compact: chosenItem != nil)
+        // Worked out once for the whole list, not once for each row.
+        let compact = chosenItem != nil
+        return List(shown, selection: $chosenRows) { item in
+            KeyRow(item: item, compact: compact)
                 .listRowSeparatorTint(Theme.border)
                 .listRowBackground(Color.clear)
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+    }
+
+    /// Sections that show the list of keys, where filters and checks belong. The tool sections have their own.
+    private var showsList: Bool {
+        switch selection ?? .all {
+        case .home, .vault, .agents, .providers, .rotation, .log: return false
+        default: return true
+        }
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
@@ -249,28 +305,49 @@ public struct MainView: View {
             }
             .help(T("Paste a key and seal it, with no file"))
         }
-        if selection != .home {
+        if showsList {
             ToolbarItem(placement: .automatic) {
                 Menu {
-                    Button(T("All keys")) { selection = .all }
-                    Button(T("Critical keys")) { selection = .critical }
-                    Button(T("Older than suggested")) { selection = .stale }
-                    Button(T("Internal secrets")) { selection = .internalOnly }
-                    Button(T("Can be checked")) { selection = .checkable }
+                    Button(T("All keys")) { go(.all) }
+                    Button(T("Critical keys")) { go(.critical) }
+                    Button(T("Older than suggested")) { go(.stale) }
+                    Button(T("Internal secrets")) { go(.internalOnly) }
+                    Button(T("Can be checked")) { go(.checkable) }
                     Divider()
                     ForEach(["free", "ask", "never", "none"], id: \.self) { level in
-                        Button(levelName(level)) { selection = .level(level) }
+                        Button(levelName(level)) { go(.level(level)) }
                     }
                     Divider()
-                    Button(T("Archive")) { selection = .archive }
+                    Button(T("Archive")) { go(.archive) }
                     // Projects were sidebar rows; they are filters of My keys now.
                     Menu(T("Projects")) {
-                        ForEach(projectTags(in: active), id: \.tag) { entry in
-                            Button("\(entry.tag) (\(entry.count))") { selection = .tag(entry.tag) }
+                        ForEach(model.summary.projects, id: \.tag) { entry in
+                            Button("\(entry.tag) (\(entry.count))") { go(.tag(entry.tag)) }
                         }
                     }
                 } label: {
                     Label(T("Show"), systemImage: "line.3.horizontal.decrease.circle")
+                }
+            }
+            ToolbarItem(placement: .automatic) {
+                // Several chosen keys: one provider for all, or nothing to check.
+                if chosenRows.count > 1 {
+                    Menu {
+                        ForEach(model.providers.all.filter { $0.problem == nil }.sorted { $0.name < $1.name }) { provider in
+                            Button(provider.name) { model.assign(provider: provider.id, to: scope) }
+                        }
+                        Divider()
+                        Button(T("Nothing to check")) { model.markUntestable(scope) }
+                    } label: {
+                        Label(T("Provider for %d", chosenRows.count), systemImage: "tag")
+                    }
+                } else {
+                    Button {
+                        sorting = true
+                    } label: {
+                        Label(T("Sort keys"), systemImage: "wand.and.stars")
+                    }
+                    .help(T("Propose a provider for keys keyreeve cannot check yet"))
                 }
             }
             ToolbarItem(placement: .automatic) {
@@ -331,12 +408,10 @@ public struct MainView: View {
 
     private var statusBar: some View {
         HStack(spacing: 8) {
-            if model.busy { ProgressView().controlSize(.mini) }
-            if let progress = model.progress {
-                Text(T("%d of %d keys", progress.done, progress.total)).monospacedDigit()
-            } else if let message = model.message { Text(message).foregroundStyle(Theme.text) }
+            // While something runs, the banner at the top says so; here stays what it last said.
+            if !model.busy, let message = model.message { Text(message).foregroundStyle(Theme.text) }
             Spacer()
-            if selection != .home { Text(T("%d of %d", shown.count, active.count)).monospacedDigit() }
+            if showsList { Text(T("%d of %d", shown.count, model.summary.active)).monospacedDigit() }
         }
         .font(Theme.caption)
         .foregroundStyle(Theme.muted)
@@ -344,6 +419,94 @@ public struct MainView: View {
         .frame(height: 26)
         .background(Theme.surface)
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
+}
+
+/// Lays its views out in a row, and goes on to the next line when one does not fit.
+struct Wrap: Layout {
+    var spacing: CGFloat
+    var lineSpacing: CGFloat
+
+    private func lines(_ sizes: [CGSize], width: CGFloat) -> [[Int]] {
+        var result: [[Int]] = [[]]
+        var used: CGFloat = 0
+        for (index, size) in sizes.enumerated() {
+            if !result[result.count - 1].isEmpty, used + spacing + size.width > width {
+                result.append([])
+                used = 0
+            }
+            used += (result[result.count - 1].isEmpty ? 0 : spacing) + size.width
+            result[result.count - 1].append(index)
+        }
+        return result
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let width = proposal.width ?? sizes.reduce(0) { $0 + $1.width + spacing }
+        let rows = lines(sizes, width: width)
+        let height = rows.map { row in row.map { sizes[$0].height }.max() ?? 0 }.reduce(0, +)
+            + CGFloat(max(rows.count - 1, 0)) * lineSpacing
+        let widest = rows.map { row in row.map { sizes[$0].width }.reduce(0, +) + CGFloat(max(row.count - 1, 0)) * spacing }.max() ?? 0
+        return CGSize(width: min(widest, width), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var y = bounds.minY
+        for row in lines(sizes, width: bounds.width) {
+            var x = bounds.minX
+            let height = row.map { sizes[$0].height }.max() ?? 0
+            for index in row {
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sizes[index]))
+                x += sizes[index].width + spacing
+            }
+            y += height + lineSpacing
+        }
+    }
+}
+
+/// Keeps what a view worked out until what it was worked out from changes. A plain class, so filling it
+/// while drawing does not ask for another draw.
+final class ViewMemo {
+    private var kept: [String: (key: AnyHashable, value: Any)] = [:]
+
+    func value<V>(_ name: String, key: [AnyHashable], _ make: () -> V) -> V {
+        let key = AnyHashable(key)
+        if let entry = kept[name], entry.key == key, let value = entry.value as? V { return value }
+        let value = make()
+        kept[name] = (key, value)
+        return value
+    }
+}
+
+/// Says what the app is doing while it works, with how far it got when that is known.
+struct WorkingBanner: View {
+    let message: String?
+    let progress: (done: Int, total: Int)?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let progress, progress.total > 0 {
+                ProgressView(value: Double(progress.done), total: Double(progress.total))
+                    .progressViewStyle(.linear).tint(Theme.onAccent).frame(width: 160)
+            } else {
+                ProgressView().controlSize(.small).tint(Theme.onAccent)
+            }
+            Text(message ?? T("Working…")).fontWeight(.semibold)
+            if let progress, progress.total > 0 {
+                Text(T("%d of %d keys", progress.done, progress.total)).monospacedDigit().opacity(0.8)
+            }
+            Spacer()
+            Text(T("You can keep using the app")).opacity(0.8)
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.onAccent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(Theme.accent)
+        .accessibilityElement(children: .combine)
     }
 }
 

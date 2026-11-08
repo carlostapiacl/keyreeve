@@ -28,12 +28,21 @@ public enum SettingsKey {
 public final class AppModel: ObservableObject {
     @Published public var unlocked = false
     @Published public var lockMessage: String?
-    @Published public var items: [CatalogItem] = []
+    @Published public var items: [CatalogItem] = [] {
+        didSet {
+            summary = CatalogSummary(items: items)
+            itemsVersion &+= 1
+        }
+    }
+    /// Counts for the lists, kept with the keys so a redraw does not count them again.
+    public private(set) var summary = CatalogSummary(items: [])
+    /// Changes whenever the keys or the providers do, so a view can keep what it worked out until then.
+    public private(set) var itemsVersion = 0
     @Published public var hasCatalog = false
     @Published public var busy = false
     @Published public var message: String?
     @Published public var activity: [ActivityItem] = []
-    @Published public var providers = ProviderDirectory()
+    @Published public var providers = ProviderDirectory() { didSet { itemsVersion &+= 1 } }
     /// How far the current batch got, as done and total.
     @Published public var progress: (done: Int, total: Int)?
     @Published public var lastRun: RunSummary?

@@ -45,11 +45,12 @@ extension AppModel {
         }
     }
 
-    /// The files that could answer a request: those whose last check passed first, rejected ones last.
+    /// The files that could answer a request: those that fit the account the agent named first, then
+    /// those whose last check passed, rejected ones last.
     public func candidates(for request: AccessRequests.Entry) -> [CatalogItem] {
         func rank(_ item: CatalogItem) -> Int { item.lastResult == "works" ? 0 : item.lastResult == "rejected" ? 2 : 1 }
         return items.filter { $0.recipes.first == request.provider && canBeOffered($0) }
-            .sorted { (rank($0), $0.path) < (rank($1), $1.path) }
+            .sorted { (-$0.fit(account: request.account), rank($0), $0.path) < (-$1.fit(account: request.account), rank($1), $1.path) }
     }
 
     /// Seals the file if it is not sealed yet, gives it an identifier, and opens it to the agent that asked.

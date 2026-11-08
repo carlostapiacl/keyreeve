@@ -103,6 +103,38 @@ struct AuditLogTests {
         #expect(log.recent(3).entries.map(\.key) == ["k4", "k5", "k6"])
     }
 
+    /// A full log is set aside and the next goes on from it: nothing is lost, the chain holds across files,
+    /// writers at the same time all land, and an edit or a missing file in the middle shows.
+    @Test func aFullLogIsSetAsideAndTheChainGoesOn() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("segments-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"), segmentLimit: 600)
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        for index in 0..<12 {
+            clock.addTimeInterval(1)
+            try log.append(event: "used", key: "k\(index)", now: clock)
+        }
+        DispatchQueue.concurrentPerform(iterations: 30) { index in
+            try? log.append(event: "used", key: "c\(index)", now: Date(timeIntervalSince1970: 1_900_000_000 + Double(index)))
+        }
+        #expect(log.segments().count > 2)
+        #expect(try log.entries().count == 42)
+        #expect(log.firstBreak() == nil)
+        #expect(log.recent(3).brokenLine == nil && log.recent(3).entries.count <= 3)
+        // An edit in a file set aside shows, with its name.
+        let middle = log.segments()[1]
+        let text = try String(contentsOf: middle, encoding: .utf8)
+        let edited = text.replacingOccurrences(of: "\"event\":\"used\"", with: "\"event\":\"usex\"")
+        try edited.write(to: middle, atomically: true, encoding: .utf8)
+        #expect(log.firstBreak()?.file == middle.lastPathComponent)
+        try text.write(to: middle, atomically: true, encoding: .utf8)
+        #expect(log.firstBreak() == nil)
+        // A file set aside that goes missing breaks the link to the next.
+        try FileManager.default.removeItem(at: middle)
+        #expect(log.firstBreak() != nil)
+    }
+
     @Test func testRemovingALineShows() throws {
         let (log, url) = log()
         defer { try? FileManager.default.removeItem(at: url) }

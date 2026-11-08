@@ -45,8 +45,17 @@ public struct AuditLog: Sendable {
     }
 
     public let url: URL
+    /// Past this size the log is set aside under a dated name and a new one goes on from it, so what is read
+    /// on each refresh stays small. The new one's first line holds the last hash of the one before.
+    public let segmentLimit: Int
 
-    public init(url: URL) { self.url = url }
+    public init(url: URL, segmentLimit: Int = 16 << 20) {
+        self.url = url
+        self.segmentLimit = segmentLimit
+    }
+
+    /// The event that opens a log continuing one set aside. Its `prev` is the last hash of that one.
+    public static let continued = "continued"
 
     private static func encoder() -> JSONEncoder {
         let encoder = JSONEncoder()
@@ -67,10 +76,27 @@ public struct AuditLog: Sendable {
         event: String, key: String, grant: String? = nil, observed: Observed? = nil, declared: Declared? = nil,
         detail: String? = nil, now: Date = Date()
     ) throws {
-        let descriptor = open(url.path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { throw VaultError("the usage log could not be opened") }
+        // The file can be set aside while this waits for the lock: then it opens the new one and waits again.
+        var descriptor: Int32 = -1
+        for _ in 0..<20 {
+            descriptor = open(url.path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
+            guard descriptor >= 0 else { throw VaultError("the usage log could not be opened") }
+            guard flock(descriptor, LOCK_EX) == 0 else {
+                close(descriptor)
+                throw VaultError("the usage log could not be locked")
+            }
+            if isCurrent(descriptor) { break }
+            close(descriptor)
+            descriptor = -1
+        }
+        guard descriptor >= 0 else { throw VaultError("the usage log kept moving and could not be written") }
+        if lseek(descriptor, 0, SEEK_END) > segmentLimit {
+            // Closed once, here: a second close could end a file another thread just opened under the same number.
+            defer { close(descriptor) }
+            try setAside(descriptor: descriptor, now: now)
+            return try append(event: event, key: key, grant: grant, observed: observed, declared: declared, detail: detail, now: now)
+        }
         defer { close(descriptor) }
-        guard flock(descriptor, LOCK_EX) == 0 else { throw VaultError("the usage log could not be locked") }
         var entry = Entry(
             at: now, event: event, key: key, grant: grant, observed: observed, declared: declared, detail: detail,
             prev: try lastHash(descriptor: descriptor), hash: "")
@@ -78,6 +104,50 @@ public struct AuditLog: Sendable {
         let line = try Self.encoder().encode(entry) + Data("\n".utf8)
         let written = line.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
         guard written == line.count, fsync(descriptor) == 0 else { throw VaultError("the usage log could not be written") }
+    }
+
+    /// Whether this open file is still the one at the log's path.
+    private func isCurrent(_ descriptor: Int32) -> Bool {
+        var open = stat()
+        var named = stat()
+        guard fstat(descriptor, &open) == 0, stat(url.path, &named) == 0 else { return false }
+        return open.st_ino == named.st_ino && open.st_dev == named.st_dev
+    }
+
+    /// Under the lock: the full log gets a dated name, and in its place, in one step, a new one whose first line
+    /// says where it goes on from. Anyone waiting on the old file's lock sees it moved and writes to the new.
+    private func setAside(descriptor: Int32, now: Date) throws {
+        // Numbered in the order they were set aside, which is the chain's order whatever the clocks said; the day
+        // is there for people.
+        let day = ISO8601DateFormatter.string(from: now, timeZone: .gmt, formatOptions: [.withYear, .withMonth, .withDay])
+        let archive = Self.segmentURL(for: url, number: segments().count, day: day)
+        var first = Entry(
+            at: now, event: Self.continued, key: "-", detail: archive.lastPathComponent, prev: try lastHash(descriptor: descriptor), hash: "")
+        first.hash = try Self.hash(of: first)
+        let temp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+        try PrivateFile.write(try Self.encoder().encode(first) + Data("\n".utf8), to: temp)
+        guard link(url.path, archive.path) == 0 else {
+            unlink(temp.path)
+            throw VaultError("the usage log could not be set aside")
+        }
+        guard rename(temp.path, url.path) == 0 else {
+            unlink(archive.path)
+            unlink(temp.path)
+            throw VaultError("the usage log could not be set aside")
+        }
+    }
+
+    static func segmentURL(for url: URL, number: Int, day: String) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent(
+            url.deletingPathExtension().lastPathComponent + "-" + String(format: "%06d", number) + "-" + day + ".jsonl")
+    }
+
+    /// The logs set aside, oldest first, then this one.
+    public func segments() -> [URL] {
+        let folder = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent + "-"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.filter { $0.hasPrefix(stem) && $0.hasSuffix(".jsonl") }.sorted().map(folder.appendingPathComponent) + [url]
     }
 
     private func lastHash(descriptor: Int32) throws -> String {
@@ -100,10 +170,34 @@ public struct AuditLog: Sendable {
         return decoder
     }
 
+    /// Every entry, from the logs set aside too, oldest first. The lines that only join them are left out.
     public func entries() throws -> [Entry] {
-        guard let data = try? Data(contentsOf: url) else { return [] }
         let decoder = Self.decoder()
-        return try data.split(separator: 10).map { try decoder.decode(Entry.self, from: Data($0)) }
+        return try segments().flatMap { segment -> [Entry] in
+            guard let data = try? Data(contentsOf: segment) else { return [] }
+            return try data.split(separator: 10).map { try decoder.decode(Entry.self, from: Data($0)) }
+                .filter { $0.event != Self.continued }
+        }
+    }
+
+    /// Where the whole history, the logs set aside included, stops holding together: the file and its line,
+    /// or nil. A log that goes on from another must start from that one's last hash.
+    public func firstBreak() -> (file: String, line: Int)? {
+        var last: String?
+        for segment in segments() {
+            let part = AuditLog(url: segment, segmentLimit: segmentLimit)
+            if let line = part.firstBrokenLine() { return (segment.lastPathComponent, line) }
+            guard let data = try? Data(contentsOf: segment) else { continue }
+            let lines = data.split(separator: 10)
+            let decoder = Self.decoder()
+            if let last, let first = lines.first.flatMap({ try? decoder.decode(Entry.self, from: Data($0)) }),
+                first.event != Self.continued || first.prev != last
+            {
+                return (segment.lastPathComponent, 1)
+            }
+            last = lines.last.flatMap { try? decoder.decode(Entry.self, from: Data($0)) }?.hash ?? last
+        }
+        return nil
     }
 
     /// The first line that does not follow from the one before, or nil if the chain holds or there is no
@@ -125,6 +219,8 @@ public struct AuditLog: Sendable {
                 if broken == nil { broken = index + 1 }
                 break
             }
+            // A log that goes on from one set aside starts from that one's last hash, which its first line holds.
+            if index == 0, entry.event == Self.continued { previous = entry.prev }
             if broken == nil, entry.prev != previous || (try? Self.hash(of: entry)) != entry.hash { broken = index + 1 }
             previous = entry.hash
             if count > 0 {

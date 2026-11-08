@@ -170,10 +170,11 @@ func showAudit() throws {
         return
     }
     if arguments.contains("--verify") {
-        if let line = auditLog.firstBrokenLine() {
-            fail(line == 0 ? "the usage log could not be read" : "the usage log was changed at line \(line)")
+        if let broken = auditLog.firstBreak() {
+            fail(broken.line == 0 ? "\(broken.file) could not be read" : "the usage log was changed: \(broken.file), line \(broken.line)")
         }
-        print("The usage log holds together: \(try auditLog.entries().count) lines")
+        let parts = auditLog.segments().count
+        print("The usage log holds together: \(try auditLog.entries().count) lines" + (parts > 1 ? " in \(parts) files" : ""))
         return
     }
     var filter: String?

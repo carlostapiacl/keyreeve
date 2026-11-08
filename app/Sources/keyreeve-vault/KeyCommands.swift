@@ -128,14 +128,24 @@ func serveKeys() throws {
         log: auditLog,
         paused: { AgentBridge.isPaused(home: home) })
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
-    // Stops after a while with nothing in force, so no process stays around for nothing.
+    // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
+    // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an
+    // old version running, with fixes built since never in force. The next use starts the new one.
     var idleSince = Date()
+    let started = [ownPath(), command].map(changeStamp)
     KeySocket.serve(descriptor: descriptor, service: service) {
         if !service.isIdle { idleSince = Date() }
-        return Date().timeIntervalSince(idleSince) > 600
+        return Date().timeIntervalSince(idleSince) > 600 || [ownPath(), command].map(changeStamp) != started
     }
     unlink(socketPath)
     // The proxy reads until its stdin ends, so it stops with this process.
+}
+
+/// When a file last changed, and which file it is, so a replaced program is noticed.
+func changeStamp(_ url: URL) -> String {
+    let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+    let date = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+    return "\(date)-\(attributes?[.systemFileNumber] as? Int ?? 0)"
 }
 
 func showGrants() throws {

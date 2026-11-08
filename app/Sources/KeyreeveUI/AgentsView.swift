@@ -392,18 +392,25 @@ struct RequestRow: View {
     }
 }
 
-/// An agent asking to rotate a key: where the new key goes, and for a provider with no way to make keys from
-/// here, the new key the person made at its page. The vault asks for the fingerprint when it starts.
+/// An agent asking to rotate a key, answered in one place: seal it if it is not, say where the new key goes
+/// (approving a file of yours that updates a place, right here), paste the new key for a provider with no
+/// way to make one from here, and rotate. The vault asks for the fingerprint when it starts.
 struct RotationRequestRow: View {
     let request: AccessRequests.Entry
     @ObservedObject var model: AppModel
     @State private var newKey = ""
 
+    /// Buttons of the person's own that receive a new key, from every provider file, approved or not.
+    private var placeActions: [(provider: ProviderInfo, id: String, title: String)] {
+        model.providers.all.filter { $0.problem == nil }.flatMap { provider in
+            (provider.actions ?? []).filter { $0.run != nil }.map { (provider: provider, id: "\(provider.id)/\($0.id)", title: $0.title) }
+        }
+    }
+
     var body: some View {
         let item = model.item(forKey: request.key)
         let provider = item.flatMap { model.providers.rotator(of: $0) }
-        let places = item.flatMap { model.places[$0.path] } ?? KeyPlaces()
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(T("%@ asks to rotate %@", request.agent, request.key ?? request.provider))
                     .font(Theme.rowTitle).foregroundStyle(Theme.text)
@@ -414,57 +421,81 @@ struct RotationRequestRow: View {
                 Text("\u{201C}\(reason)\u{201D}").font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let problem = problem(item, provider, places) {
-                Text(problem).font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
-            } else if let item, let provider {
-                Text(destination(places)).font(Theme.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
-                if !provider.can_rotate {
-                    Text(T("Make the new key at %@'s page and paste it here. It is tested before anything changes.", provider.name))
-                        .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        if let page = provider.dashboard.flatMap(URL.init(string:)) {
-                            Button(T("Open its page")) { NSWorkspace.shared.open(page) }.buttonStyle(KRButtonStyle())
-                        }
-                        SecureField(T("New key"), text: $newKey).textFieldStyle(.roundedBorder)
-                    }
-                }
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
-                    Button(T("Rotate this key")) {
-                        model.rotate(for: request, item: item, handedOver: provider.can_rotate ? nil : newKey)
-                        newKey = ""
-                    }
-                    .buttonStyle(KRButtonStyle(primary: true))
-                    .disabled(model.busy || (!provider.can_rotate && newKey.isEmpty))
-                }
-            }
-            if problem(item, provider, places) != nil {
-                HStack {
-                    Spacer()
-                    Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
-                }
+            if let item, let provider {
+                steps(item, provider)
+            } else {
+                Text(item == nil ? T("That key is not on your list.") : T("Its provider has no way to rotate a key, here or by hand."))
+                    .font(Theme.caption).foregroundStyle(Theme.warn)
+                HStack { Spacer(); Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle()) }
             }
         }
     }
 
-    /// What stops it, said so the person knows the one step that helps.
-    private func problem(_ item: CatalogItem?, _ provider: ProviderInfo?, _ places: KeyPlaces) -> String? {
-        guard let item else { return T("That key is not on your list.") }
-        guard item.vault == .sealed else { return T("Seal this key first, so the new one has a safe place to land.") }
-        guard provider != nil else { return T("Its provider has no way to rotate a key, here or by hand.") }
-        guard places.isDecided else {
-            return T("Say first where this key is used, in its Security tab, so each place gets the new key.")
+    @ViewBuilder private func steps(_ item: CatalogItem, _ provider: ProviderInfo) -> some View {
+        let places = model.places[item.path] ?? KeyPlaces()
+        let open = model.rotations.contains { $0.key == item.path && $0.isOpen }
+        // 1. Sealed, so the new key has a safe place to land.
+        if item.vault == .sealed {
+            Label(T("Sealed in the vault"), systemImage: "checkmark.circle.fill").font(Theme.caption).foregroundStyle(Theme.good)
+        } else {
+            HStack(spacing: 8) {
+                Text(T("Seal this key first, so the new one has a safe place to land.")).font(Theme.caption).foregroundStyle(Theme.warn)
+                Button(T("Seal")) { model.seal([item]) }.buttonStyle(KRButtonStyle()).disabled(model.busy)
+            }
         }
-        if model.rotations.contains(where: { $0.key == item.path && $0.isOpen }) {
-            return T("A rotation of this key is open. Finish it in Vault.")
+        // 2. Where the new key goes.
+        Text(T("Where else is this key used? Each place gets the new key before the old one is revoked."))
+            .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+        ForEach(placeActions, id: \.id) { place in
+            HStack(spacing: 8) {
+                Toggle(place.title, isOn: Binding(
+                    get: { places.actions.contains(place.id) },
+                    set: { on in
+                        var value = places
+                        if on { value.actions.append(place.id); value.nothingElse = false } else { value.actions.removeAll { $0 == place.id } }
+                        _ = model.savePlaces(value, for: item)
+                    }))
+                .toggleStyle(.checkbox).font(Theme.caption)
+                .disabled(!place.provider.approved)
+                if !place.provider.approved {
+                    Button(T("Approve %@", place.provider.name)) { approveProvider(place.provider, model: model) }
+                        .buttonStyle(KRButtonStyle())
+                }
+            }
         }
-        return nil
-    }
-
-    private func destination(_ places: KeyPlaces) -> String {
-        let names = places.files.map { URL(fileURLWithPath: $0).lastPathComponent } + places.actions
-        return names.isEmpty ? T("Nothing else uses this key, you said.") : T("The new key goes to: %@", names.joined(separator: ", "))
+        ForEach(places.files, id: \.self) { file in
+            Label(URL(fileURLWithPath: file).lastPathComponent, systemImage: "doc").font(Theme.caption).foregroundStyle(Theme.text)
+        }
+        if places.actions.isEmpty && places.files.isEmpty {
+            Toggle(T("Nothing else uses this key"), isOn: Binding(
+                get: { places.nothingElse },
+                set: { on in var value = places; value.nothingElse = on; _ = model.savePlaces(value, for: item) }))
+            .toggleStyle(.checkbox).font(Theme.caption)
+        }
+        // 3. The new key, when the provider cannot make one from here.
+        if !provider.can_rotate {
+            Text(T("Make the new key at %@'s page and paste it here. It is tested before anything changes.", provider.name))
+                .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                if let page = provider.dashboard.flatMap(URL.init(string:)) {
+                    Button(T("Open its page")) { NSWorkspace.shared.open(page) }.buttonStyle(KRButtonStyle())
+                }
+                SecureField(T("New key"), text: $newKey).textFieldStyle(.roundedBorder)
+            }
+        }
+        if open {
+            Text(T("A rotation of this key is open. Finish it in Vault.")).font(Theme.caption).foregroundStyle(Theme.warn)
+        }
+        // 4. Rotate.
+        HStack(spacing: 8) {
+            Spacer()
+            Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
+            Button(T("Rotate this key")) {
+                model.rotate(for: request, item: item, handedOver: provider.can_rotate ? nil : newKey)
+                newKey = ""
+            }
+            .buttonStyle(KRButtonStyle(primary: true))
+            .disabled(model.busy || open || item.vault != .sealed || !places.isDecided || (!provider.can_rotate && newKey.isEmpty))
+        }
     }
 }
-

@@ -244,6 +244,20 @@ struct UnsavedRequestTests {
         #expect(try AgentTests().call(fresh, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).text.contains("already needs no fingerprint"))
     }
 
+    /// A server older than the Keyreeve in place changes no permission, and the agent hears why.
+    @Test func anOutdatedServerChangesNoPermission() throws {
+        final class Box: @unchecked Sendable { var policy = AgentPolicy(levels: ["kept": .free]) }
+        let box = Box()
+        let bridge = AgentBridge(
+            policy: { box.policy }, names: { ["kept", "asked"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude", decideAccess: { _ in AccessDecision(hours: 1) },
+            updatePolicy: { _ in throw VaultError(AgentBridge.outdated) })
+        let answer = try AgentTests().call(bridge, "request_access", ["key": "asked", "reason": "r"])
+        #expect(answer.error && answer.text.contains("start the session again"))
+        #expect(box.policy.levels == ["kept": .free])
+    }
+
     @Test func requestsWrittenAtTheSameTimeAreAllKept() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("requests-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }

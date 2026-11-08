@@ -517,6 +517,10 @@ public struct AgentBridge {
         return parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
     }
 
+    /// What a server older than the Keyreeve in place says instead of changing permissions.
+    public static let outdated =
+        "Keyreeve was updated after this agent session started, so this session does not change permissions. Ask the person to start the session again"
+
     /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.
     static func version(for requested: String?) -> String {
         let supported = ["2025-06-18", "2025-03-26", "2024-11-05"]

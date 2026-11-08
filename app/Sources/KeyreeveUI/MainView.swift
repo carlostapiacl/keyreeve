@@ -83,6 +83,7 @@ public struct MainView: View {
                     }
                     Label(T("Rotation"), systemImage: "arrow.triangle.2.circlepath").tag(Sidebar.rotation)
                     Label(T("Log"), systemImage: "list.bullet.rectangle").tag(Sidebar.log)
+                    Label(T("Providers"), systemImage: "puzzlepiece.extension").tag(Sidebar.providers)
                 }
             }
             .tint(Theme.accent)
@@ -128,6 +129,8 @@ public struct MainView: View {
             UsageLogSheet(model: model, inline: true)
         } else if selection == .agents {
             AgentsView(model: model)
+        } else if selection == .providers {
+            ProvidersView(model: model)
         } else {
             VStack(spacing: 0) {
                 filterBar
@@ -195,6 +198,7 @@ public struct MainView: View {
         case .agents: return T("Agents")
         case .rotation: return T("Rotation")
         case .log: return T("Log")
+        case .providers: return T("Providers")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")

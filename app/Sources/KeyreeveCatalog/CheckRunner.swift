@@ -79,6 +79,12 @@ public enum CheckRunner {
         public let lines: [String]
         /// The provider's id, as the file declares it.
         public let provider: String?
+
+        public init(ok: Bool, lines: [String], provider: String?) {
+            self.ok = ok
+            self.lines = lines
+            self.provider = provider
+        }
     }
 
     public static func validateRecipe(_ text: String, binary: URL) throws -> RecipeReport {

@@ -264,6 +264,15 @@ public struct AgentBridge {
             let described = describe()
             let date = now()
             let isOpen = { (key: String) in policy.level(of: key, at: date) != nil && policy.admits(agent: agent, for: key) }
+            // Checking a pin reads the whole program, and many keys allow the same one: each is read once a listing.
+            var checked: [String: Bool] = [:]
+            func pinnedOnce(_ program: String, _ hash: String?) -> Bool {
+                let pair = program + "\u{0}" + (hash ?? "")
+                if let known = checked[pair] { return known }
+                let result = pinned(program, hash)
+                checked[pair] = result
+                return result
+            }
             var lines = policy.keys.filter { known.contains($0) && isOpen($0) }.compactMap { key -> String? in
                 guard let level = policy.level(of: key, at: date) else { return nil }
                 var parts = [level == .free ? "free until the person quits Keyreeve" : "asks the person"]
@@ -278,7 +287,7 @@ public struct AgentBridge {
                 }
                 // Only programs run_with_key would accept, so an agent is not sent to one that is refused.
                 let programs = (policy.commands[key] ?? []).filter {
-                    policy.allows($0, with: key) && policy.hash(of: $0, for: key) != nil && pinned($0, policy.hash(of: $0, for: key))
+                    policy.allows($0, with: key) && policy.hash(of: $0, for: key) != nil && pinnedOnce($0, policy.hash(of: $0, for: key))
                 }
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
                 return "\(key): " + parts.joined(separator: "; ")

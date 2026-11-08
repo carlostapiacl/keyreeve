@@ -405,6 +405,20 @@ impl Proxy {
                     !name.eq_ignore_ascii_case("host") && swap_header(value, grant) != *value
                 })
         });
+        // A provider that takes its key in a header gets none in the address: the stand-in would go out as it is,
+        // and the provider would only say the token is wrong. Stopped here, saying where the key goes.
+        if grant.is_none()
+            && self
+                .grants_for(host)
+                .iter()
+                .any(|grant| !grant.in_url && target.contains(grant.stand_in.expose()))
+        {
+            return answer(
+                stream.get_mut(),
+                400,
+                "keyreeve: this provider takes the key in a header, such as Authorization: Bearer, not in the URL",
+            );
+        }
         headers.retain(|(name, _)| {
             ![
                 "proxy-authorization",

@@ -202,14 +202,21 @@ public final class KeyService: @unchecked Sendable {
     private let lock = NSLock()
     /// One prompt at a time: a second one would cancel the first.
     private let asking = NSLock()
+    /// The prompt on screen now, so a use waiting behind it can say what it waits for.
+    private var onScreen: (key: String, who: String, since: Date)?
+    /// How long a use waits behind another prompt before it says so. Under the client's two minutes, so
+    /// the agent hears why instead of "did not answer".
+    private let promptWait: TimeInterval
     private var revocations = 0
 
     public init(
         index: @escaping () throws -> KeyIndex,
         open: @escaping (_ source: String, _ prompt: String) throws -> Data,
         proxy: KeyProxy?, agents: SSHKeyAgents? = nil, confirm: @escaping @Sendable (String) -> Bool = { _ in false },
-        log: AuditLog, now: @escaping () -> Date = Date.init, paused: @escaping () -> Bool = { false }
+        log: AuditLog, now: @escaping () -> Date = Date.init, paused: @escaping () -> Bool = { false },
+        promptWait: TimeInterval = 90
     ) {
+        self.promptWait = promptWait
         self.paused = paused
         self.proxy = proxy
         self.agents = agents
@@ -313,6 +320,30 @@ public final class KeyService: @unchecked Sendable {
         return Response(ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable, grant: grant.id)
     }
 
+    /// Takes the one turn at the fingerprint. Behind another prompt for longer than `promptWait`, it says which
+    /// prompt that is and gives up, so the person hears of the one on screen and the agent can ask again.
+    private func takeTurn(key: String, who: String, caller: AuditLog.Observed?, declared: AuditLog.Declared) throws {
+        guard asking.lock(before: Date().addingTimeInterval(promptWait)) else {
+            lock.lock()
+            let ahead = onScreen
+            lock.unlock()
+            try log.append(event: "refused", key: key, observed: caller, declared: declared, detail: "another fingerprint is pending")
+            let what = ahead.map { " for \($0.key), asked by \($0.who) \(Int(Date().timeIntervalSince($0.since)))s ago" } ?? ""
+            throw VaultError(
+                "Keyreeve is waiting for the person's fingerprint\(what). Ask them to answer that prompt on the Mac, then try again")
+        }
+        lock.lock()
+        onScreen = (key, who, Date())
+        lock.unlock()
+    }
+
+    private func endTurn() {
+        lock.lock()
+        onScreen = nil
+        lock.unlock()
+        asking.unlock()
+    }
+
     private func use(_ request: Request, caller: AuditLog.Observed?) throws -> Response {
         guard let id = request.key, let program = request.program, !program.isEmpty else {
             throw VaultError("this needs a key and a command")
@@ -335,8 +366,8 @@ public final class KeyService: @unchecked Sendable {
         }
         if request.real == true {
             // Asked every time and never remembered: past this point nothing protects the value.
-            asking.lock()
-            defer { asking.unlock() }
+            try takeTurn(key: id, who: request.agent ?? name, caller: caller, declared: declared)
+            defer { endTurn() }
             lock.lock()
             let revocationsBefore = revocations
             lock.unlock()
@@ -372,8 +403,8 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
-        asking.lock()
-        defer { asking.unlock() }
+        try takeTurn(key: id, who: request.agent ?? name, caller: caller, declared: declared)
+        defer { endTurn() }
         // While this waited, the prompt ahead of it may have given what this needs.
         if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)

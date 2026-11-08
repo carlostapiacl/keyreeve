@@ -134,6 +134,15 @@ public enum KeySocket {
         return try bound(path: path)
     }
 
+    /// What to say when the service is there and said nothing in time. A use that waits that long is almost
+    /// always waiting for a fingerprint nobody has seen yet, and that is what the agent needs to pass on.
+    public static func silence(for op: String) -> String {
+        op == "use"
+            ? "no answer in two minutes: Keyreeve is most likely waiting for the person's fingerprint on this Mac. "
+                + "Ask them to look for the prompt, then try again. Nothing changed"
+            : "the key service did not answer, so nothing changed"
+    }
+
     /// Whether something is listening, whatever it answers or fails to answer.
     public static func isListening(path: String) -> Bool {
         guard let descriptor = try? connected(path: path) else { return false }

@@ -55,8 +55,8 @@ public struct KeyIndex: Equatable, Sendable {
         }
         guard self.key(key.id) == nil else { throw VaultError("\(key.id) is already in use") }
         guard !key.source.isEmpty else { throw VaultError("\(key.id) needs a source") }
-        keys.append(key)
-        keys.sort { $0.id < $1.id }
+        // In its place, rather than sorting the whole list again for each key a file adds.
+        keys.insert(key, at: keys.firstIndex { $0.id > key.id } ?? keys.endIndex)
     }
 
     public mutating func remove(id: String) { keys.removeAll { $0.id == id } }

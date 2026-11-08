@@ -317,6 +317,42 @@ struct KeyServiceTests {
         #expect(service.isIdle)
     }
 
+    /// A use stuck behind someone else's prompt says which prompt, before the client gives up in silence.
+    @Test func aUseBehindAnotherPromptSaysWhatItWaitsFor() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let touching = DispatchSemaphore(value: 0)
+        let touched = DispatchSemaphore(value: 0)
+        let log = AuditLog(url: folder.appendingPathComponent("a.jsonl"))
+        let service = KeyService(
+            index: { try KeyIndex.parse("[[key]]\nid = \"n\"\nsource = \"s\"\nprovider = \"netlify\"\n\n[[key]]\nid = \"m\"\nsource = \"t\"\nprovider = \"netlify\"\n") },
+            open: { _, _ in
+                touching.signal()
+                touched.wait()
+                return Data("CANARY\n".utf8)
+            },
+            proxy: FakeProxy(), log: log, promptWait: 0.2)
+        let first = Task.detached { service.handle(.init(op: "use", key: "n", program: "/bin/x", agent: "motor"), caller: nil) }
+        touching.wait()
+        let second = service.handle(.init(op: "use", key: "m", program: "/bin/y", agent: "claude"), caller: nil)
+        #expect(!second.ok)
+        #expect(second.error?.contains("waiting for the person's fingerprint for n, asked by motor") == true)
+        #expect(try log.entries().contains { $0.event == "refused" && $0.key == "m" && $0.detail == "another fingerprint is pending" })
+        touched.signal()
+        #expect(await first.value.ok)
+        // The turn is free again once the prompt ahead is answered.
+        let third = Task.detached { service.handle(.init(op: "use", key: "m", program: "/bin/y", agent: "claude"), caller: nil) }
+        touching.wait()
+        touched.signal()
+        #expect(await third.value.ok)
+    }
+
+    @Test func aSilentServiceIsBlamedOnTheFingerprintOnlyForAUse() {
+        #expect(KeySocket.silence(for: "use").contains("fingerprint"))
+        #expect(!KeySocket.silence(for: "grants").contains("fingerprint"))
+    }
+
     @Test func testAUseThatCannotBeLoggedLeavesNoPermission() throws {
         let f = Fixture()
         _ = f.service

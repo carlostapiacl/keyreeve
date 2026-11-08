@@ -60,6 +60,8 @@ let help = """
       keyreeve-vault backup <folder>
           Copy the sealed vault into a folder. It needs no fingerprint and opens with the recovery key.
 
+    Any other command, such as recipes, check, verify or rotate, goes to keyreeve-cli beside this program.
+
     KEYREEVE_VAULT sets the folder. The default is ~/.keyreeve/vault.
 
     """
@@ -103,11 +105,20 @@ func ownPath() -> URL {
     URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath()
 }
 
+/// Runs keyreeve-cli, from the same bundle, with these arguments. Without it, the help.
+func handToCLI() -> Never {
+    let cli = ownPath().deletingLastPathComponent().appendingPathComponent("keyreeve-cli").path
+    guard FileManager.default.isExecutableFile(atPath: cli) else { fail(help, code: 2) }
+    var pointers: [UnsafeMutablePointer<CChar>?] = ([cli] + arguments).map { strdup($0) } + [nil]
+    execv(cli, &pointers)
+    fail("could not run \(cli)")
+}
+
 /// Reaches the service, starting it the first time. It stops on its own once idle.
 func askService(_ request: KeyService.Request) throws -> KeyService.Response {
     if let answer = try? KeySocket.send(request, path: socketPath) { return answer }
     // It is there and gave no answer. Saying "done" here could be false, and starting another would ask twice.
-    if KeySocket.isListening(path: socketPath) { throw VaultError("the key service did not answer, so nothing changed") }
+    if KeySocket.isListening(path: socketPath) { throw VaultError(KeySocket.silence(for: request.op)) }
     guard request.op == "use" else { return KeyService.Response(ok: true, grants: []) }
     let process = Process()
     process.executableURL = ownPath()

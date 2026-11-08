@@ -254,9 +254,12 @@ fn a_body_keeps_the_stand_in_in_both_framings() {
 
 #[test]
 fn the_address_is_swapped_only_for_a_provider_that_wants_it_there() {
+    // A provider that takes its key in a header: the stand-in never leaves, and the tool hears where it goes.
     let plain = run();
-    curl(&plain, &[&url(&format!("/bot{FAKE}/me"))]);
-    assert!(plain.seen.lock().unwrap()[0].contains(FAKE));
+    let (body, code) = curl(&plain, &[&url(&format!("/me?access_token={FAKE}"))]);
+    assert_eq!(code, "400");
+    assert!(body.contains("takes the key in a header"), "{body}");
+    assert!(plain.seen.lock().unwrap().is_empty());
 
     let in_url = run_with("hello", &["localhost"], true, u64::MAX);
     curl(&in_url, &[&url(&format!("/bot{FAKE}/me"))]);

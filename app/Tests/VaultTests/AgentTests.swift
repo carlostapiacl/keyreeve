@@ -50,6 +50,23 @@ struct AgentTests {
         "key": "a.env", "variable": "TOKEN", "field": "TOKEN", "command": ["deploy.sh", "--now"], "reason": "deploy",
     ]
 
+    @Test func aListingReadsEachPinnedProgramOnce() throws {
+        final class Count: @unchecked Sendable { var reads = 0 }
+        let count = Count()
+        let bridge = AgentBridge(
+            policy: Self.pinnedPolicy(["a.env": ["deploy.sh"], "other.env": ["deploy.sh"]]),
+            names: { ["a.env", "other.env"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") },
+            record: { _, _, _ in },
+            pinned: { _, _ in
+                count.reads += 1
+                return true
+            })
+        let list = try call(bridge, "list_keys", [:])
+        #expect(list.text.contains("a.env") && list.text.contains("other.env"))
+        #expect(count.reads == 1)
+    }
+
     @Test func testAnAllowedProgramRunsAndTheValueNeverComesBack() throws {
         let log = Log()
         let result = try call(bridge(log, output: "token is \(Self.canary)"), "run_with_key", run)

@@ -28,7 +28,10 @@ do {
     case "recover": try recoverVault()
     case "backup": try backupVault()
     case "--help", "-h", "help": print(help)
-    default: fail(help, code: 2)
+    case nil: fail(help, code: 2)
+    // `keyreeve` on the PATH is this program, and messages name commands of the CLI beside it, such as
+    // `keyreeve recipes approve`. Those go to it rather than ending in this help.
+    default: handToCLI()
     }
 } catch let error as VaultError {
     fail(error.description)

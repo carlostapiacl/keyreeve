@@ -293,7 +293,8 @@ the real key on requests to that provider's hosts, which come from its file. `pr
 Your finger is asked once for that key with that program, and the permission lasts 5 minutes unless `--for` says otherwise. A small service keeps
 it, and stops on its own when idle. Quitting the app ends every permission. The variable comes from the provider's file, or from `--as`.
 
-The swap happens in headers and in Basic passwords, and in the address for a provider that takes its key there. A body keeps the stand-in, so a
+The swap happens in headers and in Basic passwords, and in the address for a provider that takes its key there. A stand-in in the
+address of a provider that takes it in a header is stopped at the proxy, with an answer that says where it goes. A body keeps the stand-in, so a
 tool that sends its key in a body fails and leaks nothing. A reply that echoes the key gets the stand-in back. Other hosts get a tunnel, with TLS
 end to end. The stand-in is what lets a request use the key, so nothing else needs to be in the command's environment.
 

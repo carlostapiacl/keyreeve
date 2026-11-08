@@ -95,7 +95,12 @@ func announceRequest(_ request: AccessRequests.Entry) -> AgentBridge.Announcemen
     let alert = NSAlert()
     alert.alertStyle = .informational
     let said = request.reason.map { "\u{201C}\($0)\u{201D}" } ?? "-"
-    if request.isRotation {
+    if request.kind == "sort" {
+        alert.messageText = spanish ? "\(request.agent) propone ordenar tus claves" : "\(request.agent) proposes sorting your keys"
+        alert.informativeText = spanish
+            ? "Lo que dice el agente, en sus palabras:\n\(said)\n\nEn Keyreeve ves cada cambio y aplicas los que quieras. Nada cambia antes."
+            : "What the agent says, in its own words:\n\(said)\n\nIn Keyreeve you see each change and apply the ones you want. Nothing changes before."
+    } else if request.isRotation {
         let key = request.key ?? request.provider
         alert.messageText = spanish ? "\(request.agent) pide rotar \(key)" : "\(request.agent) asks to rotate \(key)"
         alert.informativeText = spanish

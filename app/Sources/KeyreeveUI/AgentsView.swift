@@ -9,6 +9,7 @@ struct AgentsView: View {
     @ObservedObject var model: AppModel
     @State private var connection = AgentConnection.none
     @State private var runs: [AgentTranscript.Entry] = []
+    @AppStorage(AppModel.agentsCanSortKey) private var agentsCanSort = false
     /// Read again while this is on screen, off the main thread, so the window stays live and quick.
     private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -27,6 +28,7 @@ struct AgentsView: View {
                     .font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 if !model.pendingRequests.isEmpty { requestsCard }
+                sortingCard
                 connectionCard
                 allowedCard
                 if !model.usage.grants.isEmpty { openCard }
@@ -57,7 +59,9 @@ struct AgentsView: View {
                 }
                 ForEach(Array(model.pendingRequests.enumerated()), id: \.element.id) { index, request in
                     if index > 0 { Divider() }
-                    if request.isRotation {
+                    if request.kind == "sort" {
+                        SortProposalRow(request: request, model: model)
+                    } else if request.isRotation {
                         RotationRequestRow(request: request, model: model)
                     } else {
                         RequestRow(request: request, model: model)
@@ -67,6 +71,20 @@ struct AgentsView: View {
             .padding(14)
         }
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent.opacity(0.6)))
+    }
+
+    /// Letting an agent sort the whole folder: it reads names and fields, proposes, and the person applies.
+    private var sortingCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(T("Agents can sort my keys"), isOn: $agentsCanSort)
+                    .toggleStyle(.switch).font(Theme.rowTitle)
+                    .onChange(of: agentsCanSort) { _, _ in model.publishInventory() }
+                Text(T("An agent sees each file's name, field names, provider and state, never a value, and proposes how to sort them. You review every change here and apply the ones you want."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+        }
     }
 
     private var connectionCard: some View {
@@ -502,3 +520,93 @@ struct RotationRequestRow: View {
         }
     }
 }
+
+/// An agent's proposal to sort many keys, in one list: each file with what would change, all chosen to
+/// start, and one button to apply the chosen ones. Checking asks for the fingerprint as always.
+struct SortProposalRow: View {
+    let request: AccessRequests.Entry
+    @ObservedObject var model: AppModel
+    @State private var proposal: SortProposal?
+    @State private var chosen: Set<String> = []
+
+    var body: some View {
+        let proposal = self.proposal ?? SortProposal()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(T("%@ proposes changes to %d keys", request.agent, proposal.paths.count))
+                    .font(Theme.rowTitle).foregroundStyle(Theme.text)
+                Spacer(minLength: 8)
+                Text(request.at, style: .relative).font(Theme.caption).foregroundStyle(Theme.faint)
+            }
+            if let reason = request.reason {
+                Text("\u{201C}\(reason)\u{201D}").font(Theme.body).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if proposal.paths.isEmpty {
+                Text(T("Nothing in it matches your list today.")).font(Theme.caption).foregroundStyle(Theme.warn)
+            } else {
+                HStack(spacing: 8) {
+                    Button(T("Choose all")) { chosen = Set(proposal.paths) }.buttonStyle(.link).font(Theme.caption)
+                    Button(T("Choose none")) { chosen = [] }.buttonStyle(.link).font(Theme.caption)
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(proposal.paths, id: \.self) { path in
+                            Toggle(isOn: Binding(
+                                get: { chosen.contains(path) },
+                                set: { on in if on { chosen.insert(path) } else { chosen.remove(path) } })
+                            ) {
+                                HStack(spacing: 8) {
+                                    Text(path).font(Theme.body).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                                    if let what = proposal.suggestion(for: path)?.what {
+                                        Text(what).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 6)
+                                    Text(changes(path, in: proposal)).font(Theme.caption).foregroundStyle(Theme.text).lineLimit(1)
+                                }
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                }
+                .frame(maxHeight: 320)
+            }
+            HStack(spacing: 8) {
+                if !proposal.check.intersection(chosen).isEmpty {
+                    Text(T("Checking sends each key to its own provider, and may ask for your fingerprint."))
+                        .font(Theme.caption).foregroundStyle(Theme.muted)
+                }
+                Spacer()
+                Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
+                Button(T("Apply %d", chosen.count)) { model.apply(proposal, chosen: chosen, for: request) }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .disabled(model.busy || chosen.isEmpty)
+            }
+        }
+        .onAppear {
+            guard self.proposal == nil else { return }
+            let read = model.proposal(for: request)
+            self.proposal = read
+            chosen = Set(read.paths)
+        }
+    }
+
+    /// What would change for one file, in a few words.
+    private func changes(_ path: String, in proposal: SortProposal) -> String {
+        var parts: [String] = []
+        switch proposal.suggestion(for: path)?.kind {
+        case .provider(let id, let field)?:
+            let name = model.providers.name(of: id)
+            parts.append(field.map { "\(name) · \($0)" } ?? name)
+        case .untestable?: parts.append(T("Nothing to check"))
+        case .internalSecret?: parts.append(T("Internal secret"))
+        case .notSecret?: parts.append(T("Not secret"))
+        case .described?, nil: break
+        }
+        if proposal.check.contains(path) { parts.append(T("check")) }
+        if proposal.seal.contains(path) { parts.append(T("seal")) }
+        if proposal.archive.contains(path) { parts.append(T("archive")) }
+        return parts.joined(separator: " · ")
+    }
+}
+

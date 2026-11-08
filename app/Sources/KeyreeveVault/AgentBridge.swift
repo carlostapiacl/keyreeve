@@ -92,6 +92,10 @@ public struct AgentBridge {
     let announce: (AccessRequests.Entry) -> Announcement
     /// The person's emergency stop, read at each request.
     let paused: () -> Bool
+    /// The list of key files the app publishes while the person lets agents sort keys. None when they do not.
+    let inventory: () -> Data?
+    /// Keeps a proposal's changes for the app, by the request's id.
+    let saveProposal: (String, Data) throws -> Void
     let held = Held()
 
     /// What the person answers when told of a request for a key that is not saved yet.
@@ -133,7 +137,9 @@ public struct AgentBridge {
         requests: @escaping () -> [AccessRequests.Entry] = { [] },
         addRequest: @escaping (AccessRequests.Entry) throws -> Void = { _ in throw VaultError("requests cannot be kept here") },
         announce: @escaping (AccessRequests.Entry) -> Announcement = { _ in .later },
-        paused: @escaping () -> Bool = { false }
+        paused: @escaping () -> Bool = { false },
+        inventory: @escaping () -> Data? = { nil },
+        saveProposal: @escaping (String, Data) throws -> Void = { _, _ in throw VaultError("proposals cannot be kept here") }
     ) {
         currentPolicy = policy
         self.names = names
@@ -157,6 +163,8 @@ public struct AgentBridge {
         self.addRequest = addRequest
         self.announce = announce
         self.paused = paused
+        self.inventory = inventory
+        self.saveProposal = saveProposal
     }
 
     /// Runs and writes down what ran, with the key and its stand-in taken out of what is kept.
@@ -296,6 +304,11 @@ public struct AgentBridge {
             return try requestAccess(arguments)
         case "rotate_key":
             return try rotateKey(arguments)
+        case "inventory":
+            guard let list = inventory() else { throw VaultError(Self.sortingOff) }
+            return String(decoding: list, as: UTF8.self)
+        case "propose":
+            return try propose(arguments)
         default:
             throw VaultError("no such tool")
         }
@@ -484,6 +497,25 @@ public struct AgentBridge {
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
                 ],
                 "required": ["key", "command", "reason"],
+            ],
+        ],
+        [
+            "name": "inventory",
+            "description":
+                "List the person's key files, to help them sort all of them: path, provider, field names, tags, level, last check, whether sealed or archived, and what it is. Never a value. Also the providers keyreeve knows, by id. Only while the person lets agents sort keys, in Keyreeve under Agents.",
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
+        ],
+        [
+            "name": "propose",
+            "description":
+                "Propose changes to many key files at once, from what inventory shows. They wait in Keyreeve, where the person reviews them in one list and applies them, all or some. Each change: {\"path\": as inventory gives it, \"kind\": \"provider\" (with \"provider\": an id from inventory, and \"field\": a field name when the file has several) | \"untestable\" (a login, password, database URL, document, public key, signature, webhook or DSN) | \"internal\" (a secret of the person's own software) | \"public\" (not a secret at all) | \"described\" (only what it is), \"what\": at most eight words on what it holds, \"seal\": true to keep it in the vault, \"check\": true to check it with its provider, \"archive\": true for a key that is dead or a copy}. Prefer leaving a file out to guessing. Call inventory later to see what changed.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "reason": ["type": "string", "description": "What these changes do, in a sentence, shown to the person"],
+                    "changes": ["type": "array", "items": ["type": "object"]],
+                ],
+                "required": ["reason", "changes"],
             ],
         ],
         [

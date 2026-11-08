@@ -162,9 +162,7 @@ public struct MainView: View {
         } else if selection == .providers {
             ProvidersView(model: model)
         } else {
-            VStack(spacing: 0) {
-                filterBar
-                HStack(spacing: 0) {
+            HStack(spacing: 0) {
                 if shown.isEmpty {
                     emptyList.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -175,29 +173,31 @@ public struct MainView: View {
                     // Wide enough to read without truncating, with the technical parts behind a disclosure.
                     KeyDetail(item: chosenItem, model: model).frame(width: 440)
                 }
-                }
             }
+            // An inset, not the first row of a stack: a scroll view at the column's top edge reaches under the
+            // toolbar, and its chips are drawn below it while the clicks land behind the toolbar.
+            .safeAreaInset(edge: .top, spacing: 0) { filterBar }
             .searchable(text: $search, prompt: T("Search by name or tag"))
         }
     }
 
-    /// One click to the views people use most.
+    /// One click to the views people use most. The chips wrap to a second line instead of scrolling: a
+    /// scroll view at the top of the column reaches under the toolbar, where its clicks are lost.
     private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                filterChip(T("All"), .all)
-                filterChip(T("Can be checked"), .checkable)
-                filterChip(T("Critical keys"), .critical)
-                filterChip(T("Rejected"), .result("rejected"))
-                filterChip(T("Works"), .result("works"))
-                filterChip(T("No answer"), .result("no_answer"))
-                filterChip(T("Never checked"), .result(""))
-                filterChip(T("Older than suggested"), .stale)
-                filterChip(T("Archive"), .archive)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+        Wrap(spacing: 6, lineSpacing: 6) {
+            filterChip(T("All"), .all)
+            filterChip(T("Can be checked"), .checkable)
+            filterChip(T("Critical keys"), .critical)
+            filterChip(T("Rejected"), .result("rejected"))
+            filterChip(T("Works"), .result("works"))
+            filterChip(T("No answer"), .result("no_answer"))
+            filterChip(T("Never checked"), .result(""))
+            filterChip(T("Older than suggested"), .stale)
+            filterChip(T("Archive"), .archive)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
     }
@@ -413,6 +413,50 @@ public struct MainView: View {
 }
 
 /// One filter above the list. It shows it can be pressed before anything is pressed.
+/// Lays its views out in a row, and goes on to the next line when one does not fit.
+struct Wrap: Layout {
+    var spacing: CGFloat
+    var lineSpacing: CGFloat
+
+    private func lines(_ sizes: [CGSize], width: CGFloat) -> [[Int]] {
+        var result: [[Int]] = [[]]
+        var used: CGFloat = 0
+        for (index, size) in sizes.enumerated() {
+            if !result[result.count - 1].isEmpty, used + spacing + size.width > width {
+                result.append([])
+                used = 0
+            }
+            used += (result[result.count - 1].isEmpty ? 0 : spacing) + size.width
+            result[result.count - 1].append(index)
+        }
+        return result
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let width = proposal.width ?? sizes.reduce(0) { $0 + $1.width + spacing }
+        let rows = lines(sizes, width: width)
+        let height = rows.map { row in row.map { sizes[$0].height }.max() ?? 0 }.reduce(0, +)
+            + CGFloat(max(rows.count - 1, 0)) * lineSpacing
+        let widest = rows.map { row in row.map { sizes[$0].width }.reduce(0, +) + CGFloat(max(row.count - 1, 0)) * spacing }.max() ?? 0
+        return CGSize(width: min(widest, width), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var y = bounds.minY
+        for row in lines(sizes, width: bounds.width) {
+            var x = bounds.minX
+            let height = row.map { sizes[$0].height }.max() ?? 0
+            for index in row {
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sizes[index]))
+                x += sizes[index].width + spacing
+            }
+            y += height + lineSpacing
+        }
+    }
+}
+
 struct FilterChip: View {
     let title: String
     let count: Int

@@ -37,5 +37,12 @@ public enum PrivateFile {
             throw VaultError("\(url.lastPathComponent) could not be saved")
         }
         saved = true
+        // The new name reaches the disk too, so a power cut right after cannot bring the old file back. The file
+        // is already in place, so a folder that cannot be synced does not make this a failure.
+        let parent = open(url.deletingLastPathComponent().path, O_RDONLY | O_CLOEXEC)
+        if parent >= 0 {
+            _ = fsync(parent)
+            close(parent)
+        }
     }
 }

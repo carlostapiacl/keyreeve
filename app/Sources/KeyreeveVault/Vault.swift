@@ -47,6 +47,9 @@ public struct VaultFile: Codable, Equatable {
         public var source: String?
         /// A whole age file. Its text starts with a line naming the key, then the value.
         public var sealed: Data
+
+        /// Which sealing this is. Each seal encrypts afresh, so a replaced value always has a new one.
+        public var revision: String { SHA256.hash(data: sealed).prefix(12).map { String(format: "%02x", $0) }.joined() }
     }
 
     public init(enclave: P256.KeyAgreement.PublicKey, recovery: Age.X25519Recipient) {

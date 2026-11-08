@@ -165,8 +165,16 @@ public enum CatalogError: Error, Equatable {
 }
 
 public enum CatalogParser {
-    public static func parse(_ text: String) throws -> [CatalogItem] {
+    public static func parse(_ text: String) throws -> [CatalogItem] { try parseCounting(text).items }
+
+    /// The rows, and how many could not be read: a row cut short is left out, and that is said, not hidden.
+    public static func parseCounting(_ text: String) throws -> (items: [CatalogItem], skipped: Int) {
         let rows = table(text)
+        let items = try rowsToItems(rows)
+        return (items, max(0, rows.count - 1 - items.count))
+    }
+
+    private static func rowsToItems(_ rows: [[String]]) throws -> [CatalogItem] {
         guard let header = rows.first else { return [] }
         func column(_ name: String) throws -> Int {
             guard let index = header.firstIndex(of: name) else {

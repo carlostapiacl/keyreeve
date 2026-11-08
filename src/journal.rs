@@ -190,11 +190,21 @@ impl FileBackend {
 /// journal refuses damage in the middle, so the half line goes first. A whole line missing only its
 /// break keeps its content.
 fn repair_torn_end(path: &Path) -> io::Result<()> {
-    let mut text = Vec::new();
-    File::open(path)?.read_to_end(&mut text)?;
-    if text.is_empty() || text.ends_with(b"\n") {
+    // Almost always whole: one byte says so, and only a torn end is read in full.
+    let mut file = File::open(path)?;
+    let length = file.metadata()?.len();
+    if length == 0 {
         return Ok(());
     }
+    let mut last = [0u8; 1];
+    file.seek(SeekFrom::End(-1))?;
+    file.read_exact(&mut last)?;
+    if last[0] == b'\n' {
+        return Ok(());
+    }
+    let mut text = Vec::new();
+    file.seek(SeekFrom::Start(0))?;
+    file.read_to_end(&mut text)?;
     let start = text
         .iter()
         .rposition(|byte| *byte == b'\n')

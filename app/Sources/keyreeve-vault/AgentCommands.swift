@@ -118,7 +118,11 @@ func serveAgents() throws {
         announce: announceRequest,
         paused: { AgentBridge.isPaused(home: home) },
         inventory: { try? Data(contentsOf: AgentSorting.inventoryFile(home: home)) },
-        saveProposal: { id, data in try AgentSorting.save(data, id: id, home: home) })
+        saveProposal: { id, data in try AgentSorting.save(data, id: id, home: home) },
+        revision: { id in
+            guard let source = try? indexed(id).source else { return nil }
+            return (try? store.load())?.entries[source]?.revision
+        })
     // One message per line, at most a megabyte: a client that sends more is told so and the line is
     // dropped, read in pieces and never held whole.
     let limit = 1 << 20

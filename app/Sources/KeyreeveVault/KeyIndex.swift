@@ -50,13 +50,17 @@ public struct KeyIndex: Equatable, Sendable {
     }
 
     public mutating func add(_ key: Key) throws {
-        guard Self.isValid(id: key.id) else {
-            throw VaultError("an identifier uses lower case letters, digits and dashes")
-        }
-        guard self.key(key.id) == nil else { throw VaultError("\(key.id) is already in use") }
-        guard !key.source.isEmpty else { throw VaultError("\(key.id) needs a source") }
+        try Self.check(key, taken: self.key(key.id) != nil)
         // In its place, rather than sorting the whole list again for each key a file adds.
         keys.insert(key, at: keys.firstIndex { $0.id > key.id } ?? keys.endIndex)
+    }
+
+    private static func check(_ key: Key, taken: Bool) throws {
+        guard isValid(id: key.id) else {
+            throw VaultError("an identifier uses lower case letters, digits and dashes")
+        }
+        guard !taken else { throw VaultError("\(key.id) is already in use") }
+        guard !key.source.isEmpty else { throw VaultError("\(key.id) needs a source") }
     }
 
     public mutating func remove(id: String) { keys.removeAll { $0.id == id } }
@@ -109,7 +113,10 @@ public struct KeyIndex: Equatable, Sendable {
     /// Reads the part of TOML this file uses, and calls anything else an error, since a guess could
     /// send one key where another was meant.
     public static func parse(_ text: String) throws -> KeyIndex {
-        var index = KeyIndex()
+        // Each key checked as `add` would, against a set of the names seen, and the whole list sorted once:
+        // a file of many keys is read in one pass, not one search and insertion per key.
+        var read: [Key] = []
+        var seen: Set<String> = []
         var current: [String: String]?
         func finish() throws {
             guard let current else { return }
@@ -120,11 +127,13 @@ public struct KeyIndex: Equatable, Sendable {
             guard servers?.allSatisfy({ $0.hasPrefix("SHA256:") }) ?? true else {
                 throw VaultError("servers in keys.toml are fingerprints like SHA256:abc, as `ssh-keygen -l` writes them")
             }
-            try index.add(
-                Key(
-                    id: id, source: source, field: current["field"], provider: current["provider"],
-                    project: current["project"], account: current["account"], description: current["description"], variable: current["variable"],
-                    servers: servers))
+            let key = Key(
+                id: id, source: source, field: current["field"], provider: current["provider"],
+                project: current["project"], account: current["account"], description: current["description"], variable: current["variable"],
+                servers: servers)
+            try check(key, taken: seen.contains(id))
+            seen.insert(id)
+            read.append(key)
         }
         for (number, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -145,6 +154,8 @@ public struct KeyIndex: Equatable, Sendable {
             try scanner.end(bad)
         }
         try finish()
+        var index = KeyIndex()
+        index.keys = read.sorted { $0.id < $1.id }
         return index
     }
 

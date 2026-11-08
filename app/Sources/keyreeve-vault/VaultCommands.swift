@@ -46,7 +46,25 @@ func putKey() throws {
         if VaultFile.isTemporary(arguments[1]) { vault.entries[arguments[1]] = nil }
         try vault.replace(name: arguments[1], value: value)
     }
-    if !VaultFile.isTemporary(arguments[1]) { try? auditLog.append(event: "sealed", key: arguments[1], detail: "replaced") }
+    if !VaultFile.isTemporary(arguments[1]) {
+        try? auditLog.append(event: "sealed", key: arguments[1], detail: "replaced")
+        endPermissions(forSources: [arguments[1]])
+    }
+}
+
+/// Permissions opened with a value that was just replaced end now, not when they run out. The service also
+/// notices on the next use; this covers what the proxy already holds. With no service, none is in force.
+func endPermissions(forSources sources: [String]) {
+    guard FileManager.default.fileExists(atPath: socketPath),
+        let index = try? KeyIndex.load(from: keysFile)
+    else { return }
+    for key in index.keys where sources.contains(key.source) {
+        let answer = try? KeySocket.send(KeyService.Request(op: "revoke", key: key.id), path: socketPath, timeout: 5)
+        if answer?.ok != true {
+            FileHandle.standardError.write(Data(
+                "keyreeve-vault: could not confirm that permissions for \(key.id) ended; `keyreeve-vault revoke \(key.id)` ends them\n".utf8))
+        }
+    }
 }
 
 /// The app's "Seal the changed files again", for scripts and agents: the file's exact bytes, from the
@@ -67,6 +85,7 @@ func resealKeys() throws {
             print("\(path) sealed again")
         }
         for (path, why) in report.skipped.sorted(by: { $0.key < $1.key }) { print("\(path) not sealed: \(why)") }
+        endPermissions(forSources: report.sealed)
     }
 }
 

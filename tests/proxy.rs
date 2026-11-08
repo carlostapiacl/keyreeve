@@ -211,6 +211,7 @@ fn the_real_key_reaches_only_the_provider_and_the_command_never_sees_it() {
         ("my-key", "GET", "/v1/me", 200)
     );
     assert_eq!(event.host, "localhost");
+    assert_eq!(event.outcome, "complete");
 }
 
 #[test]
@@ -259,6 +260,17 @@ fn the_address_is_swapped_only_for_a_provider_that_wants_it_there() {
     let (body, code) = curl(&plain, &[&url(&format!("/me?access_token={FAKE}"))]);
     assert_eq!(code, "400");
     assert!(body.contains("takes the key in a header"), "{body}");
+    assert!(plain.seen.lock().unwrap().is_empty());
+    // Nor when the same request also holds it rightly in a header.
+    let (body, code) = curl(
+        &plain,
+        &[
+            "-H",
+            &format!("Authorization: Bearer {FAKE}"),
+            &url(&format!("/me?access_token={FAKE}")),
+        ],
+    );
+    assert_eq!(code, "400", "{body}");
     assert!(plain.seen.lock().unwrap().is_empty());
 
     let in_url = run_with("hello", &["localhost"], true, u64::MAX);
@@ -435,4 +447,60 @@ fn a_tunnel_does_not_reach_this_machine_or_a_private_network() {
         let _ = std::io::BufReader::new(stream).read_line(&mut answer);
         assert!(answer.contains(" 403 "), "{target}: {answer}");
     }
+}
+
+#[test]
+fn a_request_that_never_got_through_is_written_down_too() {
+    // A port nothing listens on: the request with the key never reaches a provider, and the log says so.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let up = upstream("unused");
+    let (proxy, events) = Proxy::new(Options {
+        extra_roots: vec![up.root.clone()],
+        upstream_port: Some(closed),
+        private_tunnels: true,
+    })
+    .unwrap();
+    let folder = std::env::temp_dir().join(format!(
+        "keyreeve-proxy-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    let trust = proxy.write_trust(&folder).unwrap();
+    let port = proxy.listen().unwrap();
+    proxy.add(Grant {
+        id: "g-1".into(),
+        key: "my-key".into(),
+        stand_in: Secret::new(FAKE),
+        real: Secret::new(REAL),
+        hosts: vec!["localhost".into()],
+        in_url: false,
+        expires: u64::MAX,
+    });
+    let run = Run {
+        proxy,
+        port,
+        bundle: trust.bundle,
+        events,
+        seen: up.seen,
+        upstream: closed,
+        folder,
+    };
+    let (_, code) = curl(
+        &run,
+        &[
+            "-H",
+            &format!("Authorization: Bearer {FAKE}"),
+            &url("/v1/me"),
+        ],
+    );
+    assert_eq!(code, "502");
+    let event = run.events.recv().unwrap();
+    assert_eq!(
+        (event.key.as_str(), event.outcome.as_str(), event.status),
+        ("my-key", "not sent", 0)
+    );
 }

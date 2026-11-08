@@ -67,15 +67,17 @@ extension AppModel {
         }
         let provider = draft.provider
         do {
-            var index = (try? KeyIndex.load(from: files.keyIndex)) ?? keyIndex
+            // A keys.toml that is there and cannot be read stops this: written from memory, it could lose keys.
+            var index = FileManager.default.fileExists(atPath: files.keyIndex.path) ? try KeyIndex.load(from: files.keyIndex) : keyIndex
             let id = index.identifier(for: name)
             let entry = Self.addedFolder + id
             // The name is checked before anything is sealed, so a bad one leaves nothing behind.
             try index.add(KeyIndex.Key(
                 id: id, source: entry, provider: provider, description: name == id ? nil : name,
                 variable: provider.flatMap { provider in providers.all.first { $0.id == provider }?.env_var }))
-            try vaultStore.update { vault in try vault.add(name: entry, value: Data(value.utf8)) }
-            try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
+            try Self.savePasted(Data(value.utf8), as: entry, index: index, store: vaultStore) {
+                try self.files.writePrivate($0, to: self.files.keyIndex)
+            }
             keyIndex = index
             audit([(id, "pasted, \(provider ?? "no provider")")], event: "sealed")
             if let request = draft.request { try openToAgent(id, for: request, hours: hours) }
@@ -92,6 +94,24 @@ extension AppModel {
             return
         }
         load()
+    }
+
+    /// Seals a pasted key and writes keys.toml as one step. If keys.toml cannot be written, the copy just sealed
+    /// is taken out again, so the key is not left in the vault with no name and trying again starts clean.
+    nonisolated static func savePasted(
+        _ value: Data, as entry: String, index: KeyIndex, store: VaultStore, writeIndex: (Data) throws -> Void
+    ) throws {
+        try store.update { vault in try vault.add(name: entry, value: value) }
+        do {
+            try writeIndex(Data(index.toml.utf8))
+        } catch {
+            do {
+                try store.update { vault in vault.entries[entry] = nil }
+            } catch {
+                throw VaultError("\(entry) was sealed but keys.toml could not be written, and it could not be taken out again")
+            }
+            throw VaultError("keys.toml could not be written, so the key was not saved. Nothing was left behind: try again")
+        }
     }
 
     /// Drops the pasted key, and clears the clipboard if it still holds it.

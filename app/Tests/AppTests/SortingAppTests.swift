@@ -51,7 +51,48 @@ struct SortingAppTests {
         #expect(edits["id.txt"]?.level == "none" && edits["id.txt"]?.description == "An account id")
         #expect(edits["app.env"] == nil)
         let answer = AccessRequests.read(from: root.appendingPathComponent(AccessRequests.fileName)).last
-        #expect(answer?.event == .allowed && answer?.id == "r-1" && answer?.result?.hasPrefix("applied 1 changes") == true)
+        // Accepted at once; the end is written when the steps after it end, never before.
+        #expect(answer?.event == .allowed && answer?.id == "r-1" && answer?.result?.hasPrefix("accepted: 1 changes saved") == true)
+    }
+
+    /// Sealing and checking a file that was also split reach its new files, never the original that moved away.
+    @Test func aSplitFileIsSealedAndCheckedAsItsNewFiles() {
+        let split = ["notes.txt": ["notes-1.txt", "notes-2.txt"]]
+        #expect(AppModel.afterSplit(["a.env", "notes.txt"], split: split) == ["a.env", "notes-1.txt", "notes-2.txt"])
+        #expect(AppModel.afterSplit(["notes.txt"], split: [:]) == ["notes.txt"])
+    }
+
+    /// Splitting is all or nothing: a file in the way, or an original that cannot move, leaves things as they were.
+    @Test func splittingLeavesNothingHalfDone() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("split-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("notes.txt")
+        try "a\nb\n".write(to: source, atomically: true, encoding: .utf8)
+        let outputs = [root.appendingPathComponent("notes-1.txt"), root.appendingPathComponent("notes-2.txt")]
+        let originals = root.appendingPathComponent("originals")
+        let target = originals.appendingPathComponent("day-split/notes.txt")
+        // The second name is taken: the first file is taken out again, and the original stays.
+        try "other".write(to: outputs[1], atomically: true, encoding: .utf8)
+        #expect(throws: VaultError.self) {
+            try AppModel.splitFiles(source: source, keys: ["a", "b"], into: outputs, movingTo: target, originals: originals)
+        }
+        #expect(!FileManager.default.fileExists(atPath: outputs[0].path))
+        #expect(try String(contentsOf: outputs[1], encoding: .utf8) == "other")
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        try FileManager.default.removeItem(at: outputs[1])
+        // Something already where the original would go: the same.
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "older".write(to: target, atomically: true, encoding: .utf8)
+        #expect(throws: VaultError.self) {
+            try AppModel.splitFiles(source: source, keys: ["a", "b"], into: outputs, movingTo: target, originals: originals)
+        }
+        #expect(outputs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        try FileManager.default.removeItem(at: target)
+        try AppModel.splitFiles(source: source, keys: ["a", "b"], into: outputs, movingTo: target, originals: originals)
+        #expect(try String(contentsOf: outputs[1], encoding: .utf8) == "b\n")
+        #expect(!FileManager.default.fileExists(atPath: source.path) && FileManager.default.fileExists(atPath: target.path))
     }
 }
 
@@ -67,5 +108,17 @@ struct WhenIdleTests {
         model.busy = false
         try await Task.sleep(for: .milliseconds(500))
         #expect(ran)
+    }
+
+    /// Past the wait, a step does not run beside what is still going: it is skipped, and that is said.
+    @Test func aStepThatWaitedTooLongIsSkippedNotForced() async throws {
+        let model = AppModel(files: KeyreeveFiles(directory: FileManager.default.temporaryDirectory.appendingPathComponent("idle-\(UUID().uuidString)")), binary: nil)
+        model.busy = true
+        var ran = false
+        var skipped = false
+        model.whenIdle("sealing", skipped: { skipped = true }, wait: 0.3) { ran = true }
+        try await Task.sleep(for: .milliseconds(900))
+        #expect(!ran && skipped)
+        #expect(model.message?.isEmpty == false)
     }
 }

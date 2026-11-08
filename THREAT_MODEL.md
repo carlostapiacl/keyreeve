@@ -156,7 +156,8 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a
   stand-in, and a reply is scrubbed, including across chunks. A provider that compresses a reply it was asked not to compress is not scrubbed.
 - **`--real` is the real key.** A fingerprint is asked each time, and from there it is in the command's hands. So is the MCP server's
-  `run_with_key` and `env`, which give the real value to the program they run.
+  `run_with_key` and `env`, which give the real value to the program they run. `run_with_key` gives the field keys.toml names for the key and no
+  other, so a program allowed for one key of a file never receives another key of the same file.
 - **An SSH permission lets anything running as you log in.** The key stays in `ssh-agent`, out of reach through the door, and no signature is made for
   anything but a login. While a permission lasts, any program of yours that finds the socket can use it to log in. The server check holds for a real
   `ssh`, which names its server truthfully. A program that speaks the protocol itself can name a server key of its own, and the agent accepts that as long as the
@@ -167,6 +168,9 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   the key until that limit or until the service starts again. A login already open keeps working after the permission ends.
 - **The usage log shows who, not proof of who.** A process and its parents come from the system. An agent can start a command through
   something else, and everything under your user looks alike. It can also rewrite the log and its hashes.
+- **A lost answer is not a no.** A request that went out with a key and got no whole reply is written down with how far it got, since the
+  provider may have acted on it. When the key service does not answer, keyreeve says it does not know what happened, and closing a key in the
+  app shows an error until the service confirms the permissions ended. Quitting Keyreeve ends them all.
 - **An env file's references name your keys.** `keyreeve://` holds no value, but it says which keys exist.
 - **A key you paste by hand** passes through the app's memory on its way to the vault, and Swift strings are not wiped.
 - **A single rotation cannot be undone.** A provider that ends the old key at once leaves you with whatever comes back. If the

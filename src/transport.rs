@@ -101,6 +101,28 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// Why a key cannot go to this exchange: a refresh token needs the client's id and secret with it, and
+/// sent alone it would travel as the client id and come back refused, which reads as a dead key.
+pub fn missing_parts(recipe: &Recipe, key: &Secret) -> Option<String> {
+    let needed = match recipe.auth.grant.as_deref() {
+        Some("refresh_token") => 3,
+        Some("client_credentials") => 2,
+        _ => return None,
+    };
+    let parts = key
+        .expose()
+        .splitn(3, ':')
+        .filter(|part| !part.is_empty())
+        .count();
+    (parts < needed).then(|| {
+        if needed == 3 {
+            "this provider needs client id, client secret and refresh token, named as a field like client_id+client_secret+refresh_token".into()
+        } else {
+            "this provider needs client id and client secret, named as a field like client_id+client_secret".into()
+        }
+    })
+}
+
 /// Exchanges a key for a short-lived token. The key is two or three parts joined by `:`. Returns
 /// the status and the provider's answer, which holds the token, so it stays in a `Secret`.
 pub fn exchange_token(

@@ -93,6 +93,9 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
         return Verdict::NoResult("this recipe's check needs a key id".into());
     }
     let credential = if recipe.auth.kind.as_deref() == Some("oauth_token") {
+        if let Some(why) = crate::transport::missing_parts(recipe, key) {
+            return Verdict::NoResult(why);
+        }
         match exchange_token(recipe, key, transport) {
             Err(error) => return failed(error),
             Ok(response) if !(200..=299).contains(&response.status) => {
@@ -385,6 +388,27 @@ mod tests {
         );
         assert_eq!(verdict("meta", Some(400)), Verdict::Rejected);
         assert_eq!(verdict("langsmith", Some(403)), Verdict::Rejected);
+    }
+
+    #[test]
+    fn a_refresh_token_alone_is_not_sent_and_is_not_called_rejected() {
+        let recipe = load_recipe("google").unwrap();
+        let mut transport = Fixed {
+            status: Some(401),
+            sent: Vec::new(),
+        };
+        let alone = check(&recipe, &Secret::new("CANARYrefresh"), &mut transport);
+        assert!(
+            matches!(alone, Verdict::NoResult(ref why) if why.contains("client_id+client_secret+refresh_token"))
+        );
+        assert!(transport.sent.is_empty());
+        let whole = check(
+            &recipe,
+            &Secret::new("id:secret:CANARYrefresh"),
+            &mut transport,
+        );
+        assert_eq!(whole, Verdict::Rejected);
+        assert_eq!(transport.sent.len(), 1);
     }
 
     #[test]

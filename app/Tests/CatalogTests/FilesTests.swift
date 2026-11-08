@@ -40,3 +40,16 @@ struct FilesTests {
         #expect(read.count == 50)
     }
 }
+
+struct DeadlineTests {
+    @Test func aCommandPastItsTimeIsEnded() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        let started = Date()
+        CheckRunner.watch(process, seconds: 1)
+        process.waitUntilExit()
+        #expect(Date().timeIntervalSince(started) < 10)
+    }
+}

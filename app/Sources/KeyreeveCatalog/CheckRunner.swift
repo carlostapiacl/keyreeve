@@ -33,9 +33,11 @@ public enum CheckRunner {
         sealed: [String: String] = [:],
         progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     ) throws {
-        try files.writePrivate(try plan(for: items), to: files.plan)
-        defer { try? FileManager.default.removeItem(at: files.plan) }
-        var arguments = ["verify", "--plan", files.plan.path, "--keys", keysFolder.path, "--history", files.history.path, "--progress"]
+        // A plan of its own, so a check and an identify at once never read or remove each other's.
+        let planFile = files.directory.appendingPathComponent("plan-\(UUID().uuidString).json")
+        try files.writePrivate(try plan(for: items), to: planFile)
+        defer { try? FileManager.default.removeItem(at: planFile) }
+        var arguments = ["verify", "--plan", planFile.path, "--keys", keysFolder.path, "--history", files.history.path, "--progress"]
         if !sealed.isEmpty { arguments.append("--sealed-stdin") }
         let verify = try streaming(binary, arguments, stdin: try payload(sealed), progress: progress)
         // 0 is all passed and 1 is at least one did not. Both finished their work.
@@ -49,12 +51,25 @@ public enum CheckRunner {
         _ items: [CatalogItem], providers: ProviderDirectory, binary: URL, keysFolder: URL, files: KeyreeveFiles,
         sealed: [String: String] = [:]
     ) throws {
-        try files.writePrivate(try plan(for: items.filter(providers.canIdentify)), to: files.plan)
-        defer { try? FileManager.default.removeItem(at: files.plan) }
-        var arguments = ["identify", "--plan", files.plan.path, "--keys", keysFolder.path, "--details", files.details.path]
+        let planFile = files.directory.appendingPathComponent("plan-\(UUID().uuidString).json")
+        try files.writePrivate(try plan(for: items.filter(providers.canIdentify)), to: planFile)
+        defer { try? FileManager.default.removeItem(at: planFile) }
+        var arguments = ["identify", "--plan", planFile.path, "--keys", keysFolder.path, "--details", files.details.path]
         if !sealed.isEmpty { arguments.append("--sealed-stdin") }
         let code = try execute(binary, arguments, stdin: try payload(sealed))
         guard code == 0 else { throw CheckError(T("The check could not start")) }
+    }
+
+    /// Ends a command that runs past its time, so nothing in the app waits on it for good. A rotation
+    /// stopped this way resumes from its journal.
+    public static func watch(_ process: Process, seconds: TimeInterval) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [weak process] in
+            guard let process, process.isRunning else { return }
+            process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak process] in
+                if let process, process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            }
+        }
     }
 
     /// The providers keyreeve knows, from what ships and from your own files.
@@ -66,6 +81,7 @@ public enum CheckRunner {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return ProviderDirectory() }
+        watch(process, seconds: 30)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return ProviderDirectory.parse(data)
@@ -130,9 +146,20 @@ public enum CheckRunner {
         process.standardError = errors
         process.standardInput = input
         try process.run()
+        watch(process, seconds: 15 * 60)
+        // Both streams at once: one that fills while the other is being read would stop the command.
+        final class Box: @unchecked Sendable { var data = Data() }
+        let problemBox = Box()
+        let errorsRead = DispatchGroup()
+        errorsRead.enter()
+        DispatchQueue.global().async {
+            problemBox.data = errors.fileHandleForReading.readDataToEndOfFile()
+            errorsRead.leave()
+        }
         send(try JSONEncoder().encode(sealed), to: input)
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        let problem = errors.fileHandleForReading.readDataToEndOfFile()
+        errorsRead.wait()
+        let problem = problemBox.data
         process.waitUntilExit()
         guard process.terminationStatus == 0, let report = try? JSONDecoder().decode(RotationReport.self, from: data) else {
             // The command's errors are its own words, and they never quote a value.
@@ -173,6 +200,7 @@ public enum CheckRunner {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return [] }
+        watch(process, seconds: 30)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (try? JSONDecoder().decode([RotationStatus].self, from: data)) ?? []
@@ -202,6 +230,7 @@ public enum CheckRunner {
         let inputPipe = input.map { _ in privatePipe() }
         if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        watch(process, seconds: 20 * 60)
         if let input, let inputPipe { send(input, to: inputPipe) }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
@@ -246,6 +275,7 @@ public enum CheckRunner {
         let inputPipe = stdin.map { _ in privatePipe() }
         if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        watch(process, seconds: 20 * 60)
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }
         var pending = Data()
         while true {
@@ -274,6 +304,7 @@ public enum CheckRunner {
         let inputPipe = stdin.map { _ in privatePipe() }
         if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        watch(process, seconds: 20 * 60)
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }
         process.waitUntilExit()
         return process.terminationStatus

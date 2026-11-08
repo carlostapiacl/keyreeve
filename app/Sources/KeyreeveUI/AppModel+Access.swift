@@ -339,6 +339,20 @@ extension AppModel {
         }
     }
 
+    /// The agents a key can be opened to: those the usage log has seen and those already named in the permissions,
+    /// besides Claude and Codex, so a bot that runs at login can be chosen like any agent.
+    public var knownAgents: [String] {
+        let seen = usage.entries.compactMap { $0.declared?.agent }
+        let named = agentPolicy.agents.values.flatMap { $0 }
+        return Self.agentNames(seen + named)
+    }
+
+    nonisolated static func agentNames(_ names: [String]) -> [String] {
+        let cleaned = names.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty && $0.count <= 40 && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" } }
+        return Array(Set(cleaned + ["claude", "codex"])).sorted()
+    }
+
     /// Which agents may use a key. Empty means any.
     public func setAgents(_ agents: [String], for id: String) {
         updatePolicy { policy in

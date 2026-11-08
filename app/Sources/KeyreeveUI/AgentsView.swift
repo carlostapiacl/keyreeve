@@ -258,13 +258,20 @@ struct AgentKeyRow: View {
                 } else {
                     Text(programs.isEmpty ? T("Only me") : T("Ask")).font(Theme.caption).foregroundStyle(Theme.muted)
                 }
-                Picker(T("Agents"), selection: Binding(get: { agents }, set: { model.setAgents($0, for: key.id) })) {
-                    Text(T("Any agent")).tag([String]())
-                    Text("Claude").tag(["claude"])
-                    Text("Codex").tag(["codex"])
-                    if ![[], ["claude"], ["codex"]].contains(agents) { Text(agents.joined(separator: ", ")).tag(agents) }
+                // Every agent the log has seen, each one on or off, so a key can be open to Claude and a bot at once.
+                Menu(agents.isEmpty ? T("Any agent") : agents.joined(separator: ", ")) {
+                    Button(T("Any agent")) { model.setAgents([], for: key.id) }
+                    Divider()
+                    ForEach(model.knownAgents, id: \.self) { name in
+                        Button {
+                            let chosen = agents.contains(name) ? agents.filter { $0 != name } : (agents + [name]).sorted()
+                            model.setAgents(chosen, for: key.id)
+                        } label: {
+                            if agents.contains(name) { Label(name, systemImage: "checkmark") } else { Text(name) }
+                        }
+                    }
                 }
-                .labelsHidden().fixedSize()
+                .fixedSize()
                 .disabled(level == nil && programs.isEmpty)
             }
             if level == .always {

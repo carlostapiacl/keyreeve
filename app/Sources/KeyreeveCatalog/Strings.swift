@@ -48,6 +48,7 @@ public let spanish: [String: String] = [
     "While this lasts, the app can check keys without asking. Locking it ends the period, and the vault always asks.": "Mientras dure, la app puede probar claves sin preguntar. Bloquearla termina el período, y la bóveda siempre pregunta.",
     "%d of %d keys": "%d de %d claves",
     "Working…": "Trabajando…",
+    "split": "separar",
     "Agents can sort my keys": "Los agentes pueden ordenar mis claves",
     "An agent sees each file's name, field names, provider and state, never a value, and proposes how to sort them. You review every change here and apply the ones you want.": "Un agente ve el nombre de cada archivo, sus campos, su proveedor y su estado, nunca un valor, y propone cómo ordenarlos. Aquí revisas cada cambio y aplicas los que quieras.",
     "%@ proposes changes to %d keys": "%@ propone cambios en %d claves",

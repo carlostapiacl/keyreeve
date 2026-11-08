@@ -306,7 +306,10 @@ public struct AgentBridge {
             return try rotateKey(arguments)
         case "inventory":
             guard let list = inventory() else { throw VaultError(Self.sortingOff) }
-            return String(decoding: list, as: UTF8.self)
+            let page = AgentSorting.page(
+                list, pending: (arguments["only"] as? String ?? "pending") != "all", matching: arguments["matching"] as? String,
+                offset: arguments["offset"] as? Int ?? 0, limit: arguments["limit"] as? Int ?? 60)
+            return String(decoding: page ?? list, as: UTF8.self)
         case "propose":
             return try propose(arguments)
         default:
@@ -503,12 +506,20 @@ public struct AgentBridge {
             "name": "inventory",
             "description":
                 "List the person's key files, to help them sort all of them: path, provider, field names, tags, level, last check, whether sealed or archived, and what it is. Never a value. Also the providers keyreeve knows, by id. Only while the person lets agents sort keys, in Keyreeve under Agents.",
-            "inputSchema": ["type": "object", "properties": [String: Any]()],
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "only": ["type": "string", "enum": ["pending", "all"], "description": "pending (the default): keys that still need something"],
+                    "matching": ["type": "string", "description": "Only paths holding this text"],
+                    "offset": ["type": "integer"],
+                    "limit": ["type": "integer", "description": "At most 200, 60 if left out. next_offset says where the next page starts"],
+                ],
+            ],
         ],
         [
             "name": "propose",
             "description":
-                "Propose changes to many key files at once, from what inventory shows. They wait in Keyreeve, where the person reviews them in one list and applies them, all or some. Each change: {\"path\": as inventory gives it, \"kind\": \"provider\" (with \"provider\": an id from inventory, and \"field\": a field name when the file has several) | \"untestable\" (a login, password, database URL, document, public key, signature, webhook or DSN) | \"internal\" (a secret of the person's own software) | \"public\" (not a secret at all) | \"described\" (only what it is), \"what\": at most eight words on what it holds, \"seal\": true to keep it in the vault, \"check\": true to check it with its provider, \"archive\": true for a key that is dead or a copy}. Prefer leaving a file out to guessing. Call inventory later to see what changed.",
+                "Propose changes to many key files at once, from what inventory shows. They wait in Keyreeve, where the person reviews them in one list and applies them, all or some. Each change: {\"path\": as inventory gives it, \"kind\": \"provider\" (with \"provider\": an id from inventory, and \"field\": a field name when the file has several) | \"untestable\" (a login, password, database URL, document, public key, signature, webhook or DSN) | \"internal\" (a secret of the person's own software) | \"public\" (not a secret at all) | \"described\" (only what it is), \"what\": at most eight words on what it holds, \"seal\": true to keep it in the vault, \"check\": true to check it with its provider, \"archive\": true for a key that is dead or a copy, \"host\": \"https://…\" for a provider that runs on the person's own server, \"split\": true for a file that holds several keys of one provider}. Keys set to Only me are never checked from here. Prefer leaving a file out to guessing. Call inventory later to see what changed.",
             "inputSchema": [
                 "type": "object",
                 "properties": [

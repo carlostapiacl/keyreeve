@@ -606,6 +606,8 @@ struct SortProposalRow: View {
         if proposal.check.contains(path) { parts.append(T("check")) }
         if proposal.seal.contains(path) { parts.append(T("seal")) }
         if proposal.archive.contains(path) { parts.append(T("archive")) }
+        if proposal.split.contains(path) { parts.append(T("split")) }
+        if let host = proposal.hosts[path] { parts.append(URL(string: host)?.host ?? host) }
         return parts.joined(separator: " · ")
     }
 }

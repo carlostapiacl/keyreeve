@@ -28,4 +28,13 @@ struct SortProposalTests {
         #expect(after.tags == ["x", "y"] && after.level == "none" && after.recipes == ["github"] && after.field == "TOKEN" && after.description == "d")
         #expect(item.applying(KeyEdit()) == item)
     }
+
+    @Test func aServerIsKeptOnlyOverHttpsAndSplittingIsAsked() {
+        let json = #"[{"path":"a.txt","host":"https://panel.example.com"},{"path":"b.env","host":"http://x.example.com"},{"path":"c.txt","split":true}]"#
+        let proposal = SortProposal.read(Data(json.utf8), items: items, providers: providers)
+        #expect(proposal.hosts == ["a.txt": "https://panel.example.com"])
+        #expect(proposal.split == ["c.txt"] && proposal.paths == ["a.txt", "c.txt"])
+        #expect(CatalogItem(path: "a.txt").applying(KeyEdit(host: "https://panel.example.com")).host == "https://panel.example.com")
+    }
 }
+

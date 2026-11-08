@@ -171,6 +171,8 @@ extension AgentBridge {
         guard let reason = arguments["reason"] as? String, !reason.isEmpty else { throw VaultError("this needs reason and changes") }
         guard let list = inventory() else { throw VaultError(Self.sortingOff) }
         let checked = try AgentSorting.check(arguments["changes"], paths: AgentSorting.paths(inInventory: list))
+        let notes = AgentSorting.notes(for: arguments["changes"] as? [[String: Any]] ?? [], inventory: list)
+        let told = notes.isEmpty ? "" : " These will not happen as asked: " + notes.prefix(40).joined(separator: "; ") + "."
         // One list at a time from each agent, so the person is not asked twice about the same files.
         let waiting = requests().filter { $0.kind == "sort" && $0.agent == agent }
         if let last = waiting.last, !requests().contains(where: { $0.id == last.id && $0.event != .asked }) {
@@ -187,7 +189,7 @@ extension AgentBridge {
             try addRequest(AccessRequests.Entry(id: entry.id, at: now(), event: .declined, agent: agent, provider: "keyreeve", kind: "sort"))
             throw VaultError("the person said no to these changes")
         case .open, .later:
-            return "\(checked.count) changes are waiting in Keyreeve for the person to review. Call inventory later to see what changed."
+            return "\(checked.count) changes are waiting in Keyreeve for the person to review. Call inventory later to see what changed." + told
         }
     }
 }

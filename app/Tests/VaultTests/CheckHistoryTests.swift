@@ -23,6 +23,20 @@ struct CheckHistoryTests {
         #expect(CheckHistory.warning(last["b.txt"]) == nil && CheckHistory.warning(nil) == nil)
     }
 
+    @Test func theListingSaysWhichAccountEachKeyIsAndWhatThePersonWrote() throws {
+        let keys = [
+            "meta-ads": KeyIndex.Key(id: "meta-ads", source: "a.txt", provider: "meta", account: "automation-claude ", description: "Minerva, read only"),
+            "meta-hz": KeyIndex.Key(id: "meta-hz", source: "h.json", provider: "meta", account: "hernan-zurita"),
+        ]
+        let bridge = AgentBridge(
+            policy: { AgentPolicy(levels: ["meta-ads": .free]) }, names: { ["meta-ads", "meta-hz"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            describe: { keys })
+        let text = try AgentTests().call(bridge, "list_keys", [:]).text
+        #expect(text.contains("meta-ads (account automation-claude, \u{201C}Minerva, read only\u{201D}): free"))
+        #expect(text.contains("meta-hz (meta, hernan-zurita)"))
+    }
+
     @Test func theListingSaysWhichKeysFailedTheirLastCheck() throws {
         let bridge = AgentBridge(
             policy: { AgentPolicy(levels: ["dead": .free]) }, names: { ["dead", "closed"] },

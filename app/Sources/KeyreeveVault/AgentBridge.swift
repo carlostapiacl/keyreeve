@@ -306,11 +306,11 @@ public struct AgentBridge {
                 }
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
                 if let warning = warnings[key] { parts.append(warning) }
-                return "\(key): " + parts.joined(separator: "; ")
+                return "\(key)\(Self.about(info)): " + parts.joined(separator: "; ")
             }
             // Names and providers only, so the agent can ask for one with request_access.
             let closed = known.filter { !isOpen($0) }.sorted().map { key in
-                let about = [described[key]?.provider, warnings[key]].compactMap { $0 }.joined(separator: ", ")
+                let about = [described[key]?.provider, described[key]?.account, warnings[key]].compactMap { $0 }.joined(separator: ", ")
                 return about.isEmpty ? key : "\(key) (\(about))"
             }
             if lines.isEmpty { lines.append("No key is allowed for agents yet.") }
@@ -495,6 +495,16 @@ public struct AgentBridge {
         return try ran(key: key, command: command, reason: reason, hiding: [answer.standIn].compactMap { $0 }) {
             try runPrepared(prepared)
         }
+    }
+
+    /// Which account a key belongs to and what the person wrote about it, so an agent picks the right one of
+    /// several keys of a provider without trying each. Names and words only, never a value.
+    static func about(_ key: KeyIndex.Key?) -> String {
+        guard let key else { return "" }
+        let account = key.account.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+        let words = key.description.map { $0.count > 140 ? String($0.prefix(139)) + "…" : $0 }
+        let parts = [account.map { "account \($0)" }, words.map { "\u{201C}\($0)\u{201D}" }].compactMap { $0 }
+        return parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
     }
 
     /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.

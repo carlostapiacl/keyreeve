@@ -77,7 +77,9 @@ public struct MenuBarView: View {
             Label(T("Requests"), systemImage: "hand.raised.fill").font(Theme.section).foregroundStyle(Theme.accent)
             ForEach(model.pendingRequests, id: \.id) { request in
                 HStack {
-                    Text(request.isRotation
+                    Text(request.kind == "sort"
+                         ? T("%@ proposes sorting your keys", request.agent)
+                         : request.isRotation
                          ? T("%@ asks to rotate %@", request.agent, request.key ?? request.provider)
                          : T("%@ asks for a %@ key", request.agent, request.provider))
                         .font(Theme.body).foregroundStyle(Theme.text).lineLimit(1)

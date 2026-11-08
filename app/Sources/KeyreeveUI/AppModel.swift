@@ -231,6 +231,7 @@ public final class AppModel: ObservableObject {
         if let rotations = snapshot.rotations { self.rotations = rotations }
         reloadRequests()
         publishOffered()
+        publishInventory()
     }
 
     public func chooseFolder() {

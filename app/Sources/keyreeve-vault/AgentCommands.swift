@@ -116,7 +116,9 @@ func serveAgents() throws {
         requests: { AccessRequests.read(from: home.appendingPathComponent(AccessRequests.fileName)) },
         addRequest: { try AccessRequests.append($0, to: home.appendingPathComponent(AccessRequests.fileName)) },
         announce: announceRequest,
-        paused: { AgentBridge.isPaused(home: home) })
+        paused: { AgentBridge.isPaused(home: home) },
+        inventory: { try? Data(contentsOf: AgentSorting.inventoryFile(home: home)) },
+        saveProposal: { id, data in try AgentSorting.save(data, id: id, home: home) })
     // One message per line, at most a megabyte: a client that sends more is told so and the line is
     // dropped, read in pieces and never held whole.
     let limit = 1 << 20

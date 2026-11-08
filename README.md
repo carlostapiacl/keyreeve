@@ -385,6 +385,15 @@ For a provider with no way to make keys from here, you make the new one at its p
 asks for your fingerprint, and the agent learns how it went when it asks again. It never sees either key. A place can be a button of
 yours that receives the new key on stdin, such as an env file on a server over ssh (`examples/places/ssh-env.sh`).
 
+### When an agent sorts the whole folder
+
+Turn on **Agents can sort my keys** under **Agents**, and an agent can read, with `inventory`, each file's name, field names,
+provider and state, and the providers keyreeve knows. Never a value, and nothing at all while the switch is off. With `propose` it
+sends changes for many files at once: which provider and field, nothing to check, an internal secret, not secret at all, what it is,
+and whether to seal, check or archive it. They wait under **Agents** as one list, every change chosen to start. **Apply** keeps the
+chosen ones, checks the ones it should, which may ask for your fingerprint, and seals the rest. The agent reads how it went in its
+next `inventory`. A folder of loose files ends as named keys, checked and sealed, that your agents use with `use_key`.
+
 ### Add a key
 
 **Add a key** (the **+** in the window, or the menu bar) reads the clipboard, tells the provider from how the key starts, and seals it

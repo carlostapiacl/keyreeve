@@ -162,4 +162,33 @@ extension AgentBridge {
 
     /// A rotation that ended with the new key in place, whatever is left for the person to do by hand.
     static func rotationDone(_ result: String) -> Bool { result.hasPrefix("completed") || result.hasPrefix("waiting") }
+
+    static let sortingOff =
+        "the person has not let agents sort keys. They turn it on in Keyreeve, under Agents: Agents can sort my keys"
+
+    /// Leaves many changes for the person to review in one list. Nothing changes until they apply them.
+    func propose(_ arguments: [String: Any]) throws -> String {
+        guard let reason = arguments["reason"] as? String, !reason.isEmpty else { throw VaultError("this needs reason and changes") }
+        guard let list = inventory() else { throw VaultError(Self.sortingOff) }
+        let checked = try AgentSorting.check(arguments["changes"], paths: AgentSorting.paths(inInventory: list))
+        // One list at a time from each agent, so the person is not asked twice about the same files.
+        let waiting = requests().filter { $0.kind == "sort" && $0.agent == agent }
+        if let last = waiting.last, !requests().contains(where: { $0.id == last.id && $0.event != .asked }) {
+            return "Still waiting: the person has not answered your last proposal yet. Call inventory later to see what changed."
+        }
+        let entry = AccessRequests.Entry(
+            id: AccessRequests.newID(), at: now(), event: .asked, agent: agent, provider: "keyreeve",
+            reason: reason, key: nil, kind: "sort")
+        try saveProposal(entry.id, checked.data)
+        try addRequest(entry)
+        log("requested", "\(checked.count) keys", "sorting", reason)
+        switch announce(entry) {
+        case .deny:
+            try addRequest(AccessRequests.Entry(id: entry.id, at: now(), event: .declined, agent: agent, provider: "keyreeve", kind: "sort"))
+            throw VaultError("the person said no to these changes")
+        case .open, .later:
+            return "\(checked.count) changes are waiting in Keyreeve for the person to review. Call inventory later to see what changed."
+        }
+    }
 }
+

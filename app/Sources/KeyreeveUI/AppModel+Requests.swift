@@ -139,4 +139,84 @@ extension AppModel {
             self.reloadRequests()
         }
     }
+
+    public static let agentsCanSortKey = "agentsCanSort"
+
+    /// What an agent may read to help sort the keys, written only while the person lets agents sort: each
+    /// file's name, fields, provider and state, and the providers keyreeve knows. Never a value. With the
+    /// setting off the file is gone, and agents are told how to ask for it.
+    public func publishInventory() {
+        let file = AgentSorting.inventoryFile(home: files.directory)
+        guard UserDefaults.standard.bool(forKey: Self.agentsCanSortKey) else {
+            try? FileManager.default.removeItem(at: file)
+            return
+        }
+        guard unlocked else { return }
+        let keys: [[String: Any]] = items.map { item in
+            var row: [String: Any] = [
+                "path": item.path, "fields": item.labels.filter { !$0.isEmpty }, "tags": item.tags, "level": item.level,
+                "result": item.lastResult.isEmpty ? "never_checked" : item.lastResult,
+                "sealed": item.vault == .sealed || item.vault == .outdated, "archived": item.isArchived,
+                "untestable": item.isUntestable, "internal": item.isInternal,
+            ]
+            if let provider = item.recipes.first { row["provider"] = provider }
+            if !item.field.isEmpty { row["field"] = item.field }
+            if !item.description.isEmpty { row["what"] = item.description }
+            if let reaches = item.reaches { row["account"] = reaches }
+            if item.needsField { row["needs"] = "a field: the file holds several values" }
+            if item.holdsSeveralKeys { row["needs"] = "splitting: the file holds several keys of its provider" }
+            return row
+        }
+        let known = providers.all.filter { $0.problem == nil }.map { ["id": $0.id, "name": $0.name] }
+        guard let data = try? JSONSerialization.data(withJSONObject: ["keys": keys, "providers": known], options: [.sortedKeys])
+        else { return }
+        try? files.writePrivate(data, to: file)
+    }
+
+    /// The changes an agent proposed, read against today's list.
+    public func proposal(for request: AccessRequests.Entry) -> SortProposal {
+        guard let data = AgentSorting.load(id: request.id, home: files.directory) else { return SortProposal() }
+        return SortProposal.read(data, items: items, providers: providers)
+    }
+
+    /// Applies the chosen changes of an agent's proposal: sorting and archiving at once, then the checks,
+    /// which may ask for the fingerprint, then sealing. The agent reads how it went in the next inventory.
+    public func apply(_ proposal: SortProposal, chosen: Set<String>, for request: AccessRequests.Entry) {
+        let byPath = Dictionary(items.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        var edits: [String: KeyEdit] = [:]
+        for suggestion in proposal.suggestions where chosen.contains(suggestion.path) {
+            guard let item = byPath[suggestion.path] else { continue }
+            edits[suggestion.path] = suggestion.edit(for: item)
+        }
+        for path in proposal.archive where chosen.contains(path) {
+            guard let item = byPath[path] else { continue }
+            var change = edits[path] ?? KeyEdit()
+            let tags = change.tags ?? item.tags
+            change.tags = tags.contains("status:archived") ? tags : tags + ["status:archived"]
+            edits[path] = change
+        }
+        if !edits.isEmpty {
+            do {
+                try files.saveEdits(edits)
+            } catch {
+                message = (error as? CheckError)?.description ?? T("%@ could not be saved", files.edits.lastPathComponent)
+                return
+            }
+        }
+        let updated = { (path: String) in byPath[path].map { item in edits[path].map(item.applying) ?? item } }
+        let toCheck = proposal.check.filter(chosen.contains).compactMap(updated)
+        let toSeal = proposal.seal.filter(chosen.contains).compactMap(updated).filter { $0.vault == .none }
+        audit([("\(chosen.count) keys", "sorting \(request.id) from \(request.agent)")], event: "allowed")
+        try? AccessRequests.append(
+            AccessRequests.Entry(
+                id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider, kind: "sort",
+                result: "applied \(edits.count) changes, checking \(toCheck.count), sealing \(toSeal.count)"),
+            to: requestsFile)
+        reloadRequests()
+        message = T("%d changes applied", chosen.count)
+        rebuildCatalog()
+        let sealNow = { if !toSeal.isEmpty { self.seal(toSeal) } }
+        if toCheck.isEmpty { sealNow() } else { check(toCheck, then: sealNow) }
+    }
 }
+

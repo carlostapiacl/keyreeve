@@ -15,7 +15,7 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConnection, St
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{self, BufReader, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -112,6 +112,42 @@ pub struct Options {
     pub extra_roots: Vec<CertificateDer<'static>>,
     /// Sends what would go to port 443 of a key's host to this port on the same host.
     pub upstream_port: Option<u16>,
+    /// Lets a tunnel reach this machine and private networks. Off in use: a program that can reach the
+    /// proxy, from inside a sandbox too, must not use it to reach what its own network rules shut out.
+    pub private_tunnels: bool,
+}
+
+/// Whether a tunnel may reach this address: not this machine, a private or link-local network, the
+/// cloud metadata address, or anything not meant to be reached across the internet.
+fn is_public(address: &IpAddr) -> bool {
+    match address {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (b == 18 || b == 19))
+                || a >= 240)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(&IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || first == 0x2001 && v6.segments()[1] == 0x0db8)
+        }
+    }
 }
 
 pub struct Proxy {
@@ -265,7 +301,24 @@ impl Proxy {
         mut client: TcpStream,
         reader: BufReader<TcpStream>,
     ) -> io::Result<()> {
-        let upstream = match TcpStream::connect((host, port)) {
+        // Resolved once, and the connection goes to the address checked, so a name that changes its
+        // answer between the two cannot slip through.
+        let addresses: Vec<SocketAddr> = match (host, port).to_socket_addrs() {
+            Ok(found) => found.collect(),
+            Err(_) => return answer(&mut client, 502, "that host could not be reached"),
+        };
+        let allowed: Vec<SocketAddr> = addresses
+            .into_iter()
+            .filter(|address| self.options.private_tunnels || is_public(&address.ip()))
+            .collect();
+        if allowed.is_empty() {
+            return answer(
+                &mut client,
+                403,
+                "that host is on this machine or a private network",
+            );
+        }
+        let upstream = match TcpStream::connect(&allowed[..]) {
             Ok(stream) => stream,
             Err(_) => return answer(&mut client, 502, "that host could not be reached"),
         };
@@ -581,5 +634,33 @@ mod tests {
         assert!(body_framing(&[pair("Content-Length", "3"), pair("content-length", "4")]).is_err());
         assert!(body_framing(&[pair("Content-Length", "x")]).is_err());
         assert!(body_framing(&[pair("Transfer-Encoding", "gzip")]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod tunnel_tests {
+    use super::is_public;
+    use std::net::IpAddr;
+
+    #[test]
+    fn a_tunnel_reaches_the_internet_and_nothing_closer() {
+        for blocked in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.10",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:192.168.1.1",
+        ] {
+            assert!(!is_public(&blocked.parse::<IpAddr>().unwrap()), "{blocked}");
+        }
+        for open in ["1.1.1.1", "140.82.112.3", "2606:4700:4700::1111"] {
+            assert!(is_public(&open.parse::<IpAddr>().unwrap()), "{open}");
+        }
     }
 }

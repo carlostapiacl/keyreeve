@@ -98,7 +98,8 @@ public final class ProviderBuilder: ObservableObject {
 
     /// Stops waiting. The assistant's own process ends on its deadline; what it says then is dropped.
     public func cancel() {
-        Assistants.stopAll()
+        // Only this window's assistant: one sorting keys in another window keeps working.
+        Assistants.stopAll(task: "provider")
         generation += 1
         phase = .writing
     }

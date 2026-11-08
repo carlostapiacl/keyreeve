@@ -72,6 +72,9 @@ func runWithEnv() throws {
 
 func serveAgents() throws {
     let policyFile = home.appendingPathComponent(AgentPolicy.fileName)
+    // An agent's session keeps this server for hours. Once a newer Keyreeve is in place, this one may not read the
+    // permissions as the new one writes them, so it no longer writes them: it says to start the session again.
+    let startedAs = changeStamp(ownPath())
     // This server's parent is the agent that started it. The tree is the system's word, not the agent's.
     let observed = CallerIdentity.observe(pid: getpid())
     let agent = AgentBridge.agentName(chain: observed.chain)
@@ -111,7 +114,12 @@ func serveAgents() throws {
         },
         transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) },
         decideAccess: askAccess,
-        updatePolicy: { change in try AgentPolicy.update(at: policyFile, change) },
+        updatePolicy: { change in
+            guard changeStamp(ownPath()) == startedAs else {
+                throw VaultError(AgentBridge.outdated)
+            }
+            try AgentPolicy.update(at: policyFile, change)
+        },
         offered: { AccessRequests.readOffered(from: home.appendingPathComponent(AccessRequests.offeredFileName)) },
         requests: { AccessRequests.read(from: home.appendingPathComponent(AccessRequests.fileName)) },
         addRequest: { try AccessRequests.append($0, to: home.appendingPathComponent(AccessRequests.fileName)) },

@@ -90,8 +90,31 @@ public struct AgentPolicy: Equatable, Sendable {
         let before = try loadStrict(from: url)
         var after = before
         try change(&after)
-        if after != before { try PrivateFile.write(Data(after.toml.utf8), to: url) }
+        if after != before {
+            keepPrevious(of: url)
+            try PrivateFile.write(Data(after.toml.utf8), to: url)
+        }
         return (before, after)
+    }
+
+    /// How many earlier versions of the permissions are kept, newest last.
+    public static let keptVersions = 20
+
+    /// The folder of earlier versions, beside the file.
+    public static func previousFolder(for url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent("previous").appendingPathComponent(url.lastPathComponent)
+    }
+
+    /// Before each change, the file as it was goes beside it under the time, and only the last few stay. A change
+    /// that went wrong, or a program that misread the file, is then undone by copying one back.
+    static func keepPrevious(of url: URL) {
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
+        let folder = previousFolder(for: url)
+        let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .gmt, formatOptions: [.withFullDate, .withTime, .withFractionalSeconds])
+            .replacingOccurrences(of: ":", with: "")
+        try? PrivateFile.write(data, to: folder.appendingPathComponent(stamp + ".toml"))
+        let kept = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).filter { $0.hasSuffix(".toml") }.sorted()
+        for old in kept.dropLast(keptVersions) { try? FileManager.default.removeItem(at: folder.appendingPathComponent(old)) }
     }
 
     /// The pin a person gave this program for this key, if any.

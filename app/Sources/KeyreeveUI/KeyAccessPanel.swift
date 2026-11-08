@@ -26,8 +26,8 @@ struct KeyAccessPanel: View {
     }
 
     var body: some View {
+        // Copying lives in the key's header, the first thing on its page.
         VStack(alignment: .leading, spacing: 8) {
-            CopyKeyButton(item: item, model: model)
             identifierSection
             Text(T("Agents")).font(Theme.caption).foregroundStyle(Theme.muted).padding(.top, 6)
             // From the same permissions the agents read, so this never says less than what is open.

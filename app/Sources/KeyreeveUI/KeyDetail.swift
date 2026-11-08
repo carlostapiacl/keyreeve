@@ -1,9 +1,13 @@
 import AppKit
 import KeyreeveCatalog
+import KeyreeveVault
 import SwiftUI
 
-/// One key's details, which can be edited here. It never holds a value.
+/// One key's details, which can be edited here. It never holds a value. Four tabs, each a question: how is
+/// it, how is it used, how is it kept, what happened. The technical parts sit behind a disclosure.
 struct KeyDetail: View {
+    enum Tab: Hashable { case summary, use, security, history }
+
     let item: CatalogItem
     @ObservedObject var model: AppModel
     @State private var newTag = ""
@@ -11,46 +15,41 @@ struct KeyDetail: View {
     @State private var note = ""
     @State private var confirmArchive = false
     @State private var host = ""
+    @State private var tab: Tab = .summary
+    @State private var showsMore = false
+
+    private var isSealed: Bool { item.vault == .sealed || item.vault == .outdated }
+    private var identifiers: [KeyIndex.Key] { model.keyIndex.keys(forSource: item.path) }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
                 header
-                if let attention = item.attention {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(attention, systemImage: "exclamationmark.triangle.fill")
-                            .font(Theme.body).foregroundStyle(Theme.warn)
-                            .fixedSize(horizontal: false, vertical: true)
-                        ActionButtons(item: item, model: model)
-                    }
+                Picker(T("Part of the key"), selection: $tab) {
+                    Text(T("Summary")).tag(Tab.summary)
+                    Text(T("Usage")).tag(Tab.use)
+                    Text(T("Security")).tag(Tab.security)
+                    Text(T("History")).tag(Tab.history)
                 }
-                checkButton
-                if item.vault != .none { vaultNote }
-                if item.vault == .sealed || item.vault == .outdated {
-                    KeyAccessPanel(item: item, model: model)
-                    KeyUsagePanel(item: item, model: model)
-                }
-                if model.hasVault, item.isSecret, !item.isArchived { RotationPanel(item: item, model: model) }
-                customActions
-                identity
-                naming
-                criticality
-                if item.isSecret { checkPlace }
-                fact(T("Who can use it")) {
-                    Picker("", selection: levelBinding) {
-                        Text(T("Checked without asking")).tag("free")
-                        Text(T("Ask me each time")).tag("ask")
-                        Text(T("Only me")).tag("never")
-                        Text(T("Not secret")).tag("none")
-                    }
-                    .labelsHidden()
-                }
-                fact(T("Tags")) { tagEditor }
-                fileFacts
-                archiveButton
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
+            Rectangle().fill(Theme.border).frame(height: 1)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    switch tab {
+                    case .summary: summary
+                    case .use: use
+                    case .security: security
+                    case .history: history
+                    }
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .background(Theme.surface)
         .onAppear(perform: syncFields)
@@ -63,6 +62,175 @@ struct KeyDetail: View {
         } message: {
             Text(T("Archiving hides it from your lists. It does not stop it: this key still works."))
         }
+    }
+
+    // MARK: Tabs
+
+    @ViewBuilder private var summary: some View {
+        if let attention = item.attention {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(attention, systemImage: "exclamationmark.triangle.fill")
+                    .font(Theme.body).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+                ActionButtons(item: item, model: model)
+            }
+        }
+        HStack(alignment: .top, spacing: 12) {
+            box(T("Status")) {
+                Label(statusText, systemImage: statusIcon).font(Theme.rowTitle).foregroundStyle(statusColor)
+                if !item.lastReason.isEmpty {
+                    Text(item.lastReason).font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            box(T("Where it is")) {
+                Text(isSealed ? T("Sealed in the vault") : T("Only in its file")).font(Theme.rowTitle).foregroundStyle(Theme.text)
+                if isSealed && !item.originalMoved {
+                    Text(T("The original file is still in the folder")).font(Theme.caption).foregroundStyle(Theme.warn)
+                } else if !isSealed {
+                    Button(T("See Security")) { tab = .security }.buttonStyle(.link).font(Theme.caption)
+                }
+            }
+        }
+        checkButton
+        agentsLine
+        DisclosureGroup(isExpanded: $showsMore) {
+            VStack(alignment: .leading, spacing: 16) {
+                naming
+                customActions
+                identity
+                criticality
+                if item.isSecret { checkPlace }
+                fact(T("Automatic checks")) {
+                    Picker("", selection: levelBinding) {
+                        Text(T("Checked without asking")).tag("free")
+                        Text(T("Ask me each time")).tag("ask")
+                        Text(T("Only me")).tag("never")
+                        Text(T("Not secret")).tag("none")
+                    }
+                    .labelsHidden()
+                }
+                fact(T("Tags")) { tagEditor }
+                fact(T("File")) { Text(item.path).font(Theme.code).foregroundStyle(Theme.muted).textSelection(.enabled) }
+                fileFacts
+            }
+            .padding(.top, 10)
+        } label: {
+            Text(T("More details and options")).font(Theme.section).foregroundStyle(Theme.text)
+        }
+    }
+
+    /// How agents reach this key now, in one line, and where to change it.
+    @ViewBuilder private var agentsLine: some View {
+        let ids = identifiers.map(\.id)
+        let open = model.usage.grants.filter { ids.contains($0.key) }.count
+        let level = ids.compactMap { model.agentPolicy.level(of: $0) }.first
+        box(T("Agents")) {
+            Text(level == nil ? T("No agent can use this key.") : level == .free ? T("Free") : T("Ask"))
+                .font(Theme.rowTitle).foregroundStyle(Theme.text)
+            if open > 0 {
+                Text(open == 1 ? T("1 permission open now") : T("%d permissions open now", open))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+            }
+            Button(T("See use")) { tab = .use }.buttonStyle(.link).font(Theme.caption)
+        }
+    }
+
+    @ViewBuilder private var use: some View {
+        if isSealed {
+            KeyAccessPanel(item: item, model: model)
+            KeyUsagePanel(item: item, model: model)
+        } else {
+            EmptyHint(
+                title: T("Seal it to use it"),
+                text: T("A sealed key can be copied, and used by agents you allow, without its file."),
+                action: T("Seal this key"), run: { model.seal([item]) })
+        }
+    }
+
+    @ViewBuilder private var security: some View {
+        if item.vault != .none {
+            vaultNote
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(T("Only in its file. Any program running as you can read it."), systemImage: "doc")
+                    .font(Theme.body).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                if model.hasVault {
+                    Button(T("Seal this key")) { model.seal([item]) }
+                        .buttonStyle(KRButtonStyle(primary: true)).disabled(model.busy)
+                }
+            }
+        }
+        if model.hasVault, item.isSecret, !item.isArchived { RotationPanel(item: item, model: model) }
+        fileFacts
+        archiveButton
+    }
+
+    @ViewBuilder private var history: some View {
+        let entries = model.activity.filter { $0.key == item.path }
+        if entries.isEmpty {
+            EmptyHint(title: T("Nothing yet"), text: T("Checks and uses of this key will show here."))
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(entries) { entry in
+                    HStack(spacing: 10) {
+                        Text(entry.at, format: .dateTime.day().month(.abbreviated).hour().minute())
+                            .font(Theme.caption).monospacedDigit().foregroundStyle(Theme.muted)
+                            .frame(width: 120, alignment: .leading)
+                        Text(describe(entry.kind)).font(Theme.body).foregroundStyle(Theme.text)
+                    }
+                }
+            }
+        }
+    }
+
+    private func describe(_ kind: ActivityItem.Kind) -> String {
+        switch kind {
+        case .checked(let result):
+            switch result {
+            case "works": return T("Checked: works")
+            case "rejected": return T("Checked: rejected")
+            default: return T("Checked: no answer")
+            }
+        case .used(let program): return T("Used by %@", program)
+        }
+    }
+
+    /// What the last check showed, with its date, and never more than it showed.
+    private var statusText: String {
+        let date = item.lastChecked
+        switch item.lastResult {
+        case "works": return date.isEmpty ? T("Checked successfully") : T("Checked successfully · %@", date)
+        case "rejected": return date.isEmpty ? T("The provider rejected the check") : T("The provider rejected the check · %@", date)
+        case "": return T("Not checked yet")
+        default: return date.isEmpty ? T("Could not tell") : T("Could not tell · %@", date)
+        }
+    }
+
+    private var statusIcon: String {
+        switch item.lastResult {
+        case "works": return "checkmark.circle.fill"
+        case "rejected": return "xmark.circle.fill"
+        case "": return "circle.dashed"
+        default: return "questionmark.circle"
+        }
+    }
+
+    private var statusColor: Color {
+        switch item.lastResult {
+        case "works": return Theme.good
+        case "rejected": return Theme.bad
+        default: return Theme.text
+        }
+    }
+
+    private func box<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(Theme.caption).foregroundStyle(Theme.muted)
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.radius))
     }
 
     private var vaultNoteText: String {
@@ -157,26 +325,28 @@ struct KeyDetail: View {
         host = item.host
     }
 
+    /// The key's name, then whose it is: provider, account and the identifier scripts use.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(item.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-                .textSelection(.enabled)
-            Text(item.path).font(Theme.code).foregroundStyle(Theme.faint).textSelection(.enabled)
-            HStack(spacing: 6) {
-                ResultBadge(item: item)
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
+                    .textSelection(.enabled)
+                Text(subtitle).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(2).textSelection(.enabled)
                 if item.criticality > 0 {
-                    CriticalityMeter(value: item.criticality, suggested: item.criticalitySuggested)
-                }
-                if !item.lastChecked.isEmpty {
-                    Text(item.lastChecked).font(Theme.caption).foregroundStyle(Theme.faint).monospacedDigit()
+                    CriticalityMeter(value: item.criticality, suggested: item.criticalitySuggested).padding(.top, 2)
                 }
             }
-            .padding(.top, 4)
-            if !item.lastReason.isEmpty {
-                Text(item.lastReason).font(Theme.caption).foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Spacer(minLength: 6)
+            if isSealed { CopyKeyButton(item: item, model: model) }
         }
+    }
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if let provider = item.recipes.first { parts.append(model.providers.name(of: provider)) }
+        if let account = model.account(of: item) { parts.append(account) }
+        if let id = identifiers.first?.id { parts.append(id) }
+        return parts.isEmpty ? item.path : parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var customActions: some View {

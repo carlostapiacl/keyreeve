@@ -93,11 +93,22 @@ public enum AgentSorting {
                     }
                 }
             }
+            if let day = change["expires"] as? String, !isDay(day) {
+                notes.append("\(path): expires must be a day written as 2026-12-31")
+            }
             if let host = change["host"] as? String, host.contains("://") && !host.hasPrefix("https://") {
                 notes.append("\(path): host is reached over https only, so give it as a name, such as panel.example.com")
             }
         }
         return notes
+    }
+
+    static func isDay(_ text: String) -> Bool {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.timeZone = TimeZone(identifier: "UTC")
+        format.dateFormat = "yyyy-MM-dd"
+        return text.count == 10 && format.date(from: text).map { format.string(from: $0) == text } == true
     }
 
     public static func proposalFile(id: String, home: URL) -> URL {

@@ -152,6 +152,7 @@ mod tests {
             last_result: String::new(),
             last_checked: String::new(),
             last_reason: String::new(),
+            expires: String::new(),
             recipes: recipes.iter().map(|r| (*r).to_owned()).collect(),
             field: String::new(),
             name: String::new(),

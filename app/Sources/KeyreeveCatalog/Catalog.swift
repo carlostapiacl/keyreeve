@@ -39,6 +39,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var host: String
     /// Why the last check gave no answer, in the tool's own words.
     public var lastReason: String
+    /// The day it stops working, `yyyy-mm-dd`, as the person or an agent wrote it.
+    public var expires: String
     public var id: String { path }
 
     /// A secret with no provider, such as a signing key, so there is nowhere to check it.
@@ -63,7 +65,7 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         lastResult: String = "", lastChecked: String = "", recipes: [String] = [], field: String = "",
         labels: [String] = [], ignoredUntil: Date? = nil, name: String = "", description: String = "",
         details: KeyDetails? = nil, criticality: Int = 0, criticalitySuggested: Bool = false,
-        rotateDays: Int = 0, host: String = "", lastReason: String = ""
+        rotateDays: Int = 0, host: String = "", lastReason: String = "", expires: String = ""
     ) {
         self.path = path
         self.level = level
@@ -86,6 +88,7 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         self.rotateDays = rotateDays
         self.host = host
         self.lastReason = lastReason
+        self.expires = expires
     }
 
     /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
@@ -114,6 +117,11 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         if revoke && lastResult == "works" { return (0, T("Still works: revoke it")) }
         if revoke { return (1, T("Marked to revoke")) }
         if lastResult == "works" && isBackup { return (2, T("An old copy that still works")) }
+        // A key that ends breaks what uses it: said before, and loudly once it has.
+        if isSecret, let days = daysLeft(at: now) {
+            if days < 0 { return (1, T("Expired on %@: renew it", expiryDay ?? "")) }
+            if days <= 14 { return (3, days == 0 ? T("Expires today") : days == 1 ? T("Expires tomorrow") : T("Expires in %d days", days)) }
+        }
         // A value that is not secret answers to nobody, so an old refusal is no reason to look at it.
         if lastResult == "rejected" && !isBackup && !isDone && isSecret { return (3, T("The last check was rejected")) }
         if needsField { return (3, T("Choose which field holds the key")) }
@@ -126,6 +134,22 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var attention: String? { attentionRanked?.text }
 
     public var isSecret: Bool { level != "none" }
+
+    /// The day it stops working: what the person or an agent wrote, else what the provider said.
+    public var expiryDay: String? {
+        if !expires.isEmpty { return expires }
+        guard let said = details?.fields["expires"], said.count >= 10 else { return nil }
+        let day = String(said.prefix(10))
+        return catalogDate(day) == nil ? nil : day
+    }
+
+    /// Whole days from today to the day it stops working: negative once it has.
+    public func daysLeft(at now: Date = Date()) -> Int? {
+        guard let day = expiryDay, let end = catalogDate(day) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: end).day
+    }
 
     /// The last check could not tell which value of the file is the key, and the file names its fields.
     public var needsField: Bool {
@@ -169,6 +193,7 @@ public enum CatalogParser {
         let rotateDays = header.firstIndex(of: "rotate_days")
         let host = header.firstIndex(of: "host")
         let reason = header.firstIndex(of: "last_reason")
+        let expires = header.firstIndex(of: "expires")
         return rows.dropFirst().compactMap { row in
             guard row.count == header.count else { return nil }
             return CatalogItem(
@@ -190,7 +215,8 @@ public enum CatalogParser {
                 criticalitySuggested: suggested.map { row[$0] == "true" } ?? false,
                 rotateDays: rotateDays.flatMap { Int(row[$0]) } ?? 0,
                 host: host.map { row[$0] } ?? "",
-                lastReason: reason.map { row[$0] } ?? "")
+                lastReason: reason.map { row[$0] } ?? "",
+                expires: expires.map { row[$0] } ?? "")
         }
     }
 
@@ -251,6 +277,7 @@ public enum Sidebar: Hashable, Sendable {
     case critical
     case stale
     case internalOnly
+    case expiring
     case result(String)
     case level(String)
     case tag(String)
@@ -275,6 +302,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()
         case .internalOnly: return item.isInternal && !item.isArchived
+        case .expiring: return !item.isArchived && item.isSecret && (item.daysLeft() ?? Int.max) <= 30
         case .result(let result):
             guard !item.isArchived, item.isSecret else { return false }
             if result == "no_answer" { return item.lastResult == "no_result" || item.lastResult == "forbidden" }
@@ -461,7 +489,7 @@ public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
 public struct CatalogSummary: Sendable {
     /// The filters with a chip above the list.
     public static let chips: [Sidebar] = [
-        .all, .checkable, .critical, .result("rejected"), .result("works"), .result("no_answer"), .result(""), .stale, .archive,
+        .all, .checkable, .critical, .result("rejected"), .result("works"), .result("no_answer"), .result(""), .stale, .expiring, .archive,
     ]
 
     public let active: Int

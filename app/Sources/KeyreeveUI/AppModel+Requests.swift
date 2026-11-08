@@ -162,6 +162,7 @@ extension AppModel {
             if let provider = item.recipes.first { row["provider"] = provider }
             if !item.field.isEmpty { row["field"] = item.field }
             if !item.description.isEmpty { row["what"] = item.description }
+            if let day = item.expiryDay { row["expires"] = day }
             if let reaches = item.reaches { row["account"] = reaches }
             if item.needsField { row["needs"] = "a field: the file holds several values" }
             if item.holdsSeveralKeys { row["needs"] = "splitting: the file holds several keys of its provider" }
@@ -188,6 +189,11 @@ extension AppModel {
         for suggestion in proposal.suggestions where chosen.contains(suggestion.path) {
             guard let item = byPath[suggestion.path] else { continue }
             edits[suggestion.path] = suggestion.edit(for: item)
+        }
+        for (path, day) in proposal.expires where chosen.contains(path) {
+            var change = edits[path] ?? KeyEdit()
+            change.expires = day
+            edits[path] = change
         }
         for (path, host) in proposal.hosts where chosen.contains(path) {
             var change = edits[path] ?? KeyEdit()

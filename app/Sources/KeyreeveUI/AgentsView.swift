@@ -608,6 +608,7 @@ struct SortProposalRow: View {
         if proposal.archive.contains(path) { parts.append(T("archive")) }
         if proposal.split.contains(path) { parts.append(T("split")) }
         if let host = proposal.hosts[path] { parts.append(URL(string: host)?.host ?? host) }
+        if let day = proposal.expires[path] { parts.append(T("expires %@", day)) }
         return parts.joined(separator: " · ")
     }
 }

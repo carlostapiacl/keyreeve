@@ -385,6 +385,13 @@ For a provider with no way to make keys from here, you make the new one at its p
 asks for your fingerprint, and the agent learns how it went when it asks again. It never sees either key. A place can be a button of
 yours that receives the new key on stdin, such as an env file on a server over ssh (`examples/places/ssh-env.sh`).
 
+### When a key expires
+
+Many keys end on a day: a token made for 90 days, a user token that lasts 60. Write the day in **Expires**, under **More details
+and options** on a key, or let an agent give it with `propose`. A provider that says it, such as GitHub's token expiration, fills it
+when the key is identified. Two weeks before, the key goes to **To review** with the days left; once the day has passed, it says
+so until it is renewed. **Expire soon** shows the keys ending within thirty days, and agents see the day in `inventory`.
+
 ### When an agent sorts the whole folder
 
 Turn on **Agents can sort my keys** under **Agents**, and an agent can read, with `inventory`, each file's name, field names,

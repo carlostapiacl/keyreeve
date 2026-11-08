@@ -64,6 +64,8 @@ pub struct Edit {
     pub description: Option<String>,
     pub criticality: Option<u8>,
     pub host: Option<String>,
+    /// The day the key stops working, `yyyy-mm-dd`, as the person or an agent wrote it.
+    pub expires: Option<String>,
 }
 
 pub fn parse_edits(text: &str) -> Result<BTreeMap<String, Edit>, String> {
@@ -133,6 +135,8 @@ pub struct Row {
     pub last_checked: String,
     /// Why the last check gave no answer, in this tool's own words.
     pub last_reason: String,
+    /// The day the key stops working, `yyyy-mm-dd`, when someone said so.
+    pub expires: String,
     pub recipes: Vec<String>,
     pub field: String,
     pub name: String,
@@ -268,6 +272,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
     let mut field = file.and_then(|f| f.field.clone()).unwrap_or_default();
     let (mut name, mut description) = (String::new(), String::new());
     let mut host = file.and_then(|f| f.host.clone()).unwrap_or_default();
+    let mut expires = String::new();
     let mut level = level;
     let mut tags: Vec<String> = tags.into_iter().collect();
     if let Some(edit) = rules.edits.get(&item.path) {
@@ -286,6 +291,11 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         description = edit.description.clone().unwrap_or_default();
         criticality = edit.criticality.unwrap_or(criticality);
         host = edit.host.clone().unwrap_or(host);
+        expires = edit
+            .expires
+            .clone()
+            .filter(|day| is_day(day))
+            .unwrap_or_default();
     }
     let (hint, rotate_days) = recipes
         .first()
@@ -306,6 +316,7 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
         last_result: String::new(),
         last_checked: String::new(),
         last_reason: String::new(),
+        expires,
         recipes,
         field,
         name,
@@ -317,9 +328,17 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
     }
 }
 
+/// A day as `yyyy-mm-dd`, the only shape kept for when a key expires.
+fn is_day(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    matches!(parts.as_slice(), [y, m, d] if y.len() == 4 && m.len() == 2 && d.len() == 2
+        && parts.iter().all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+        && (1..=12).contains(&m.parse::<u8>().unwrap_or(0)) && (1..=31).contains(&d.parse::<u8>().unwrap_or(0)))
+}
+
 pub fn to_csv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field,name,description,criticality,criticality_suggested,rotate_days,host,last_reason\n",
+        "path,level,tags,format,labels,modified,mode,reviewed,last_result,last_checked,recipes,field,name,description,criticality,criticality_suggested,rotate_days,host,last_reason,expires\n",
     );
     for row in rows {
         let cells = [
@@ -342,6 +361,7 @@ pub fn to_csv(rows: &[Row]) -> String {
             row.rotate_days.to_string(),
             csv_cell(&row.host),
             csv_cell(&row.last_reason),
+            csv_cell(&row.expires),
         ];
         out.push_str(&cells.join(","));
         out.push('\n');
@@ -576,6 +596,25 @@ files: { deploy.key: { recipes: [github] } }
         assert_eq!(rows[1].level, Level::Never);
         assert_eq!(rows[1].tags, ["ops"]);
         assert!(parse_edits(r#"{"a":{"level":"sometimes"}}"#).is_err());
+    }
+
+    #[test]
+    fn the_day_a_key_expires_is_kept_only_as_a_day() {
+        let mut with_rules = rules("rules: []");
+        with_rules.edits = parse_edits(
+            r#"{"a.txt":{"expires":"2026-12-31"},"b.txt":{"expires":"next week"},"c.txt":{"expires":"2026-13-01"}}"#,
+        )
+        .unwrap();
+        let rows = build(
+            &[item("a.txt"), item("b.txt"), item("c.txt")],
+            &with_rules,
+            &[],
+        );
+        assert_eq!(rows[0].expires, "2026-12-31");
+        assert!(rows[1].expires.is_empty() && rows[2].expires.is_empty());
+        let csv = to_csv(&rows[..1]);
+        assert!(csv.lines().next().unwrap().ends_with(",expires"));
+        assert!(csv.lines().nth(1).unwrap().ends_with(",2026-12-31"));
     }
 
     #[test]

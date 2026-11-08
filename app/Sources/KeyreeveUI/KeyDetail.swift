@@ -15,6 +15,7 @@ struct KeyDetail: View {
     @State private var note = ""
     @State private var confirmArchive = false
     @State private var host = ""
+    @State private var expires = ""
     @State private var tab: Tab = .summary
     @State private var showsMore = false
 
@@ -355,6 +356,7 @@ struct KeyDetail: View {
         name = item.name
         note = item.description
         host = item.host
+        expires = item.expires
     }
 
     /// The key's name, then whose it is: provider, account and the identifier scripts use.
@@ -440,8 +442,24 @@ struct KeyDetail: View {
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { model.save(KeyEdit(description: note), for: item) }
             }
+            fact(T("Expires")) {
+                TextField(T("yyyy-mm-dd, if it has an end"), text: $expires)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        let day = expires.trimmingCharacters(in: .whitespaces)
+                        if day.isEmpty || isDay(day) { model.save(KeyEdit(expires: day), for: item) }
+                    }
+                if !expires.isEmpty && !isDay(expires.trimmingCharacters(in: .whitespaces)) {
+                    Text(T("Write it as 2026-12-31")).font(Theme.caption).foregroundStyle(Theme.warn)
+                } else if let days = item.daysLeft() {
+                    Text(days < 0 ? T("Expired %d days ago", -days) : T("%d days left", days))
+                        .font(Theme.caption).foregroundStyle(days <= 14 ? Theme.warn : Theme.muted)
+                }
+            }
         }
     }
+
+    private func isDay(_ text: String) -> Bool { CatalogItem(path: "", expires: text).daysLeft() != nil }
 
     private var levelBinding: Binding<String> {
         Binding(get: { item.level }, set: { model.save(KeyEdit(level: $0), for: item) })

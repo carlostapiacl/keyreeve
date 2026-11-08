@@ -343,7 +343,8 @@ struct StatsTests {
         XCTAssertEqual(stats.works, 1)
         XCTAssertEqual(stats.rejected, 1)
         XCTAssertEqual(stats.noAnswer, 1)
-        XCTAssertEqual(stats.neverChecked, 1)
+        // z-unread has no recipe, so nothing could check it: it is not counted as waiting for a check.
+        XCTAssertEqual(stats.neverChecked, 0)
         XCTAssertEqual(stats.checked, 3)
         XCTAssertEqual(stats.canCheck, 1)
         XCTAssertEqual(stats.ages.map(\.count), [1, 1, 1, 1])

@@ -8,6 +8,7 @@ do {
     case "init": try createVault()
     case "add": try addKey()
     case "put": try putKey()
+    case "reseal": try resealKeys()
     case "drop": try dropTemporary()
     case "names": try listNames()
     case "list": try listKeys()

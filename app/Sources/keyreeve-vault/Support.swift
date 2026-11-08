@@ -12,6 +12,9 @@ let help = """
           Add a key, read from stdin. Needs no fingerprint.
       keyreeve-vault put <name>
           Add a key or replace it, read from stdin. The old value stays sealed. Needs no fingerprint.
+      keyreeve-vault reseal <name> [<name>...]
+          Seal a key's file again, exactly as it is now, from the folder it was sealed from. The old copy
+          stays sealed. Needs no fingerprint. For a file changed outside the app, such as by a script.
       keyreeve-vault drop <name#pending|name#previous>
           Remove a temporary copy of a rotation. Real keys cannot be removed.
       keyreeve-vault names

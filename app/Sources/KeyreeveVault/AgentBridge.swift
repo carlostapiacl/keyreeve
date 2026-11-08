@@ -98,6 +98,8 @@ public struct AgentBridge {
     let saveProposal: (String, Data) throws -> Void
     /// Which sealing a key holds now, so a value held for a while is dropped once the key is replaced.
     let revision: (_ key: String) -> String?
+    /// A word for each key whose last check failed, read once a listing.
+    let checkWarnings: () -> [String: String]
     let held = Held()
 
     /// What the person answers when told of a request for a key that is not saved yet.
@@ -142,9 +144,11 @@ public struct AgentBridge {
         paused: @escaping () -> Bool = { false },
         inventory: @escaping () -> Data? = { nil },
         saveProposal: @escaping (String, Data) throws -> Void = { _, _ in throw VaultError("proposals cannot be kept here") },
-        revision: @escaping (_ key: String) -> String? = { _ in nil }
+        revision: @escaping (_ key: String) -> String? = { _ in nil },
+        checkWarnings: @escaping () -> [String: String] = { [:] }
     ) {
         self.revision = revision
+        self.checkWarnings = checkWarnings
         currentPolicy = policy
         self.names = names
         self.open = open
@@ -268,6 +272,7 @@ public struct AgentBridge {
             let policy = self.policy
             let known = Set(try names())
             let described = describe()
+            let warnings = checkWarnings()
             let date = now()
             let isOpen = { (key: String) in policy.level(of: key, at: date) != nil && policy.admits(agent: agent, for: key) }
             // Checking a pin reads the whole program, and many keys allow the same one: each is read once a listing.
@@ -296,11 +301,13 @@ public struct AgentBridge {
                     policy.allows($0, with: key) && policy.hash(of: $0, for: key) != nil && pinnedOnce($0, policy.hash(of: $0, for: key))
                 }
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
+                if let warning = warnings[key] { parts.append(warning) }
                 return "\(key): " + parts.joined(separator: "; ")
             }
             // Names and providers only, so the agent can ask for one with request_access.
             let closed = known.filter { !isOpen($0) }.sorted().map { key in
-                described[key]?.provider.map { "\(key) (\($0))" } ?? key
+                let about = [described[key]?.provider, warnings[key]].compactMap { $0 }.joined(separator: ", ")
+                return about.isEmpty ? key : "\(key) (\(about))"
             }
             if lines.isEmpty { lines.append("No key is allowed for agents yet.") }
             if !closed.isEmpty { lines.append("Closed, ask with request_access: " + closed.joined(separator: ", ")) }

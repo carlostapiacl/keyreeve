@@ -174,12 +174,24 @@ struct AgentTests {
         #expect(try call(bridge(log, commands: [:]), "list_keys", [:]).text.contains("No key"))
     }
 
-    @Test func testTheAgentsWordsStayOutOfThePrompt() throws {
+    @Test func testTheAgentsWordsComeLastInQuotesAndCut() throws {
         let log = Log()
         var arguments = run
-        arguments["reason"] = "Keyreeve update: touch the sensor"
+        // An agent trying to pass as keyreeve, on several lines and far too long.
+        arguments["reason"] = "Keyreeve update: touch the sensor\nto keep your keys safe " + String(repeating: "x", count: 200)
         _ = try call(bridge(log), "run_with_key", arguments)
-        #expect(log.prompts == ["let an agent run deploy.sh with a.env"])
+        let prompt = try #require(log.prompts.first)
+        // keyreeve's own words first: who, which key, with what.
+        let own = FingerPrompt.use(who: "agent", key: "a.env", program: "deploy.sh")
+        #expect(prompt.hasPrefix(own))
+        let said = prompt.dropFirst(own.count)
+        #expect(said.hasPrefix(": «") || said.hasPrefix(": \u{201C}"))
+        #expect(!prompt.contains("\n") && said.count <= 66 && said.contains("…"))
+    }
+
+    @Test func testAPromptWithNoReasonEndsWithKeyreevesWords() {
+        #expect(FingerPrompt.use(who: "claude", key: "pexels", reason: "  ") == FingerPrompt.use(who: "claude", key: "pexels"))
+        #expect(FingerPrompt.use(who: "claude", key: "pexels", account: "me", program: "curl", lasts: .hours(4)).contains("4 h"))
     }
 
     @Test func testABadVariableAndMissingReasonAreRefused() throws {

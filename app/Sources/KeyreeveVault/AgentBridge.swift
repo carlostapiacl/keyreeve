@@ -327,8 +327,11 @@ public struct AgentBridge {
                 log("denied", key, "the person said no to \(name)", reason)
                 throw VaultError("the person said no to \(key) for \(name)")
             }
-            // The agent's words stay out of the fingerprint prompt, where they could pose as the app.
-            let prompt = "let an agent run \(name) with \(key)"
+            // Who and what, with the agent's words short and in quotes, set apart from keyreeve's own.
+            var lasts = FingerPrompt.Lasts.once
+            if case .lasting(let seconds) = approval { lasts = .hours(max(1, Int(seconds) / 3600)) }
+            let prompt = FingerPrompt.use(
+                who: agent, key: key, account: describe()[key]?.account, program: name, lasts: lasts, reason: reason)
             do {
                 sealed = try open(key, prompt)
             } catch {
@@ -387,7 +390,8 @@ public struct AgentBridge {
             // One fingerprint covers every command until the app locks, at most a day.
             request.anyProgram = true
             request.seconds = bounded(KeyService.maxSeconds, key: key, policy: policy)
-            request.prompt = "let \(agent) use \(key) until you quit Keyreeve"
+            request.prompt = FingerPrompt.use(
+                who: agent, key: key, account: describe()[key]?.account, lasts: .untilQuit, reason: reason)
         case .ask:
             let open = (try? service(KeyService.Request(op: "grants")))?.grants ?? []
             let covered = open.contains { $0.key == key && ($0.program == name || $0.program == KeyService.anyProgram) }
@@ -403,8 +407,9 @@ public struct AgentBridge {
                 case .lasting(let seconds):
                     request.seconds = bounded(Int(seconds), key: key, policy: policy)
                 }
-                request.prompt = "let \(agent) run \(name) with \(key)"
-                    + (once ? "" : " for \(Int(request.seconds ?? 0) / 3600) hours")
+                request.prompt = FingerPrompt.use(
+                    who: agent, key: key, account: describe()[key]?.account, program: name,
+                    lasts: once ? .once : .hours(max(1, (request.seconds ?? 0) / 3600)), reason: reason)
             }
         }
         let answer = try service(request)

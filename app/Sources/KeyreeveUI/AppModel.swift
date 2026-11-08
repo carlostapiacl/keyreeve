@@ -81,7 +81,11 @@ public final class AppModel: ObservableObject {
 
     /// This lock covers the window. Keys kept in the vault ask for a fingerprint on their own.
     public func unlock() {
-        confirm(reason: T("open your key catalog")) { success in
+        // When an agent's request opened the app, the sensor says so.
+        reloadRequests()
+        let reason = pendingRequests.first.map { T("open Keyreeve: %@ asks for a %@ key", $0.agent, $0.provider) }
+            ?? T("open your key catalog")
+        confirm(reason: reason) { success in
             guard success else {
                 self.lockMessage = T("Not unlocked. Try again.")
                 return

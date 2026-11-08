@@ -108,7 +108,8 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   trust. Decrypting with the chip was never compared with age's plugin for it.
 - **An agent's program holds the key.** Over MCP an agent runs programs a person allowed, with a fingerprint each time. The output
   hides the plain key and its base64, and a program can hide it another way, so the allowed list is the protection. The agent runs as
-  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it names the program and the key. The reason
+  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it starts with keyreeve's own words, the agent, the key and its account, the program and for how long, and
+  ends with the agent's reason, cut to one short line and set apart in quotes. Anything in quotes is the agent talking. The reason
   in the request window is the agent's own text, set apart in quotes, and it can say anything.
 - **A yes for hours keeps the key open.** For a program you allowed, the agent server holds the opened key in memory until the time
   runs out, the agent session ends, or you quit Keyreeve or press Lock everything. Through the proxy, the key service holds it. Either way, during that time the

@@ -33,11 +33,10 @@ func useKey() throws {
         guard let parsed = KeyService.seconds(from: text) else { fail("--for takes a time like 90s, 5m or 2h") }
         seconds = parsed
     }
-    let shown = command.joined(separator: " ")
     let answer = try askService(
         KeyService.Request(
             op: "use", key: id, seconds: seconds, program: command[0], arguments: command.count - 1,
-            prompt: "run \(shown.prefix(120)) with the key \(id)",
+            prompt: nil,
             agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
             reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal))
     guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
@@ -79,7 +78,9 @@ func grantKey() throws {
     let answer = try askService(
         KeyService.Request(
             op: "use", key: id, seconds: seconds, program: program,
-            prompt: isSSH ? "use the SSH key \(id)" : "let \(program) use the key \(id)",
+            prompt: FingerPrompt.use(
+                who: program, key: id, account: try? KeyIndex.load(from: keysFile).key(id)?.account,
+                lasts: seconds.map { $0 >= 3600 ? .hours($0 / 3600) : .minutes(max(1, $0 / 60)) }),
             agent: ProcessInfo.processInfo.environment["KEYREEVE_AGENT"], reason: "permission given ahead of time",
             cwd: FileManager.default.currentDirectoryPath))
     guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
@@ -202,7 +203,7 @@ func getKey() throws {
     let asker = URL(fileURLWithPath: parent.isEmpty ? "a program" : parent).lastPathComponent
     let answer = try askService(
         KeyService.Request(
-            op: "use", key: id, program: asker, prompt: "give the real key \(id) to \(asker)",
+            op: "use", key: id, program: asker,
             agent: ProcessInfo.processInfo.environment["KEYREEVE_AGENT"], reason: reason,
             cwd: FileManager.default.currentDirectoryPath, real: true))
     guard answer.ok, let value = answer.value, !value.isEmpty else { fail(answer.error ?? "the key could not be read", code: 77) }

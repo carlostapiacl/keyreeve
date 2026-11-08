@@ -182,6 +182,7 @@ public let spanish: [String: String] = [
         "Una consulta de solo lectura a cada proveedor. Algunas piden tu huella.",
     "Only me": "Solo yo",
     "Open until %@": "Abierta hasta las %@",
+    "open Keyreeve: %@ asks for a %@ key": "abrir Keyreeve: %@ pide una clave de %@",
     "Lock everything": "Bloquear todo",
     "Ends every agent permission, locks Keyreeve and pauses agents until you resume them.": "Cierra todos los permisos de los agentes, bloquea Keyreeve y pone a los agentes en pausa hasta que los reanudes.",
     "Agents are paused": "Agentes en pausa",

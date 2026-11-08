@@ -338,7 +338,11 @@ struct KeyServiceTests {
         let f = Fixture()
         _ = f.use("netlify")
         _ = f.use("mail")
-        #expect(f.prompts == ["run netlify with the key netlify (mi-cuenta)", "run netlify with the key mail"])
+        #expect(f.prompts == [
+            FingerPrompt.use(who: "claude", key: "netlify", account: "mi-cuenta", program: "netlify", reason: "deploy"),
+            FingerPrompt.use(who: "claude", key: "mail", program: "netlify", reason: "deploy"),
+        ])
+        #expect(f.prompts[0].contains("(mi-cuenta)"))
     }
 
     @Test func testAFreeKeyCoversEveryProgramAndOneGrantEndsAlone() throws {
@@ -425,7 +429,7 @@ struct KeyServiceTests {
         #expect(f.use("netlify", real: true).value == "CANARY-netlify")
         #expect(f.use("netlify", real: true).value == "CANARY-netlify")
         #expect(f.prompts.count == 2)
-        #expect(f.prompts[0].hasPrefix("give the real key netlify"))
+        #expect(f.prompts[0] == FingerPrompt.real(who: "netlify", key: "netlify", account: "mi-cuenta", reason: "deploy"))
         #expect(f.proxy.added.isEmpty)
         #expect(try f.log.entries().map(\.event) == ["handed", "handed"])
         #expect(f.service.isIdle)

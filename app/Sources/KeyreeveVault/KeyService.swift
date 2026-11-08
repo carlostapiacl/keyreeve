@@ -339,7 +339,7 @@ public final class KeyService: @unchecked Sendable {
             defer { asking.unlock() }
             let sealed: Data
             do {
-                sealed = try open(key.source, "give the real key \(id)\(account) to \(name)")
+                sealed = try open(key.source, FingerPrompt.real(who: name, key: id, account: key.account, reason: request.reason))
             } catch {
                 try log.append(event: "denied", key: id, observed: caller, declared: declared, detail: "real key")
                 throw error
@@ -373,7 +373,10 @@ public final class KeyService: @unchecked Sendable {
         lock.unlock()
         let sealed: Data
         do {
-            sealed = try open(key.source, (request.prompt ?? "run \(name) with the key \(id)") + account)
+            // The asker's own prompt names the account already; one made here does too.
+            sealed = try open(key.source, request.prompt ?? FingerPrompt.use(
+                who: request.agent ?? name, key: id, account: key.account, program: name,
+                lasts: request.seconds.map { .minutes(max(1, $0 / 60)) }, reason: request.reason))
         } catch {
             try log.append(event: "denied", key: id, observed: caller, declared: declared)
             throw error

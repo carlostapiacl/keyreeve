@@ -113,15 +113,16 @@ func backupVault() throws {
     print("Saved \(target.path). It opens with your recovery key, through keyreeve-vault recover.")
 }
 
+/// With no argument, this vault; with a file, a backup made with `backup`, which proves it would bring the keys back.
 func checkRecovery() throws {
-    let vault = try store.load()
+    let backup = arguments.count > 1 ? URL(fileURLWithPath: arguments[1]) : nil
+    let vault = try backup.map(VaultStore.read) ?? store.load()
     let text = String(decoding: readSecret(prompt: "Recovery key"), as: UTF8.self)
     let recovery = try Age.X25519Identity(string: text)
-    guard recovery.recipient.string == vault.recovery else {
-        fail("this is not the recovery key of this vault")
-    }
-    for name in vault.entries.keys { _ = try vault.open(name: name, with: recovery) }
-    print("The recovery key is right, and it opens all \(vault.entries.count) keys")
+    let opened = try vault.openAll(with: recovery)
+    print(backup == nil
+        ? "The recovery key is right, and it opens all \(opened) keys"
+        : "The backup opens with the recovery key: all \(opened) keys, and every older copy")
 }
 
 func recoverVault() throws {

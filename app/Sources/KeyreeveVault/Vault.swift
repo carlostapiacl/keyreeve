@@ -131,6 +131,28 @@ public struct VaultFile: Codable, Equatable {
         return plain.dropFirst(line.count)
     }
 
+    /// Proves the recovery key opens this vault, or a backup of it: every key and every replaced copy is opened with
+    /// it, and only how many is said. One that would not open is named, so a backup that cannot bring the keys back
+    /// is known before it is needed.
+    public func openAll(with recovery: Age.X25519Identity) throws -> Int {
+        guard recovery.recipient.string == self.recovery else {
+            throw VaultError("this is not the recovery key of this vault")
+        }
+        var opened = 0
+        for (name, entry) in entries {
+            do { _ = try open(entry: entry, name: name, with: recovery) } catch { throw VaultError("\(name) does not open with the recovery key") }
+            opened += 1
+        }
+        for (name, list) in replaced ?? [:] {
+            for entry in list {
+                do { _ = try open(entry: entry, name: name, with: recovery) } catch {
+                    throw VaultError("an old copy of \(name) does not open with the recovery key")
+                }
+            }
+        }
+        return opened
+    }
+
     /// Moves the vault to a new chip, using the recovery key. Each value is sealed again.
     public mutating func moveToNewEnclave(
         _ newEnclave: P256.KeyAgreement.PublicKey, recovery identity: Age.X25519Identity

@@ -12,6 +12,8 @@ public struct SortProposal: Sendable {
     /// The server of a provider that runs on the person's own, as keyreeve keeps it: a name, and a port
     /// when there is one, such as panel.example.com. Always reached over https.
     public var hosts: [String: String] = [:]
+    /// The day a key stops working, `yyyy-mm-dd`, as the agent knows it.
+    public var expires: [String: String] = [:]
     /// Every file it touches, in the order the agent gave them.
     public var paths: [String] = []
 
@@ -29,9 +31,12 @@ public struct SortProposal: Sendable {
             if row["archive"] as? Bool == true { proposal.archive.insert(path) }
             if row["split"] as? Bool == true { proposal.split.insert(path) }
             if let host = (row["host"] as? String).flatMap(Self.server) { proposal.hosts[path] = host }
+            if let day = row["expires"] as? String, CatalogItem(path: path, expires: day).daysLeft() != nil {
+                proposal.expires[path] = day
+            }
         }
         let touched = Set(proposal.suggestions.map(\.path)).union(proposal.seal).union(proposal.check).union(proposal.archive)
-            .union(proposal.split).union(proposal.hosts.keys)
+            .union(proposal.split).union(proposal.hosts.keys).union(proposal.expires.keys)
         var seen = Set<String>()
         proposal.paths = rows.compactMap { $0["path"] as? String }.filter { touched.contains($0) && seen.insert($0).inserted }
         return proposal
@@ -62,6 +67,7 @@ extension CatalogItem {
         if let field = edit.field { item.field = field }
         if let description = edit.description { item.description = description }
         if let host = edit.host { item.host = host }
+        if let expires = edit.expires { item.expires = expires }
         return item
     }
 }

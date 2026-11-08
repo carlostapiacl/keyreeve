@@ -205,6 +205,7 @@ public struct MainView: View {
             filterChip(T("No answer"), .result("no_answer"))
             filterChip(T("Never checked"), .result(""))
             filterChip(T("Older than suggested"), .stale)
+            filterChip(T("Expire soon"), .expiring)
             filterChip(T("Archive"), .archive)
         }
         .padding(.horizontal, 14)
@@ -245,6 +246,7 @@ public struct MainView: View {
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")
         case .internalOnly: return T("Internal secrets")
+        case .expiring: return T("Expire soon")
         case .result(let result): return resultName(result)
         case .level(let level): return levelName(level)
         case .tag(let tag): return tag

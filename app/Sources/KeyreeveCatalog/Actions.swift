@@ -240,6 +240,8 @@ public struct KeyEdit: Codable, Equatable, Sendable {
     public var description: String?
     public var criticality: Int?
     public var host: String?
+    /// The day the key stops working, `yyyy-mm-dd`.
+    public var expires: String?
 
     /// What `edit` says, over what `base` already said.
     public static func merging(_ edit: KeyEdit, into base: KeyEdit) -> KeyEdit {
@@ -252,12 +254,14 @@ public struct KeyEdit: Codable, Equatable, Sendable {
         merged.description = edit.description ?? merged.description
         merged.criticality = edit.criticality ?? merged.criticality
         merged.host = edit.host ?? merged.host
+        merged.expires = edit.expires ?? merged.expires
         return merged
     }
 
     public init(
         tags: [String]? = nil, level: String? = nil, recipes: [String]? = nil, field: String? = nil,
-        name: String? = nil, description: String? = nil, criticality: Int? = nil, host: String? = nil
+        name: String? = nil, description: String? = nil, criticality: Int? = nil, host: String? = nil,
+        expires: String? = nil
     ) {
         self.tags = tags
         self.level = level
@@ -267,6 +271,7 @@ public struct KeyEdit: Codable, Equatable, Sendable {
         self.description = description
         self.criticality = criticality
         self.host = host
+        self.expires = expires
     }
 }
 
@@ -362,6 +367,7 @@ extension KeyreeveFiles {
         merged.description = edit.description ?? merged.description
         merged.criticality = edit.criticality ?? merged.criticality
         merged.host = edit.host ?? merged.host
+        merged.expires = edit.expires ?? merged.expires
         all[path] = merged
         }
     }

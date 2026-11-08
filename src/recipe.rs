@@ -994,12 +994,12 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
         assert_eq!(extract(&json, "$.data.list.0").as_deref(), Some("a"));
         assert_eq!(extract(&json, "$.data.missing"), None);
         assert_eq!(extract(&json, "$.data.list.00"), None);
-        let orgs = serde_json::json!([{"slug": "restoiq"}, {"slug": "carlos-tapia"}, {"slug": "restoiq"}, {"name": "x"}]);
+        let orgs = serde_json::json!([{"slug": "acme"}, {"slug": "jane-doe"}, {"slug": "acme"}, {"name": "x"}]);
         assert_eq!(
             extract_all(&orgs, "$.*.slug").as_deref(),
-            Some("restoiq, carlos-tapia")
+            Some("acme, jane-doe")
         );
-        assert_eq!(extract_all(&orgs, "$.0.slug").as_deref(), Some("restoiq"));
+        assert_eq!(extract_all(&orgs, "$.0.slug").as_deref(), Some("acme"));
         assert_eq!(extract_all(&orgs, "$.*.missing"), None);
         assert_eq!(extract(&orgs, "$.*.slug"), None);
     }

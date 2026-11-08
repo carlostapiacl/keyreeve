@@ -116,4 +116,40 @@ extension AgentBridge {
             return "Waiting: no \(provider) key is saved yet, and the request is in Keyreeve for the person to save one and allow it. Ask them in the conversation, then call request_access again."
         }
     }
+
+    /// Asks the person to rotate a key. The app rotates it, with their fingerprint, where they said the key
+    /// is used; this only writes the request down, and tells the agent how it went when it asks again.
+    func rotateKey(_ arguments: [String: Any]) throws -> String {
+        guard let key = arguments["key"] as? String,
+            let reason = arguments["reason"] as? String, !reason.isEmpty
+        else { throw VaultError("this needs key and reason") }
+        guard try names().contains(key) else { throw VaultError("no key called \(key) is in the vault") }
+        if let last = AccessRequests.latestRotation(agent: agent, key: key, in: requests()) {
+            let since = now().timeIntervalSince(last.answer?.at ?? .distantPast)
+            switch last.answer?.event {
+            case nil:
+                return "Still waiting: the person decides in Keyreeve, under Agents. Call rotate_key again later to learn how it went."
+            case .declined? where since < 3600:
+                throw VaultError("the person said no to rotating \(key) within the hour. Ask them in the conversation instead")
+            case .allowed? where since < 3600:
+                return "The person rotated \(key). How it went: \(last.answer?.result ?? "no words were kept")"
+            default:
+                break
+            }
+        }
+        let entry = AccessRequests.Entry(
+            id: AccessRequests.newID(), at: now(), event: .asked, agent: agent, provider: describe()[key]?.provider ?? key,
+            reason: reason, key: key, kind: "rotate")
+        try addRequest(entry)
+        log("requested", key, "rotation", reason)
+        switch announce(entry) {
+        case .deny:
+            try addRequest(AccessRequests.Entry(
+                id: entry.id, at: now(), event: .declined, agent: agent, provider: entry.provider, key: key, kind: "rotate"))
+            log("denied", key, "rotation", reason)
+            throw VaultError("the person said no to rotating \(key)")
+        case .open, .later:
+            return "Waiting: the request to rotate \(key) is in Keyreeve, where the person decides with their fingerprint. Call rotate_key again later to learn how it went."
+        }
+    }
 }

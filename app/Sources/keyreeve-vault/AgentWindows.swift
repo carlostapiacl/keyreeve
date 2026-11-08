@@ -94,13 +94,21 @@ func announceRequest(_ request: AccessRequests.Entry) -> AgentBridge.Announcemen
     app.activate(ignoringOtherApps: true)
     let alert = NSAlert()
     alert.alertStyle = .informational
-    alert.messageText = spanish
-        ? "\(request.agent) pide una clave de \(request.provider)"
-        : "\(request.agent) asks for a \(request.provider) key"
     let said = request.reason.map { "\u{201C}\($0)\u{201D}" } ?? "-"
-    alert.informativeText = spanish
-        ? "Lo que dice el agente, en sus palabras:\n\(said)\n\nTodavía no tienes una clave de \(request.provider) guardada. En Keyreeve eliges cuál, se guarda y queda permitida en un paso."
-        : "What the agent says, in its own words:\n\(said)\n\nNo \(request.provider) key is saved yet. In Keyreeve you choose which, and it is saved and allowed in one step."
+    if request.isRotation {
+        let key = request.key ?? request.provider
+        alert.messageText = spanish ? "\(request.agent) pide rotar \(key)" : "\(request.agent) asks to rotate \(key)"
+        alert.informativeText = spanish
+            ? "Lo que dice el agente, en sus palabras:\n\(said)\n\nEn Keyreeve ves dónde se reemplaza y lo apruebas con tu huella. El agente no ve ninguna de las dos claves."
+            : "What the agent says, in its own words:\n\(said)\n\nIn Keyreeve you see where it is replaced and approve it with your fingerprint. The agent sees neither key."
+    } else {
+        alert.messageText = spanish
+            ? "\(request.agent) pide una clave de \(request.provider)"
+            : "\(request.agent) asks for a \(request.provider) key"
+        alert.informativeText = spanish
+            ? "Lo que dice el agente, en sus palabras:\n\(said)\n\nTodavía no tienes una clave de \(request.provider) guardada. En Keyreeve eliges cuál, se guarda y queda permitida en un paso."
+            : "What the agent says, in its own words:\n\(said)\n\nNo \(request.provider) key is saved yet. In Keyreeve you choose which, and it is saved and allowed in one step."
+    }
     alert.addButton(withTitle: spanish ? "Abrir Keyreeve" : "Open Keyreeve")
     alert.addButton(withTitle: spanish ? "Ahora no" : "Not now")
     let deny = alert.addButton(withTitle: spanish ? "No permitir" : "Deny")

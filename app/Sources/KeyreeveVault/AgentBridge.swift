@@ -294,6 +294,8 @@ public struct AgentBridge {
             return try runWithKey(arguments)
         case "request_access":
             return try requestAccess(arguments)
+        case "rotate_key":
+            return try rotateKey(arguments)
         default:
             throw VaultError("no such tool")
         }
@@ -482,6 +484,19 @@ public struct AgentBridge {
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
                 ],
                 "required": ["key", "command", "reason"],
+            ],
+        ],
+        [
+            "name": "rotate_key",
+            "description":
+                "Ask the person to rotate a key in the vault: a new key replaces it where it is used, and the old one is revoked. Use it when a key has leaked, is old, or the person asks. They decide in Keyreeve with their fingerprint, and you never see either key. Call it again later to learn how it went.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "key": ["type": "string", "description": "The key's name, as list_keys shows it"],
+                    "reason": ["type": "string", "description": "Why it should be rotated, shown to the person and kept in the usage log"],
+                ],
+                "required": ["key", "reason"],
             ],
         ],
         [

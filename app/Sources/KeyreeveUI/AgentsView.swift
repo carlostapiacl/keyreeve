@@ -1,3 +1,4 @@
+import AppKit
 import KeyreeveCatalog
 import KeyreeveVault
 import SwiftUI
@@ -56,7 +57,11 @@ struct AgentsView: View {
                 }
                 ForEach(Array(model.pendingRequests.enumerated()), id: \.element.id) { index, request in
                     if index > 0 { Divider() }
-                    RequestRow(request: request, model: model)
+                    if request.isRotation {
+                        RotationRequestRow(request: request, model: model)
+                    } else {
+                        RequestRow(request: request, model: model)
+                    }
                 }
             }
             .padding(14)
@@ -386,3 +391,80 @@ struct RequestRow: View {
         return parts.joined(separator: " · ")
     }
 }
+
+/// An agent asking to rotate a key: where the new key goes, and for a provider with no way to make keys from
+/// here, the new key the person made at its page. The vault asks for the fingerprint when it starts.
+struct RotationRequestRow: View {
+    let request: AccessRequests.Entry
+    @ObservedObject var model: AppModel
+    @State private var newKey = ""
+
+    var body: some View {
+        let item = model.item(forKey: request.key)
+        let provider = item.flatMap { model.providers.rotator(of: $0) }
+        let places = item.flatMap { model.places[$0.path] } ?? KeyPlaces()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(T("%@ asks to rotate %@", request.agent, request.key ?? request.provider))
+                    .font(Theme.rowTitle).foregroundStyle(Theme.text)
+                Spacer(minLength: 8)
+                Text(request.at, style: .relative).font(Theme.caption).foregroundStyle(Theme.faint)
+            }
+            if let reason = request.reason {
+                Text("\u{201C}\(reason)\u{201D}").font(Theme.body).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let problem = problem(item, provider, places) {
+                Text(problem).font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+            } else if let item, let provider {
+                Text(destination(places)).font(Theme.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                if !provider.can_rotate {
+                    Text(T("Make the new key at %@'s page and paste it here. It is tested before anything changes.", provider.name))
+                        .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        if let page = provider.dashboard.flatMap(URL.init(string:)) {
+                            Button(T("Open its page")) { NSWorkspace.shared.open(page) }.buttonStyle(KRButtonStyle())
+                        }
+                        SecureField(T("New key"), text: $newKey).textFieldStyle(.roundedBorder)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
+                    Button(T("Rotate this key")) {
+                        model.rotate(for: request, item: item, handedOver: provider.can_rotate ? nil : newKey)
+                        newKey = ""
+                    }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .disabled(model.busy || (!provider.can_rotate && newKey.isEmpty))
+                }
+            }
+            if problem(item, provider, places) != nil {
+                HStack {
+                    Spacer()
+                    Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
+                }
+            }
+        }
+    }
+
+    /// What stops it, said so the person knows the one step that helps.
+    private func problem(_ item: CatalogItem?, _ provider: ProviderInfo?, _ places: KeyPlaces) -> String? {
+        guard let item else { return T("That key is not on your list.") }
+        guard item.vault == .sealed else { return T("Seal this key first, so the new one has a safe place to land.") }
+        guard provider != nil else { return T("Its provider has no way to rotate a key, here or by hand.") }
+        guard places.isDecided else {
+            return T("Say first where this key is used, in its Security tab, so each place gets the new key.")
+        }
+        if model.rotations.contains(where: { $0.key == item.path && $0.isOpen }) {
+            return T("A rotation of this key is open. Finish it in Vault.")
+        }
+        return nil
+    }
+
+    private func destination(_ places: KeyPlaces) -> String {
+        let names = places.files.map { URL(fileURLWithPath: $0).lastPathComponent } + places.actions
+        return names.isEmpty ? T("Nothing else uses this key, you said.") : T("The new key goes to: %@", names.joined(separator: ", "))
+    }
+}
+

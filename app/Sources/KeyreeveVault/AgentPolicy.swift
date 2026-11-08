@@ -54,7 +54,18 @@ public struct AgentPolicy: Equatable, Sendable {
 
     public func admits(agent: String, for key: String) -> Bool {
         let limited = agents[key] ?? []
-        return limited.isEmpty || limited.contains(agent)
+        // "claude" takes in every Claude session, "claude/sales" only that one.
+        let program = agent.split(separator: "/").first.map(String.init) ?? agent
+        return limited.isEmpty || limited.contains(agent) || limited.contains(program)
+    }
+
+    /// A name a session gives itself, kept to lower-case letters, digits, - and _, at most 40, or nil.
+    public static func cleanAgentName(_ text: String) -> String? {
+        let lower = text.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !lower.isEmpty, lower.count <= 40,
+            lower.allSatisfy({ ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "-" || $0 == "_" })
+        else { return nil }
+        return lower
     }
 
     /// A program that does whatever its arguments say, or prints what it is given. Since the agent

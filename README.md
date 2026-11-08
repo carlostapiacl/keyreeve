@@ -358,7 +358,12 @@ whether Claude Code is connected, copies the command that connects it in every f
   a copy of the key to a second key in the chip that opens with none, and from then on agents use it through the proxy with no question,
   across restarts. Only you can set it, in the app; the real key, `run_with_key` and `get` still ask. Keep it for keys that only read.
 - **Agents.** Any agent, or only Claude or only Codex. The agent is named from the process that started the server, which is a strong
-  hint and not proof, since everything runs as you.
+  hint and not proof, since everything runs as you. A session can name itself by starting with `KEYREEVE_AGENT` set, such as
+  `KEYREEVE_AGENT=sales claude`, and is then `claude/sales`: a key open to `claude` serves it as before, and one open to
+  `claude/sales` serves that session alone.
+
+An agent's server that finds a newer Keyreeve in place becomes it at its next message, in the same process and connection, so a
+session goes on with the new version without starting again.
 
 The agent's `use_key` tool runs a command with a stand-in for the key, through the proxy described above, so any command works,
 including `curl`, and the real key only reaches the key's provider. An SSH key signs in through keyreeve. A key with no provider can

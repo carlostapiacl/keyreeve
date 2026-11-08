@@ -109,6 +109,21 @@ struct AgentLevelTests {
         #expect(try AgentTests().call(bridge(policy, agent: "codex", seen: seen), "list_keys", [:]).text.hasPrefix("pexels: free"))
     }
 
+    /// A session names itself under its program; a key open to the program takes in all its sessions, and one open
+    /// to a single session takes in that one alone.
+    @Test func aSessionCanBeToldApartFromTheOthers() {
+        let chain = ["keyreeve-vault", "node", "claude"]
+        #expect(AgentBridge.agentName(chain: chain) == "claude")
+        #expect(AgentBridge.agentName(chain: chain, declared: " Sales ") == "claude/sales")
+        #expect(AgentBridge.agentName(chain: chain, declared: "../etc") == "claude")
+        #expect(AgentBridge.agentName(chain: chain, declared: "claude") == "claude")
+        let policy = AgentPolicy(levels: ["all": .free, "one": .free], agents: ["all": ["claude"], "one": ["claude/sales"]])
+        #expect(policy.admits(agent: "claude/sales", for: "all") && policy.admits(agent: "claude/other", for: "all"))
+        #expect(policy.admits(agent: "claude/sales", for: "one"))
+        #expect(!policy.admits(agent: "claude/other", for: "one") && !policy.admits(agent: "claude", for: "one"))
+        #expect(!policy.admits(agent: "codex/sales", for: "all"))
+    }
+
     /// A damaged permissions file is never read as empty and written back, which would drop every other key.
     @Test func aDamagedPermissionsFileIsLeftAsItIs() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("agents-\(UUID().uuidString).toml")

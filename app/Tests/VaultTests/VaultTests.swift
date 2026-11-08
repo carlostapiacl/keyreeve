@@ -65,6 +65,31 @@ struct VaultTests {
         }
     }
 
+    /// A key marked to need no fingerprint has a second copy, sealed only to the key that needs none. That key
+    /// opens nothing else, a rotation keeps the mark, taking it off removes the copy, and a new chip drops it.
+    @Test func aKeyMarkedForNoFingerprintOpensOnlyThroughItsOwnCopy() throws {
+        var file = try vault()
+        try file.add(name: "b/other.txt", value: Data("OTHER".utf8))
+        let unattended = SoftwareRecipient()
+        #expect(throws: VaultError.self) { try file.sealUnattended(name: "a/key.txt", value: value) }
+        file.unattended = Age.TagRecipient(publicKey: unattended.publicKey).string
+        try file.sealUnattended(name: "a/key.txt", value: value)
+        #expect(try file.openUnattended(name: "a/key.txt", with: unattended) == value)
+        // It opens neither the main copy nor a key that was not marked.
+        #expect(throws: (any Error).self) { try file.open(name: "a/key.txt", with: unattended) }
+        #expect(throws: VaultError.self) { try file.openUnattended(name: "b/other.txt", with: unattended) }
+        // The main key does not open the copy either: it is sealed to the other key alone.
+        #expect(throws: (any Error).self) { try file.openUnattended(name: "a/key.txt", with: chip) }
+        // A rotation keeps the mark, with the new value.
+        try file.replace(name: "a/key.txt", value: Data("NEW".utf8))
+        #expect(try file.openUnattended(name: "a/key.txt", with: unattended) == Data("NEW".utf8))
+        file.dropUnattended(name: "a/key.txt")
+        #expect(throws: VaultError.self) { try file.openUnattended(name: "a/key.txt", with: unattended) }
+        try file.sealUnattended(name: "a/key.txt", value: Data("NEW".utf8))
+        try file.moveToNewEnclave(SoftwareRecipient().publicKey, recovery: recovery)
+        #expect(file.unattended == nil && file.entries["a/key.txt"]?.unattendedSealed == nil)
+    }
+
     @Test func testRecoveryMovesTheVaultToANewChip() throws {
         var file = try vault()
         let newChip = SoftwareRecipient()

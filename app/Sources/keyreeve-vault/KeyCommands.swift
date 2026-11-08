@@ -127,7 +127,16 @@ func serveKeys() throws {
         confirm: { prompt in (try? EnclaveRecipient.confirm(reason: prompt)) != nil },
         log: auditLog,
         paused: { AgentBridge.isPaused(home: home) },
-        revision: { source in (try? store.load())?.entries[source]?.revision })
+        revision: { source in (try? store.load())?.entries[source]?.revision },
+        openUnattended: { id, agent, source in
+            // The person's own mark, read here and now: the key at "always", open to this agent, not paused.
+            guard let policy = try? AgentPolicy.loadStrict(from: home.appendingPathComponent(AgentPolicy.fileName)), policy.level(of: id, at: Date()) == .always,
+                policy.admits(agent: agent ?? "", for: id), !AgentBridge.isPaused(home: home),
+                let vault = try? store.load(), let blob = try? store.loadUnattendedBlob(for: vault),
+                let recipient = try? EnclaveRecipient.loadUnattended(blob: blob)
+            else { return nil }
+            return try? vault.openUnattended(name: source, with: recipient)
+        })
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
     // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
     // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an
@@ -170,10 +179,11 @@ func showAudit() throws {
         return
     }
     if arguments.contains("--verify") {
-        if let line = auditLog.firstBrokenLine() {
-            fail(line == 0 ? "the usage log could not be read" : "the usage log was changed at line \(line)")
+        if let broken = auditLog.firstBreak() {
+            fail(broken.line == 0 ? "\(broken.file) could not be read" : "the usage log was changed: \(broken.file), line \(broken.line)")
         }
-        print("The usage log holds together: \(try auditLog.entries().count) lines")
+        let parts = auditLog.segments().count
+        print("The usage log holds together: \(try auditLog.entries().count) lines" + (parts > 1 ? " in \(parts) files" : ""))
         return
     }
     var filter: String?

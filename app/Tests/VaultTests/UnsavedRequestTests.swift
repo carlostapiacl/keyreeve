@@ -175,6 +175,29 @@ struct UnsavedRequestTests {
         #expect(text.hasSuffix("Not saved yet, ask with request_access by provider: openai"))
     }
 
+    /// A key of the same provider for another account is another key: pointed to it, or asked for as new.
+    @Test func anotherAccountOfASavedProviderIsAnotherKey() throws {
+        let world = World()
+        let keys = [
+            "meta": KeyIndex.Key(id: "meta", source: "m.txt", provider: "meta", account: "restoiq"),
+            "meta-ads": KeyIndex.Key(id: "meta-ads", source: "a.txt", provider: "meta", account: "minerva"),
+        ]
+        let bridge = AgentBridge(
+            policy: { AgentPolicy(levels: ["meta": .free]) }, names: { ["meta", "meta-ads"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude", describe: { keys },
+            offered: { ["meta"] }, requests: { world.entries }, addRequest: { world.entries.append($0) })
+        let ask = { (account: String) in
+            try AgentTests().call(bridge, "request_access", ["key": "meta", "reason": "insights", "account": account]).text
+        }
+        #expect(try ask("minerva").contains("is meta-ads, not meta"))
+        #expect(world.entries.isEmpty)
+        #expect(try ask("hernan").hasPrefix("Waiting: no meta key is saved yet"))
+        #expect(world.entries.last?.account == "hernan" && world.entries.last?.provider == "meta")
+        // The same account as the key by that name is that key.
+        #expect(try ask("restoiq").contains("already open"))
+    }
+
     @Test func requestsWrittenAtTheSameTimeAreAllKept() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("requests-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }

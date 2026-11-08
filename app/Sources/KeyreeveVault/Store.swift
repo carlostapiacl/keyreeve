@@ -24,6 +24,24 @@ public struct EnclaveRecipient: VaultRecipient {
         return (EnclaveRecipient(key: key), key.dataRepresentation)
     }
 
+    /// A second key in the chip that opens with no fingerprint, while this Mac is unlocked, and never leaves it.
+    /// Only the keys the person marks "always, no fingerprint" are sealed to it.
+    public static func createUnattended() throws -> (recipient: EnclaveRecipient, blob: Data) {
+        var error: Unmanaged<CFError>?
+        guard
+            let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage], &error)
+        else { throw VaultError("could not set up the key for use without a fingerprint") }
+        let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: access)
+        return (EnclaveRecipient(key: key), key.dataRepresentation)
+    }
+
+    /// Opens that key, which asks nothing.
+    public static func loadUnattended(blob: Data) throws -> EnclaveRecipient {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return EnclaveRecipient(key: try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob, authenticationContext: context))
+    }
+
     /// Asks for the finger once, so several keys can open on one touch.
     public static func confirm(reason: String) throws -> LAContext {
         let context = LAContext()
@@ -153,6 +171,25 @@ public struct VaultStore: Sendable {
                 return target
             }
             throw VaultError("that folder already holds too many backups from today")
+        }
+    }
+
+    /// The blob of the key that needs no fingerprint, if this vault has one.
+    public func loadUnattendedBlob(for vault: VaultFile) throws -> Data {
+        guard let unattended = vault.unattended else { throw VaultError("this vault has no key for use without a fingerprint") }
+        return try Data(contentsOf: blobURL(for: unattended))
+    }
+
+    /// Gives the vault its key that needs no fingerprint, once: made in the chip, its blob saved beside the other.
+    public func ensureUnattended() throws -> String {
+        if let existing = try load().unattended { return existing }
+        let made = try EnclaveRecipient.createUnattended()
+        let tag = Age.TagRecipient(publicKey: made.recipient.publicKey).string
+        try saveBlob(made.blob, for: tag)
+        return try update { vault in
+            if let existing = vault.unattended { return existing }
+            vault.unattended = tag
+            return tag
         }
     }
 

@@ -292,11 +292,50 @@ extension AppModel {
 
     /// How agents may use a key: nil keeps it yours alone.
     public func setAgentLevel(_ level: AgentPolicy.Level?, for id: String) {
+        // "Always" needs a copy sealed to the chip's key that asks nothing, made with this fingerprint once.
+        if level == .always { return markAlways(id) }
+        // Off "always", the copy goes: nothing can open the key with no fingerprint any more.
+        if agentPolicy.levels[id] == .always, let key = keyIndex.key(id) {
+            try? vaultStore.update { $0.dropUnattended(name: key.source) }
+        }
+        applyLevel(level, for: id)
+    }
+
+    private func applyLevel(_ level: AgentPolicy.Level?, for id: String) {
         updatePolicy { policy in
             policy.levels[id] = level
             // A level you choose here has no end, even if an agent's request had given it one.
             policy.until[id] = nil
             if level == nil { policy.agents[id] = nil }
+        }
+    }
+
+    /// Opens the key with the person's fingerprint, seals a copy to the chip's key that asks nothing, and only then
+    /// sets the level, so "always" is never set for a key that would still ask.
+    func markAlways(_ id: String) {
+        guard let key = keyIndex.key(id) else {
+            message = T("%@ is not in the vault", id)
+            return
+        }
+        let store = vaultStore
+        openVault(reason: T("Let agents use %@ with no fingerprint, through the proxy only", id)) { unlocked in
+            guard let unlocked else { return }
+            Task.detached {
+                let result = Result {
+                    _ = try store.ensureUnattended()
+                    let value = try store.load().open(name: key.source, with: try unlocked.recipient(store))
+                    try store.update { try $0.sealUnattended(name: key.source, value: value) }
+                }
+                await MainActor.run {
+                    switch result {
+                    case .success:
+                        self.applyLevel(.always, for: id)
+                        self.message = T("%@ is open to agents with no fingerprint, through the proxy only", id)
+                    case .failure(let error):
+                        self.message = T("%@ could not be set to need no fingerprint: %@", id, "\(error)")
+                    }
+                }
+            }
         }
     }
 

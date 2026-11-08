@@ -10,6 +10,9 @@ public struct AgentPolicy: Equatable, Sendable {
         case ask
         /// One fingerprint, then no more questions until the time is up or you quit Keyreeve.
         case free
+        /// No fingerprint at all, through the proxy only: a copy sealed to the chip's key that asks nothing. Set by
+        /// the person in the app, never by an agent's request.
+        case always
     }
 
     /// Programs allowed to receive the key itself, for what the proxy cannot do.

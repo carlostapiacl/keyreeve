@@ -122,6 +122,11 @@ func serveAgents() throws {
         revision: { id in
             guard let source = try? indexed(id).source else { return nil }
             return (try? store.load())?.entries[source]?.revision
+        },
+        checkWarnings: {
+            let last = CheckHistory.latest(in: home.appendingPathComponent(CheckHistory.fileName()))
+            let keys = (try? KeyIndex.load(from: keysFile).keys) ?? []
+            return Dictionary(keys.compactMap { key in CheckHistory.warning(last[key.source]).map { (key.id, $0) } }, uniquingKeysWith: { a, _ in a })
         })
     // One message per line, at most a megabyte: a client that sends more is told so and the line is
     // dropped, read in pieces and never held whole.

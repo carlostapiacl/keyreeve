@@ -98,6 +98,8 @@ public struct AgentBridge {
     let saveProposal: (String, Data) throws -> Void
     /// Which sealing a key holds now, so a value held for a while is dropped once the key is replaced.
     let revision: (_ key: String) -> String?
+    /// A word for each key whose last check failed, read once a listing.
+    let checkWarnings: () -> [String: String]
     let held = Held()
 
     /// What the person answers when told of a request for a key that is not saved yet.
@@ -142,9 +144,11 @@ public struct AgentBridge {
         paused: @escaping () -> Bool = { false },
         inventory: @escaping () -> Data? = { nil },
         saveProposal: @escaping (String, Data) throws -> Void = { _, _ in throw VaultError("proposals cannot be kept here") },
-        revision: @escaping (_ key: String) -> String? = { _ in nil }
+        revision: @escaping (_ key: String) -> String? = { _ in nil },
+        checkWarnings: @escaping () -> [String: String] = { [:] }
     ) {
         self.revision = revision
+        self.checkWarnings = checkWarnings
         currentPolicy = policy
         self.names = names
         self.open = open
@@ -268,6 +272,7 @@ public struct AgentBridge {
             let policy = self.policy
             let known = Set(try names())
             let described = describe()
+            let warnings = checkWarnings()
             let date = now()
             let isOpen = { (key: String) in policy.level(of: key, at: date) != nil && policy.admits(agent: agent, for: key) }
             // Checking a pin reads the whole program, and many keys allow the same one: each is read once a listing.
@@ -281,7 +286,11 @@ public struct AgentBridge {
             }
             var lines = policy.keys.filter { known.contains($0) && isOpen($0) }.compactMap { key -> String? in
                 guard let level = policy.level(of: key, at: date) else { return nil }
-                var parts = [level == .free ? "free until the person quits Keyreeve" : "asks the person"]
+                var parts = [
+                    level == .always
+                        ? "always, with no fingerprint"
+                        : level == .free ? "free: one fingerprint after Keyreeve starts, then no questions for up to 24 h" : "asks the person"
+                ]
                 if let closes = policy.until[key] { parts.append("open until \(ISO8601DateFormatter().string(from: closes))") }
                 let info = described[key]
                 if policy.levels[key] != nil {
@@ -296,11 +305,13 @@ public struct AgentBridge {
                     policy.allows($0, with: key) && policy.hash(of: $0, for: key) != nil && pinnedOnce($0, policy.hash(of: $0, for: key))
                 }
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
-                return "\(key): " + parts.joined(separator: "; ")
+                if let warning = warnings[key] { parts.append(warning) }
+                return "\(key)\(Self.about(info)): " + parts.joined(separator: "; ")
             }
             // Names and providers only, so the agent can ask for one with request_access.
             let closed = known.filter { !isOpen($0) }.sorted().map { key in
-                described[key]?.provider.map { "\(key) (\($0))" } ?? key
+                let about = [described[key]?.provider, described[key]?.account, warnings[key]].compactMap { $0 }.joined(separator: ", ")
+                return about.isEmpty ? key : "\(key) (\(about))"
             }
             if lines.isEmpty { lines.append("No key is allowed for agents yet.") }
             if !closed.isEmpty { lines.append("Closed, ask with request_access: " + closed.joined(separator: ", ")) }
@@ -447,8 +458,10 @@ public struct AgentBridge {
             notAfter: policy.until[key])
         var once = false
         switch level {
-        case .free:
-            // One fingerprint covers every command until the app locks, at most a day.
+        case .free, .always:
+            // One fingerprint covers every command until the app locks, at most a day. A key marked "always" needs
+            // none, if the service finds the mark; if it does not, it asks like a free one.
+            request.unattended = level == .always ? true : nil
             request.anyProgram = true
             request.seconds = bounded(KeyService.maxSeconds, key: key, policy: policy)
             request.prompt = FingerPrompt.use(
@@ -482,6 +495,16 @@ public struct AgentBridge {
         return try ran(key: key, command: command, reason: reason, hiding: [answer.standIn].compactMap { $0 }) {
             try runPrepared(prepared)
         }
+    }
+
+    /// Which account a key belongs to and what the person wrote about it, so an agent picks the right one of
+    /// several keys of a provider without trying each. Names and words only, never a value.
+    static func about(_ key: KeyIndex.Key?) -> String {
+        guard let key else { return "" }
+        let account = key.account.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+        let words = key.description.map { $0.count > 140 ? String($0.prefix(139)) + "…" : $0 }
+        let parts = [account.map { "account \($0)" }, words.map { "\u{201C}\($0)\u{201D}" }].compactMap { $0 }
+        return parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
     }
 
     /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.
@@ -591,7 +614,7 @@ public struct AgentBridge {
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
                     "account": [
                         "type": "string",
-                        "description": "For a provider not saved yet: the account, organization or project the key should belong to, if you know it, such as the organization's slug. The person may have several keys of one provider, and this picks the right one",
+                        "description": "The account, organization or project the key should belong to, for a provider not saved yet or a key of a saved provider in another account, if you know it, such as the organization's slug. The person may have several keys of one provider, and this picks the right one",
                     ],
                     "duration": [
                         "type": "string", "enum": ["1h", "4h", "8h", "24h", "always"],

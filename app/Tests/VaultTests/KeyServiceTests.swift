@@ -103,6 +103,38 @@ struct AuditLogTests {
         #expect(log.recent(3).entries.map(\.key) == ["k4", "k5", "k6"])
     }
 
+    /// A full log is set aside and the next goes on from it: nothing is lost, the chain holds across files,
+    /// writers at the same time all land, and an edit or a missing file in the middle shows.
+    @Test func aFullLogIsSetAsideAndTheChainGoesOn() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("segments-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"), segmentLimit: 600)
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        for index in 0..<12 {
+            clock.addTimeInterval(1)
+            try log.append(event: "used", key: "k\(index)", now: clock)
+        }
+        DispatchQueue.concurrentPerform(iterations: 30) { index in
+            try? log.append(event: "used", key: "c\(index)", now: Date(timeIntervalSince1970: 1_900_000_000 + Double(index)))
+        }
+        #expect(log.segments().count > 2)
+        #expect(try log.entries().count == 42)
+        #expect(log.firstBreak() == nil)
+        #expect(log.recent(3).brokenLine == nil && log.recent(3).entries.count <= 3)
+        // An edit in a file set aside shows, with its name.
+        let middle = log.segments()[1]
+        let text = try String(contentsOf: middle, encoding: .utf8)
+        let edited = text.replacingOccurrences(of: "\"event\":\"used\"", with: "\"event\":\"usex\"")
+        try edited.write(to: middle, atomically: true, encoding: .utf8)
+        #expect(log.firstBreak()?.file == middle.lastPathComponent)
+        try text.write(to: middle, atomically: true, encoding: .utf8)
+        #expect(log.firstBreak() == nil)
+        // A file set aside that goes missing breaks the link to the next.
+        try FileManager.default.removeItem(at: middle)
+        #expect(log.firstBreak() != nil)
+    }
+
     @Test func testRemovingALineShows() throws {
         let (log, url) = log()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -196,6 +228,8 @@ final class Fixture: @unchecked Sendable {
     var duringFinger: () -> Void = {}
     /// Changes keys.toml: the netlify key's account, as an edit made elsewhere would.
     var account = "mi-cuenta"
+    /// Whether the person's files mark a key "always, no fingerprint": what the service itself reads.
+    var markedAlways: Set<String> = []
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -215,7 +249,10 @@ final class Fixture: @unchecked Sendable {
                 self.confirmations.append(prompt)
                 return self.confirmAnswer
             },
-            log: log, now: { self.now }, paused: { self.paused }, revision: { _ in self.sealing })
+            log: log, now: { self.now }, paused: { self.paused }, revision: { _ in self.sealing },
+            openUnattended: { key, _, source in
+                self.markedAlways.contains(key) ? Data((source == "m.env" ? "API=CANARY-mail\n" : "CANARY-netlify\n").utf8) : nil
+            })
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/bin/zsh", chain: ["zsh", "claude"])
 
@@ -346,6 +383,26 @@ struct KeyServiceTests {
         #expect(!answer.ok)
         #expect(answer.standIn == nil)
         #expect(service.isIdle)
+    }
+
+    /// A key the person marked "always" opens with no prompt; a caller that only claims it is asked as usual.
+    @Test func onlyAKeyMarkedByThePersonOpensWithNoFingerprint() throws {
+        let f = Fixture()
+        var request = KeyService.Request(op: "use", key: "netlify", program: "/usr/bin/curl", agent: "motor", reason: "stats")
+        request.unattended = true
+        request.anyProgram = true
+        // Claimed, not marked: the finger is asked.
+        #expect(f.service.handle(request, caller: f.caller).ok)
+        #expect(f.prompts.count == 1)
+        _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
+        f.markedAlways = ["netlify"]
+        let answer = f.service.handle(request, caller: f.caller)
+        #expect(answer.ok && answer.standIn == "STAND-IN" && answer.value == nil)
+        #expect(f.prompts.count == 1)
+        #expect(try f.log.entries().contains { $0.event == "granted" && $0.detail?.hasSuffix("no fingerprint") == true })
+        // The real key always asks, marked or not.
+        _ = f.use("netlify", real: true)
+        #expect(f.prompts.count == 2)
     }
 
     /// A key replaced in the vault ends the permission for the old value: the next use asks for the new one.

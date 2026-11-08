@@ -168,6 +168,10 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   the key until that limit or until the service starts again. A login already open keeps working after the permission ends.
 - **The usage log shows who, not proof of who.** A process and its parents come from the system. An agent can start a command through
   something else, and everything under your user looks alike. It can also rewrite the log and its hashes.
+- **A key marked "always, no fingerprint" asks nobody.** Its copy is sealed to a second key in the chip that needs no presence, so while
+  this Mac is unlocked any program running as you that reaches the key service can use it through the proxy, never see it. The service
+  reads the mark from your own files on each use, the pause stops it, and taking the mark off removes the copy. The chip key never leaves
+  this Mac, and a vault moved to a new one drops every copy.
 - **A lost answer is not a no.** A request that went out with a key and got no whole reply is written down with how far it got, since the
   provider may have acted on it. When the key service does not answer, keyreeve says it does not know what happened, and closing a key in the
   app shows an error until the service confirms the permissions ended. Quitting Keyreeve ends them all.

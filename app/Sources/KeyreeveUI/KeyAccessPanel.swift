@@ -19,7 +19,7 @@ struct KeyAccessPanel: View {
         return identifiers.compactMap { key in
             guard let level = policy.level(of: key.id), policy.levels[key.id] != nil else { return nil }
             let who = (policy.agents[key.id] ?? []).isEmpty ? T("any agent") : (policy.agents[key.id] ?? []).joined(separator: ", ")
-            var line = "\(key.id): " + (level == .free ? T("Free") : T("Ask")) + " · " + who
+            var line = "\(key.id): " + level.label + " · " + who
             if let closes = policy.until[key.id] { line += " · " + T("Open until %@", closes.formatted(date: .omitted, time: .shortened)) }
             return line
         }

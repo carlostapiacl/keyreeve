@@ -171,13 +171,13 @@ struct AgentLevelTests {
 
     @Test func theFileKeepsLevelsAgentsAndPinsAndStillReadsTheOldForm() throws {
         let policy = AgentPolicy(
-            commands: ["vps": ["/opt/check.sh"]], levels: ["pexels": .free, "github": .ask],
+            commands: ["vps": ["/opt/check.sh"]], levels: ["pexels": .free, "github": .ask, "stats": .always],
             agents: ["github": ["claude"]], hashes: ["vps": ["/opt/check.sh": "abc"]])
         #expect(try AgentPolicy.parse(policy.toml) == policy)
         #expect(policy.level(of: "vps") == .ask && policy.level(of: "other") == nil)
         let old = try AgentPolicy.parse("[[allow]]\nkey = \"a\"\nprograms = [\"/x\"]\n")
         #expect(old.level(of: "a") == .ask && old.hashes.isEmpty)
-        for text in ["[[key]]\nkey = \"a\"\nlevel = \"always\"", "[[key]]\nkey = \"a\"\nprograms = [\"/x\"]\nhashes = []",
+        for text in ["[[key]]\nkey = \"a\"\nlevel = \"forever\"", "[[key]]\nkey = \"a\"\nprograms = [\"/x\"]\nhashes = []",
                      "[[allow]]\nkey = \"a\"\nlevel = \"free\"\nprograms = []", "[[key]]\nlevel = \"free\""] {
             #expect(throws: (any Error).self) { try AgentPolicy.parse(text) }
         }

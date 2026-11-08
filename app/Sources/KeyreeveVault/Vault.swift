@@ -40,6 +40,9 @@ public struct VaultFile: Codable, Equatable {
     public var entries: [String: Entry] = [:]
     /// Copies that a newer one replaced, oldest first. Nothing in the vault is ever lost by replacing.
     public var replaced: [String: [Entry]]?
+    /// `age1tag1...` of a second key in this Mac's chip that opens with no fingerprint. Only the keys the person
+    /// marked "always, no fingerprint" have a copy sealed to it, and only the proxy ever uses it.
+    public var unattended: String?
 
     public struct Entry: Codable, Equatable {
         public var added: Date
@@ -47,6 +50,8 @@ public struct VaultFile: Codable, Equatable {
         public var source: String?
         /// A whole age file. Its text starts with a line naming the key, then the value.
         public var sealed: Data
+        /// The same value sealed only to the key that needs no fingerprint, for a key the person marked so.
+        public var unattendedSealed: Data?
 
         /// Which sealing this is. Each seal encrypts afresh, so a replaced value always has a new one.
         public var revision: String { SHA256.hash(data: sealed).prefix(12).map { String(format: "%02x", $0) }.joined() }
@@ -79,6 +84,8 @@ public struct VaultFile: Codable, Equatable {
         try Self.check(name: name)
         let old = entries[name]
         entries[name] = try seal(name: name, value: value, now: now, source: old?.source)
+        // A key marked to need no fingerprint stays so through a rotation: sealing needs only the public key.
+        if old?.unattendedSealed != nil, unattended != nil { try sealUnattended(name: name, value: value) }
         if let old { replaced = (replaced ?? [:]).merging([name: [old]]) { $0 + $1 } }
     }
 
@@ -88,6 +95,26 @@ public struct VaultFile: Codable, Equatable {
             throw VaultError("\(name) has no such old copy")
         }
         return try open(entry: list[index], name: name, with: identity)
+    }
+
+    /// Seals a copy of the value to the key that needs no fingerprint. The value comes from the person, who
+    /// opened it with theirs to mark the key.
+    public mutating func sealUnattended(name: String, value: Data) throws {
+        guard let unattended else { throw VaultError("this vault has no key for use without a fingerprint yet") }
+        guard entries[name] != nil else { throw VaultError("\(name) is not in the vault") }
+        entries[name]?.unattendedSealed = try Age.encrypt(Self.nameLine(name) + value, to: [try Age.TagRecipient(string: unattended)])
+    }
+
+    /// Takes the copy away, so the key needs a fingerprint again.
+    public mutating func dropUnattended(name: String) { entries[name]?.unattendedSealed = nil }
+
+    /// Opens the copy that needs no fingerprint, for a key marked so. Never the copy that needs one.
+    public func openUnattended(name: String, with identity: Age.Identity) throws -> Data {
+        guard let file = entries[name]?.unattendedSealed else { throw VaultError("\(name) is not marked for use without a fingerprint") }
+        let plain = try Age.decrypt(file, with: identity)
+        let line = Self.nameLine(name)
+        guard plain.starts(with: line) else { throw VaultError("\(name) could not be opened: the file was changed or damaged") }
+        return plain.dropFirst(line.count)
     }
 
     public func open(name: String, with identity: Age.Identity) throws -> Data {
@@ -113,6 +140,9 @@ public struct VaultFile: Codable, Equatable {
         }
         var moved = self
         moved.enclave = Age.TagRecipient(publicKey: newEnclave).string
+        // The key that needs no fingerprint belongs to the old chip; on a new one each key is marked again.
+        moved.unattended = nil
+        for name in moved.entries.keys { moved.entries[name]?.unattendedSealed = nil }
         for (name, entry) in entries {
             let value = try open(entry: entry, name: name, with: identity)
             moved.entries[name] = try moved.seal(name: name, value: value, now: entry.added, source: entry.source)

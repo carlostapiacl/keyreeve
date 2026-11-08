@@ -158,7 +158,7 @@ struct KeyDetail: View {
         let open = model.usage.grants.filter { ids.contains($0.key) }.count
         let level = ids.compactMap { model.agentPolicy.level(of: $0) }.first
         box(T("Agents")) {
-            Text(level == nil ? T("No agent can use this key.") : level == .free ? T("Free") : T("Ask"))
+            Text(level?.label ?? T("No agent can use this key."))
                 .font(Theme.rowTitle).foregroundStyle(Theme.text)
             if open > 0 {
                 Text(open == 1 ? T("1 permission open now") : T("%d permissions open now", open))

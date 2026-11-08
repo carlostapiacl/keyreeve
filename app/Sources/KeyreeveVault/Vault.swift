@@ -33,6 +33,15 @@ public struct SoftwareRecipient: VaultRecipient {
 /// recovery key, so either one opens it, with keyreeve or with any age tool.
 public struct VaultFile: Codable, Equatable {
     public var schema = 2
+
+    /// The formats this version reads. 3 is a vault with copies that need no fingerprint: a version from before
+    /// them would read it, drop what it does not know, and write it back without them, so it is told it cannot.
+    public static let readable: Set<Int> = [2, 3]
+
+    /// The lowest format that keeps everything this vault holds.
+    public var neededSchema: Int {
+        unattended != nil || entries.values.contains { $0.unattendedSealed != nil } ? 3 : 2
+    }
     /// `age1tag1...`, the chip's public key.
     public var enclave: String
     /// `age1...`, the recovery key's public key.

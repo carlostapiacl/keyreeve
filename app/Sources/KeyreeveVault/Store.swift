@@ -101,7 +101,9 @@ public struct VaultStore: Sendable {
         decoder.dateDecodingStrategy = .iso8601
         do {
             let vault = try decoder.decode(VaultFile.self, from: Data(contentsOf: url))
-            guard vault.schema == 2 else { throw VaultError("this vault's format is not one this version reads") }
+            guard VaultFile.readable.contains(vault.schema) else {
+                throw VaultError("this vault's format is newer than this Keyreeve: update it, or quit and open it again")
+            }
             return vault
         } catch let error as VaultError {
             throw error
@@ -114,7 +116,9 @@ public struct VaultStore: Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        try write(try encoder.encode(vault), to: vaultURL)
+        var stamped = vault
+        stamped.schema = vault.neededSchema
+        try write(try encoder.encode(stamped), to: vaultURL)
     }
 
     public func saveBlob(_ blob: Data, for publicKey: String) throws { try write(blob, to: blobURL(for: publicKey)) }

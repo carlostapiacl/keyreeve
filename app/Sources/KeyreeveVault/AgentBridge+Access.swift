@@ -17,6 +17,18 @@ extension AgentBridge {
         guard let hours = AccessDecision.hours(from: arguments["duration"] as? String ?? "1h") else {
             throw VaultError("duration is 1h, 4h, 8h, 24h or always")
         }
+        // A key of a provider asked for in another account is another key, even when one by this name exists:
+        // `meta` for one business is not the `meta` of another. Pointed to the right one, or asked for as new.
+        if let account = (arguments["account"] as? String).flatMap({ $0.isEmpty ? nil : $0 }),
+            let saved = describe()[key], let savedAccount = saved.account, savedAccount != account
+        {
+            let provider = saved.provider ?? key
+            let known = Set(try names())
+            if let other = describe().values.first(where: { $0.provider == provider && $0.account == account && known.contains($0.id) }) {
+                return "The \(provider) key for \(account) is \(other.id), not \(key). Ask for it with request_access, key \(other.id)."
+            }
+            return try requestUnsaved(provider: provider, reason: reason, hours: hours, account: account)
+        }
         // Checked first, so nothing is asked for a key that is not there or already open.
         guard try names().contains(key) else {
             guard offered().contains(key) else { throw VaultError("no key called \(key) is in the vault, and none can be saved for that provider") }

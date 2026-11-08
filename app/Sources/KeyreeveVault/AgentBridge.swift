@@ -591,7 +591,7 @@ public struct AgentBridge {
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
                     "account": [
                         "type": "string",
-                        "description": "For a provider not saved yet: the account, organization or project the key should belong to, if you know it, such as the organization's slug. The person may have several keys of one provider, and this picks the right one",
+                        "description": "The account, organization or project the key should belong to, for a provider not saved yet or a key of a saved provider in another account, if you know it, such as the organization's slug. The person may have several keys of one provider, and this picks the right one",
                     ],
                     "duration": [
                         "type": "string", "enum": ["1h", "4h", "8h", "24h", "always"],

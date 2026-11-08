@@ -8,6 +8,7 @@ public struct SettingsView: View {
     @AppStorage(Language.settingsKey) private var language = Language.system.rawValue
     @AppStorage(SettingsKey.appearance) private var appearance = "system"
     @AppStorage(SettingsKey.lockMinutes) private var lockMinutes = 5
+    @AppStorage(SettingsKey.askToOpen) private var askToOpen = true
     @AppStorage(SettingsKey.scanOnOpen) private var scanOnOpen = true
     @AppStorage(SettingsKey.fingerprintMinutes) private var fingerprintMinutes = 5
     @State private var weekly = WeeklySchedule.isOn
@@ -36,8 +37,12 @@ public struct SettingsView: View {
                     Text(T("Light")).tag("light")
                     Text(T("Dark")).tag("dark")
                 }
-                Picker(T("Lock after"), selection: $lockMinutes) {
-                    ForEach([1, 5, 15, 60], id: \.self) { Text("\($0) \(T("minutes"))").tag($0) }
+                Toggle(T("Ask for my fingerprint to open the list"), isOn: $askToOpen)
+                    .help(T("The list shows names, never a value. Copying a key and every agent's use still ask."))
+                if askToOpen {
+                    Picker(T("Lock after"), selection: $lockMinutes) {
+                        ForEach([1, 5, 15, 60], id: \.self) { Text("\($0) \(T("minutes"))").tag($0) }
+                    }
                 }
                 Toggle(T("Scan when opening"), isOn: $scanOnOpen)
             }

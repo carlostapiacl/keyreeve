@@ -38,6 +38,16 @@ struct FingerTests {
         #expect(model.unlocked)
     }
 
+    @Test func withTheSettingOffTheListOpensWithNoPrompt() async {
+        let sensor = Sensor()
+        let model = model(sensor)
+        model.asksToOpenSetting = { false }
+        model.unlock()
+        await settle()
+        #expect(model.unlocked)
+        #expect(sensor.waiting.isEmpty)
+    }
+
     @Test func aSecondRequestWhileOneIsOpenIsAnsweredAtOnce() async {
         let sensor = Sensor()
         let model = model(sensor)

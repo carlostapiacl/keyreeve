@@ -182,6 +182,8 @@ public let spanish: [String: String] = [
         "Una consulta de solo lectura a cada proveedor. Algunas piden tu huella.",
     "Only me": "Solo yo",
     "Open until %@": "Abierta hasta las %@",
+    "Ask for my fingerprint to open the list": "Pedir mi huella para abrir la lista",
+    "The list shows names, never a value. Copying a key and every agent's use still ask.": "La lista muestra nombres, nunca un valor. Copiar una clave y cada uso de un agente siguen pidiéndola.",
     "The usage log could not be read.": "No se pudo leer el registro de uso.",
     "open Keyreeve: %@ asks for a %@ key": "abrir Keyreeve: %@ pide una clave de %@",
     "Lock everything": "Bloquear todo",

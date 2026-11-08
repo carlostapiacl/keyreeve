@@ -15,6 +15,8 @@ struct FingerGate {
 
 public enum SettingsKey {
     public static let lockMinutes = "lockMinutes"
+    /// Whether opening the list of keys asks for a fingerprint. On unless the person turns it off.
+    public static let askToOpen = "askToOpen"
     public static let scanOnOpen = "scanOnOpen"
     public static let appearance = "appearance"
     public static let fingerprintMinutes = "fingerprintMinutes"
@@ -48,6 +50,8 @@ public final class AppModel: ObservableObject {
     @Published public var agentsPaused = false
     /// Bumped to bring the window to the requests.
     @Published public var showRequests = 0
+    /// Read from the settings each time; a test sets its own.
+    var asksToOpenSetting: () -> Bool = { UserDefaults.standard.object(forKey: SettingsKey.askToOpen) as? Bool ?? true }
     /// A key being pasted into the vault, while its sheet is open.
     @Published public var addingKey: AddKeyDraft?
     /// The requests file as last read, so an unchanged file is not read again.
@@ -85,7 +89,10 @@ public final class AppModel: ObservableObject {
         reloadRequests()
         let reason = pendingRequests.first.map { T("open Keyreeve: %@ asks for a %@ key", $0.agent, $0.provider) }
             ?? T("open your key catalog")
-        confirm(reason: reason) { success in
+        let open = { (body: @escaping @MainActor (Bool) -> Void) in
+            if self.asksToOpen { self.confirm(reason: reason, then: body) } else { body(true) }
+        }
+        open { success in
             guard success else {
                 // A second unlock while the first prompt is open is told no; the first still decides.
                 if !self.askingFinger { self.lockMessage = T("Not unlocked. Try again.") }
@@ -121,8 +128,14 @@ public final class AppModel: ObservableObject {
         message = nil
     }
 
+    /// The list holds no value, so asking to open it only keeps out someone at this Mac. A person may turn
+    /// it off; every key still asks on its own.
+    var asksToOpen: Bool { asksToOpenSetting() }
+
     public func windowLostFocus() {
         lockTask?.cancel()
+        // With no fingerprint to open it, locking on its own would only add a click.
+        guard asksToOpen else { return }
         let saved = UserDefaults.standard.object(forKey: SettingsKey.lockMinutes) as? Int ?? 5
         lockTask = Task {
             try? await Task.sleep(for: .seconds(max(1, saved) * 60))

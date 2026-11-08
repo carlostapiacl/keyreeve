@@ -49,6 +49,27 @@ func putKey() throws {
     if !VaultFile.isTemporary(arguments[1]) { try? auditLog.append(event: "sealed", key: arguments[1], detail: "replaced") }
 }
 
+/// The app's "Seal the changed files again", for scripts and agents: the file's exact bytes, from the
+/// folder each key was sealed from, never a value on stdin or in an argument.
+func resealKeys() throws {
+    let names = Array(arguments.dropFirst())
+    guard !names.isEmpty else { fail(help, code: 2) }
+    let vault = try store.load()
+    var byFolder: [String: [String]] = [:]
+    for name in names {
+        guard let source = vault.entries[name]?.source else { fail("\(name) was not sealed from a file") }
+        byFolder[source, default: []].append(name)
+    }
+    for (folder, paths) in byFolder.sorted(by: { $0.key < $1.key }) {
+        let report = try VaultKeeper.sealAgain(paths: paths, folder: URL(fileURLWithPath: folder), store: store)
+        for path in report.sealed {
+            try? auditLog.append(event: "sealed", key: path, detail: "sealed again from its file")
+            print("\(path) sealed again")
+        }
+        for (path, why) in report.skipped.sorted(by: { $0.key < $1.key }) { print("\(path) not sealed: \(why)") }
+    }
+}
+
 func dropTemporary() throws {
     guard arguments.count == 2, VaultFile.isTemporary(arguments[1]) else {
         fail("only a rotation's temporary copies can be removed")

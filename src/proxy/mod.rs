@@ -89,26 +89,60 @@ pub fn mint_stand_in(real: &str, prefixes: &[String]) -> Result<String, String> 
         .map(String::len)
         .max()
         .unwrap_or(0);
-    let random = random_bytes(real.len()).map_err(|e| e.to_string())?;
+    // It works as a password for the proxy while the permission lasts, so what it may be guessed by is its
+    // randomness: each digit adds log2(10) bits and each letter log2(26), whatever the length.
+    let bits: f64 = real[prefix..]
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' => 26f64.log2(),
+            '0'..='9' => 10f64.log2(),
+            _ => 0.0,
+        })
+        .sum();
+    if bits < MIN_STAND_IN_BITS {
+        return Err(format!(
+            "this key's shape leaves a stand-in {} bits of randomness, under {MIN_STAND_IN_BITS}, so it needs --real",
+            bits.floor()
+        ));
+    }
+    let mut pool = RandomPool::default();
     let mut out = real[..prefix].to_owned();
-    for (index, character) in real[prefix..].chars().enumerate() {
-        let pick = random[index % random.len()] as usize;
+    for character in real[prefix..].chars() {
         out.push(match character {
-            'a'..='z' => (b'a' + (pick % 26) as u8) as char,
-            'A'..='Z' => (b'A' + (pick % 26) as u8) as char,
-            '0'..='9' => (b'0' + (pick % 10) as u8) as char,
+            'a'..='z' => (b'a' + pool.below(26)?) as char,
+            'A'..='Z' => (b'A' + pool.below(26)?) as char,
+            '0'..='9' => (b'0' + pool.below(10)?) as char,
             other => other,
         });
     }
-    // It works as a password for the proxy, so it needs enough randomness to be one.
-    let random_part = real[prefix..]
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .count();
-    if random_part < 16 {
-        return Err("this key is too short to stand in for, so it needs --real".into());
-    }
     Ok(out)
+}
+
+/// The least randomness a stand-in may have. It can only be guessed by sending requests to this machine's proxy
+/// while its permission lasts, a day at most: at 100,000 a second, 64 bits take millions of years. A higher bar
+/// would push short real keys, such as some market-data ones, to --real, which hands over the key itself.
+pub const MIN_STAND_IN_BITS: f64 = 64.0;
+
+/// Random numbers below a bound, each as likely as the others: a byte past the last whole multiple of the
+/// bound is thrown away and another drawn, rather than folded back, which would favour the low ones.
+#[derive(Default)]
+struct RandomPool {
+    bytes: Vec<u8>,
+}
+
+impl RandomPool {
+    fn below(&mut self, bound: u8) -> Result<u8, String> {
+        let limit = 256 - (256 % u16::from(bound));
+        loop {
+            if self.bytes.is_empty() {
+                self.bytes = random_bytes(64).map_err(|e| e.to_string())?;
+            }
+            let byte = self.bytes.pop().unwrap_or(0);
+            if u16::from(byte) < limit {
+                return Ok(byte % bound);
+            }
+        }
+    }
 }
 
 /// How the proxy reaches the world. Tests point it at a local server they trust.
@@ -629,7 +663,7 @@ mod tests {
 
     #[test]
     fn a_stand_in_keeps_the_shape_and_nothing_else() {
-        let real = "re_AbCd-1234.efghIJKLmnop";
+        let real = "re_AbCd-1234.efghIJKLmnopQRstUVwx";
         let fake = mint_stand_in(real, &["re_".into()]).unwrap();
         assert_eq!(fake.len(), real.len());
         assert!(fake.starts_with("re_"));
@@ -645,6 +679,46 @@ mod tests {
             mint_stand_in(real, &[]).unwrap(),
             mint_stand_in(real, &[]).unwrap()
         );
+    }
+
+    #[test]
+    fn a_stand_in_is_random_enough_or_not_made() {
+        // Sixteen digits are 53 bits: not a password.
+        assert!(mint_stand_in(&"7".repeat(16), &[]).is_err());
+        // Nineteen digits are just under 64 bits, twenty just over; thirteen letters under, fourteen over.
+        assert!(mint_stand_in(&"7".repeat(19), &[]).is_err());
+        assert!(mint_stand_in(&"7".repeat(20), &[]).is_ok());
+        assert!(mint_stand_in(&"k".repeat(13), &[]).is_err());
+        assert!(mint_stand_in(&"k".repeat(14), &[]).is_ok());
+        // Sixteen capitals and digits, like some market-data keys, are enough.
+        assert!(mint_stand_in("A1B2C3D4E5F6G7H8", &[]).is_ok());
+        // The prefix counts for nothing.
+        assert!(
+            mint_stand_in(&format!("sk_live_{}", "k".repeat(13)), &["sk_live_".into()]).is_err()
+        );
+    }
+
+    #[test]
+    fn each_digit_and_letter_is_as_likely_as_the_others() {
+        let mut digits = [0u32; 10];
+        let mut letters = [0u32; 26];
+        for _ in 0..400 {
+            let fake =
+                mint_stand_in(&format!("{}{}", "7".repeat(40), "k".repeat(40)), &[]).unwrap();
+            for c in fake.chars() {
+                match c {
+                    '0'..='9' => digits[(c as u8 - b'0') as usize] += 1,
+                    _ => letters[(c as u8 - b'a') as usize] += 1,
+                }
+            }
+        }
+        // 16,000 draws each: every value lands near its share, which a fold of 256 onto 26 skews by about 1.5%.
+        for count in digits {
+            assert!((1450..=1750).contains(&count), "{digits:?}");
+        }
+        for count in letters {
+            assert!((520..=720).contains(&count), "{letters:?}");
+        }
     }
 
     #[test]

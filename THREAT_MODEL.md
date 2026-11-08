@@ -151,6 +151,9 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   sandbox. If that matters, run the agent in one, and keep the keys folder and `~/.keyreeve` out of its reach.
 - **The stand-in is a credential for the proxy.** Any program that gets it can use the key through the proxy while the permission
   lasts, and any local program can open a plain tunnel through the proxy, which gives it nothing it could not do alone.
+  It keeps the key's shape, so its randomness depends on it: each character is drawn evenly, and a key whose shape leaves under
+  64 bits is used with `--real` rather than given a stand-in that could be guessed. Guessing means sending requests to this
+  machine's proxy while the permission lasts, a day at most.
 - **The proxy reads that traffic.** It ends TLS for a key's hosts, with a CA made for each run whose key stays in memory. Only commands
   started by `use` are pointed at that CA. The system's own trust store is never touched.
 - **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a

@@ -109,12 +109,13 @@ struct SortingTests {
             ["path": "panel.txt", "check": true, "host": "https://panel.example.com"],
             ["path": "loose.txt", "kind": "provider", "provider": "nobody", "field": "X", "check": true],
             ["path": "done.txt", "host": "http://plain.example.com"],
+            ["path": "done.txt", "host": "panel.example.com"],
         ], inventory: Self.list)
         #expect(notes.contains { $0.hasPrefix("pay.env: set to Only me") })
         #expect(notes.filter { $0.hasPrefix("panel.txt: its provider runs on the person's own server") }.count == 1)
         #expect(notes.contains { $0.hasPrefix("loose.txt: no provider nobody") })
         #expect(notes.contains { $0.hasPrefix("loose.txt: the file has no field X") })
-        #expect(notes.contains { $0.hasPrefix("done.txt: host must start with https://") })
+        #expect(notes.filter { $0.hasPrefix("done.txt: host is reached over https only") }.count == 1)
     }
 }
 

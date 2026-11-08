@@ -32,9 +32,14 @@ struct SortProposalTests {
     @Test func aServerIsKeptOnlyOverHttpsAndSplittingIsAsked() {
         let json = #"[{"path":"a.txt","host":"https://panel.example.com"},{"path":"b.env","host":"http://x.example.com"},{"path":"c.txt","split":true}]"#
         let proposal = SortProposal.read(Data(json.utf8), items: items, providers: providers)
-        #expect(proposal.hosts == ["a.txt": "https://panel.example.com"])
+        #expect(proposal.hosts == ["a.txt": "panel.example.com"])
         #expect(proposal.split == ["c.txt"] && proposal.paths == ["a.txt", "c.txt"])
-        #expect(CatalogItem(path: "a.txt").applying(KeyEdit(host: "https://panel.example.com")).host == "https://panel.example.com")
+        #expect(SortProposal.server("panel.example.com:8443") == "panel.example.com:8443")
+        #expect(SortProposal.server("https://panel.example.com/") == "panel.example.com")
+        #expect(SortProposal.server("ftp://panel.example.com") == nil)
+        #expect(SortProposal.server("panel.example.com/admin") == nil)
+        #expect(SortProposal.server("me@panel.example.com") == nil)
+        #expect(CatalogItem(path: "a.txt").applying(KeyEdit(host: "panel.example.com")).host == "panel.example.com")
     }
 }
 

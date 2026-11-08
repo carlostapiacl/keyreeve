@@ -5,7 +5,7 @@ import Foundation
 public struct AgentBridge {
     /// Opened keys a person approved for a while, held by this server alone, which ends with the agent's session.
     final class Held: @unchecked Sendable {
-        var entries: [String: (from: Date, until: Date, opened: Data)] = [:]
+        var entries: [String: (from: Date, until: Date, opened: Data, revision: String?)] = [:]
         /// Keys the person refused to open in this session, so the agent cannot keep asking.
         var refused: Set<String> = []
     }
@@ -96,6 +96,8 @@ public struct AgentBridge {
     let inventory: () -> Data?
     /// Keeps a proposal's changes for the app, by the request's id.
     let saveProposal: (String, Data) throws -> Void
+    /// Which sealing a key holds now, so a value held for a while is dropped once the key is replaced.
+    let revision: (_ key: String) -> String?
     let held = Held()
 
     /// What the person answers when told of a request for a key that is not saved yet.
@@ -139,8 +141,10 @@ public struct AgentBridge {
         announce: @escaping (AccessRequests.Entry) -> Announcement = { _ in .later },
         paused: @escaping () -> Bool = { false },
         inventory: @escaping () -> Data? = { nil },
-        saveProposal: @escaping (String, Data) throws -> Void = { _, _ in throw VaultError("proposals cannot be kept here") }
+        saveProposal: @escaping (String, Data) throws -> Void = { _, _ in throw VaultError("proposals cannot be kept here") },
+        revision: @escaping (_ key: String) -> String? = { _ in nil }
     ) {
+        self.revision = revision
         currentPolicy = policy
         self.names = names
         self.open = open
@@ -203,10 +207,12 @@ public struct AgentBridge {
     }
 
     /// The opened key, if the person approved this pair for a while and nothing ended it since.
-    private func stillHeld(_ slot: String) -> Data? {
+    private func stillHeld(_ slot: String, key: String) -> Data? {
         guard let entry = held.entries[slot] else { return nil }
         let ended = endedAt().map { $0 >= entry.from } ?? false
-        guard !ended, now() < entry.until else {
+        // A key replaced in the vault since is not the one the person said yes to.
+        let replaced = entry.revision != nil && revision(key) != entry.revision
+        guard !ended, !replaced, now() < entry.until else {
             held.entries[slot] = nil
             return nil
         }
@@ -346,7 +352,7 @@ public struct AgentBridge {
         }
         let slot = key + "\u{0}" + program
         let sealed: Data
-        if let opened = stillHeld(slot) {
+        if let opened = stillHeld(slot, key: key) {
             sealed = opened
         } else {
             // The person sees the request with the agent's reason, set apart, and chooses how long a yes lasts.
@@ -359,6 +365,8 @@ public struct AgentBridge {
             if case .lasting(let seconds) = approval { lasts = .hours(max(1, Int(seconds) / 3600)) }
             let prompt = FingerPrompt.use(
                 who: agent, key: key, account: describe()[key]?.account, program: name, lasts: lasts, reason: reason)
+            // Read before the value, so one replaced in between is never kept under the older sealing.
+            let sealing = revision(key)
             do {
                 sealed = try open(key, prompt)
             } catch {
@@ -374,7 +382,7 @@ public struct AgentBridge {
             try admitProgram(program, key: key, policy: policy, reason: reason)
             if case .lasting(let seconds) = approval {
                 let start = now()
-                held.entries[slot] = (start, start.addingTimeInterval(seconds), sealed)
+                held.entries[slot] = (start, start.addingTimeInterval(seconds), sealed, sealing)
                 log("granted", key, "\(Int(seconds)) seconds, \(name)", reason)
             } else {
                 log("granted", key, "once, \(name)", reason)

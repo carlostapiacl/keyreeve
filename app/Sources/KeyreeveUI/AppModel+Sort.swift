@@ -53,50 +53,80 @@ extension AppModel {
     }
 
     /// Gives each key of a file of notes a file of its own beside it, private and with the same provider and
-    /// tags, and moves the old file to keyreeve's originals folder. Nothing is deleted.
-    public func split(_ item: CatalogItem) {
+    /// tags, and moves the old file to keyreeve's originals folder. Nothing is deleted. Returns the new files'
+    /// names, or nil when nothing was split.
+    @discardableResult
+    public func split(_ item: CatalogItem) -> [String]? {
         guard let folder = keysFolder, let provider = item.recipes.first,
             let prefixes = providers.all.first(where: { $0.id == provider })?.prefixes, !prefixes.isEmpty
         else {
             message = T("Only a provider whose keys have a known start can be split")
-            return
+            return nil
         }
         let source = folder.appendingPathComponent(item.path)
         guard let size = (try? FileManager.default.attributesOfItem(atPath: source.path))?[.size] as? Int, size < 1_048_576,
             let text = try? String(contentsOf: source, encoding: .utf8)
         else {
             message = T("That file could not be read as text, so it was not saved")
-            return
+            return nil
         }
         let keys = KeySplit.keys(in: text, prefixes: prefixes)
         guard keys.count > 1 else {
             message = T("This file holds one key, so there is nothing to split")
-            return
+            return nil
         }
         let names = KeySplit.names(for: item.path, count: keys.count) {
             FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
         }
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.dateFormat = "yyyy-MM-dd"
+        let target = files.originals.appendingPathComponent("\(day.string(from: Date()))-split").appendingPathComponent(item.path)
         do {
-            for (name, key) in zip(names, keys) {
-                try PrivateFile.write(Data((key + "\n").utf8), to: folder.appendingPathComponent(name))
-            }
-            var edits: [String: KeyEdit] = [:]
-            for name in names {
-                edits[name] = KeyEdit(tags: item.tags, recipes: [provider], description: item.description.isEmpty ? nil : item.description)
-            }
+            try Self.splitFiles(source: source, keys: keys, into: names.map(folder.appendingPathComponent), movingTo: target, originals: files.originals)
+        } catch {
+            message = (error as? VaultError)?.description ?? T("The files could not be moved")
+            refresh()
+            return nil
+        }
+        // The files are made and the original moved: what is left is the list's tags, which can be set again.
+        var edits: [String: KeyEdit] = [:]
+        for name in names {
+            edits[name] = KeyEdit(tags: item.tags, recipes: [provider], description: item.description.isEmpty ? nil : item.description)
+        }
+        note("split", path: item.path, detail: names.joined(separator: ", "))
+        do {
             try files.saveEdits(edits)
-            let day = DateFormatter()
-            day.locale = Locale(identifier: "en_US_POSIX")
-            day.dateFormat = "yyyy-MM-dd"
-            let target = files.originals.appendingPathComponent("\(day.string(from: Date()))-split").appendingPathComponent(item.path)
-            try PrivateFile.folder(files.originals)
-            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.moveItem(at: source, to: target)
-            note("split", path: item.path, detail: names.joined(separator: ", "))
             message = T("%d files made. The old one is in %@", names.count, target.deletingLastPathComponent().path)
         } catch {
-            message = T("The files could not be moved")
+            message = T("%d files made, but their tags could not be saved. The old one is in %@", names.count, target.deletingLastPathComponent().path)
         }
         refresh()
+        return names
+    }
+
+    /// Writes one file per key and moves the original away, all or nothing: if a file cannot be written or the
+    /// original cannot be moved, the new files are taken out again and the original stays where it was.
+    nonisolated static func splitFiles(source: URL, keys: [String], into outputs: [URL], movingTo target: URL, originals: URL) throws {
+        var made: [URL] = []
+        func undo() { for url in made { try? FileManager.default.removeItem(at: url) } }
+        do {
+            for (url, key) in zip(outputs, keys) {
+                guard !FileManager.default.fileExists(atPath: url.path) else {
+                    throw VaultError("\(url.lastPathComponent) is already there, so nothing was split")
+                }
+                try PrivateFile.write(Data((key + "\n").utf8), to: url)
+                made.append(url)
+            }
+            guard !FileManager.default.fileExists(atPath: target.path) else {
+                throw VaultError("\(target.path) is already there, so nothing was split")
+            }
+            try PrivateFile.folder(originals)
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: source, to: target)
+        } catch {
+            undo()
+            throw error as? VaultError ?? VaultError("the files could not be made or moved, so nothing was split and the file is where it was")
+        }
     }
 }

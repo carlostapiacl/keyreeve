@@ -126,7 +126,8 @@ func serveKeys() throws {
         proxy: proxy, agents: SystemSSHAgents(folder: home.appendingPathComponent("run"), askpass: ownPath().path),
         confirm: { prompt in (try? EnclaveRecipient.confirm(reason: prompt)) != nil },
         log: auditLog,
-        paused: { AgentBridge.isPaused(home: home) })
+        paused: { AgentBridge.isPaused(home: home) },
+        revision: { source in (try? store.load())?.entries[source]?.revision })
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
     // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
     // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an

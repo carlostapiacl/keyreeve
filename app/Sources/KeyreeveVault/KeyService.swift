@@ -166,6 +166,8 @@ public final class KeyService: @unchecked Sendable {
         let standIn: String
         /// An SSH key signs for whichever program asks, so its permission is for the key alone.
         let door: SSHDoorHandle?
+        /// The sealing the value came from. A key replaced in the vault ends the permission for the old one.
+        var revision: String? = nil
     }
 
     /// What `provider` says for an SSH key that belongs to no provider's file, such as a server's.
@@ -189,6 +191,8 @@ public final class KeyService: @unchecked Sendable {
 
     private let index: () throws -> KeyIndex
     private let open: (_ source: String, _ prompt: String) throws -> Data
+    /// Which sealing a source holds now, read with no fingerprint.
+    private let revision: (_ source: String) -> String?
     private let proxy: KeyProxy?
     private let agents: SSHKeyAgents?
     private let confirm: @Sendable (_ prompt: String) -> Bool
@@ -214,9 +218,10 @@ public final class KeyService: @unchecked Sendable {
         open: @escaping (_ source: String, _ prompt: String) throws -> Data,
         proxy: KeyProxy?, agents: SSHKeyAgents? = nil, confirm: @escaping @Sendable (String) -> Bool = { _ in false },
         log: AuditLog, now: @escaping () -> Date = Date.init, paused: @escaping () -> Bool = { false },
-        promptWait: TimeInterval = 90
+        promptWait: TimeInterval = 90, revision: @escaping (_ source: String) -> String? = { _ in nil }
     ) {
         self.promptWait = promptWait
+        self.revision = revision
         self.paused = paused
         self.proxy = proxy
         self.agents = agents
@@ -314,6 +319,19 @@ public final class KeyService: @unchecked Sendable {
         return grants.first { $0.id == id }
     }
 
+    /// A permission in force for this key, unless the key was replaced in the vault since: then it ends here,
+    /// and the use asks again for the value as it is now.
+    private func current(_ key: KeyIndex.Key, program: String, notAfter: Date?, caller: AuditLog.Observed?) throws -> Grant? {
+        guard let grant = grantInForce(key: key.id, program: program, notAfter: notAfter) else { return nil }
+        guard let then = grant.revision, let now = revision(key.source), now != then else { return grant }
+        lock.lock()
+        end(grant)
+        grants.removeAll { $0.id == grant.id }
+        lock.unlock()
+        try log.append(event: "closed", key: key.id, grant: grant.id, observed: caller, detail: "replaced in the vault")
+        return nil
+    }
+
     private func answer(for grant: Grant, variable: String?) throws -> Response {
         if let door = grant.door { return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity, grant: grant.id) }
         guard let proxy else { throw VaultError("the proxy is not available") }
@@ -386,6 +404,10 @@ public final class KeyService: @unchecked Sendable {
                 try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "stopped during the fingerprint")
                 throw VaultError("this was stopped while it was being opened")
             }
+            guard (try? index().key(id)) == key else {
+                try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "changed during the fingerprint")
+                throw VaultError("\(id) changed in keys.toml while it was being opened, so nothing was opened. Ask again")
+            }
             let value = try EnvReferences.value(in: sealed, field: key.field)
             try log.append(event: "handed", key: id, observed: caller, declared: declared, detail: "real key")
             return Response(ok: true, value: value, variable: key.variable)
@@ -399,20 +421,22 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "no proxy")
             throw VaultError("the proxy is not available")
         }
-        if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
+        if let existing = try current(key, program: name, notAfter: request.notAfter, caller: caller) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
         try takeTurn(key: id, who: request.agent ?? name, caller: caller, declared: declared)
         defer { endTurn() }
         // While this waited, the prompt ahead of it may have given what this needs.
-        if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
+        if let existing = try current(key, program: name, notAfter: request.notAfter, caller: caller) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
         lock.lock()
         let revocationsBefore = revocations
         lock.unlock()
+        // Read before the value, so a value replaced in between is never kept under the older sealing.
+        let sealing = revision(key.source)
         let sealed: Data
         do {
             // The asker's own prompt names the account already; one made here does too.
@@ -422,6 +446,12 @@ public final class KeyService: @unchecked Sendable {
         } catch {
             try log.append(event: "denied", key: id, observed: caller, declared: declared)
             throw error
+        }
+        // The yes was for the key as keys.toml described it when asked. Changed meanwhile, its hosts, field or
+        // servers could be other than the ones the person saw, so nothing is opened.
+        guard (try? index().key(id)) == key else {
+            try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "changed during the fingerprint")
+            throw VaultError("\(id) changed in keys.toml while it was being opened, so nothing was opened. Ask again")
         }
         // Counted from the fingerprint, and never past the key's closing. A key that closed while the
         // finger was on the sensor gets nothing, not a second.
@@ -463,7 +493,9 @@ public final class KeyService: @unchecked Sendable {
             lock.unlock()
             throw VaultError("this was revoked while it was being opened")
         }
-        grants.append(granted)
+        var kept = granted
+        kept.revision = sealing
+        grants.append(kept)
         lock.unlock()
         // A use that cannot be written down does not happen.
         do {

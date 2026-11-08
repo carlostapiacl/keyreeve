@@ -101,6 +101,28 @@ struct AgentTests {
         #expect(log.opened == ["a.env"])
     }
 
+    /// A value held for some hours is dropped once the key is replaced in the vault.
+    @Test func aHeldValueIsDroppedWhenTheKeyIsReplaced() throws {
+        final class Sealing: @unchecked Sendable { var now = "r1" }
+        let sealing = Sealing()
+        let log = Log()
+        let clock = Clock()
+        clock.answers = [.lasting(3600), .lasting(3600)]
+        let bridge = AgentBridge(
+            policy: { Self.pinnedPolicy(["a.env": ["deploy.sh"]]) }, names: { ["a.env"] },
+            open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
+            run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "") },
+            record: { _, _, _ in },
+            approve: { request in clock.asked.append(request); return clock.answers.isEmpty ? nil : clock.answers.removeFirst() },
+            now: { clock.now }, pinned: { _, _ in true }, describe: Self.indexed, revision: { _ in sealing.now })
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(log.opened.count == 1)
+        sealing.now = "r2"
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(log.opened.count == 2 && clock.asked.count == 2)
+    }
+
     /// The field is part of the key the person allowed. Another field of the same file is another key.
     @Test func anAgentCannotChooseAnotherFieldOfTheFile() throws {
         let log = Log()

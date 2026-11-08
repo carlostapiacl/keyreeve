@@ -217,36 +217,73 @@ extension AppModel {
         }
         let updated = { (path: String) in byPath[path].map { item in edits[path].map(item.applying) ?? item } }
         let toSplit = proposal.split.filter(chosen.contains).compactMap(updated)
-        let toCheck = proposal.check.filter(chosen.contains).compactMap(updated)
-        let toSeal = proposal.seal.filter(chosen.contains).compactMap(updated).filter { $0.vault == .none }
+        let checkPaths = proposal.check.filter(chosen.contains).sorted()
+        let sealPaths = proposal.seal.filter(chosen.contains).sorted()
         audit([("\(chosen.count) keys", "sorting \(request.id) from \(request.agent)")], event: "allowed")
-        try? AccessRequests.append(
-            AccessRequests.Entry(
-                id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider, kind: "sort",
-                result: "applied \(edits.count) changes, checking \(toCheck.count), sealing \(toSeal.count)"),
-            to: requestsFile)
-        reloadRequests()
-        message = T("%d changes applied", chosen.count)
+        // Accepted, not done: what follows runs after, and its end is written down when it ends.
+        let record = { (result: String) in
+            try? AccessRequests.append(
+                AccessRequests.Entry(
+                    id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider, kind: "sort",
+                    result: result),
+                to: self.requestsFile)
+            self.reloadRequests()
+        }
+        record("accepted: \(edits.count) changes saved; splitting \(toSplit.count), sealing \(sealPaths.count), checking \(checkPaths.count) follow")
+        message = T("%d changes saved. Splitting, sealing and checking follow.", chosen.count)
         rebuildCatalog()
-        // One step after another, each when the app is free: a step started while another runs would be
-        // dropped. Sealing first, since it asks for nothing; splitting, which reads the folder again; then
-        // the checks, which may ask for the fingerprint.
-        whenIdle {
-            if !toSeal.isEmpty { self.seal(toSeal) }
-            self.whenIdle {
-                for item in toSplit { self.split(item) }
-                self.whenIdle { if !toCheck.isEmpty { self.check(toCheck) } }
+        // Splitting first: it makes the files that sealing and checking are about, so a file that is split is
+        // sealed and checked as its new files, never as the original it moved away. Each step waits for the app.
+        final class Outcome { var split: [String: [String]] = [:]; var failed: [String] = []; var skipped: [String] = [] }
+        let outcome = Outcome()
+        let expand = { (paths: [String]) in Self.afterSplit(paths, split: outcome.split) }
+        let current = { (paths: [String]) -> [CatalogItem] in
+            let now = Dictionary(self.items.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+            return expand(paths).compactMap { now[$0] }
+        }
+        let finish = {
+            let parts = [
+                "split \(outcome.split.count)", outcome.failed.isEmpty ? nil : "not split: " + outcome.failed.joined(separator: ", "),
+                outcome.skipped.isEmpty ? nil : "not run: " + outcome.skipped.joined(separator: ", "),
+            ].compactMap { $0 }
+            record((outcome.failed.isEmpty && outcome.skipped.isEmpty ? "done: " : "partly done: ") + parts.joined(separator: "; "))
+        }
+        whenIdle("splitting", skipped: { outcome.skipped.append("splitting, sealing, checking"); finish() }) {
+            for item in toSplit {
+                if let names = self.split(item) { outcome.split[item.path] = names } else { outcome.failed.append(item.path) }
+            }
+            self.whenIdle("sealing", skipped: { outcome.skipped.append("sealing, checking"); finish() }) {
+                let toSeal = current(sealPaths).filter { $0.vault == .none }
+                if !toSeal.isEmpty { self.seal(toSeal) }
+                self.whenIdle("checking", skipped: { outcome.skipped.append("checking"); finish() }) {
+                    let toCheck = current(checkPaths)
+                    if !toCheck.isEmpty { self.check(toCheck) }
+                    self.whenIdle("checking", skipped: { finish() }) { finish() }
+                }
             }
         }
     }
 
-    /// Runs the action once nothing else is running, waiting at most ten minutes.
-    func whenIdle(_ action: @escaping @MainActor () -> Void) {
+    /// The files a step is for once splitting is done: a file that was split is its new files.
+    nonisolated static func afterSplit(_ paths: [String], split: [String: [String]]) -> [String] {
+        paths.flatMap { split[$0] ?? [$0] }
+    }
+
+    /// Runs the action once nothing else is running. After ten minutes it does not run, since running beside
+    /// what is still going could break both: it says so, and `skipped` follows instead.
+    func whenIdle(
+        _ what: String = "That step", skipped: @escaping @MainActor () -> Void = {}, wait: TimeInterval = 600,
+        _ action: @escaping @MainActor () -> Void
+    ) {
         Task { @MainActor in
-            let deadline = Date().addingTimeInterval(600)
+            let deadline = Date().addingTimeInterval(wait)
             while (busy || rebuildingNow) && Date() < deadline { try? await Task.sleep(for: .milliseconds(200)) }
+            guard !(busy || rebuildingNow) else {
+                message = T("%@ did not run: Keyreeve stayed busy for ten minutes.", what.prefix(1).uppercased() + what.dropFirst())
+                skipped()
+                return
+            }
             action()
         }
     }
 }
-

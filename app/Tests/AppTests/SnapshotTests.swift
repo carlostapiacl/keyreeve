@@ -38,6 +38,23 @@ struct SnapshotTests {
         #expect(read(second) == .otherFolder)
     }
 
+    /// A pasted key whose name cannot be written is not left sealed with no name, and trying again works.
+    @Test func aPastedKeyIsSavedWholeOrNotAtAll() throws {
+        let (root, _, store) = try home()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var index = KeyIndex()
+        try index.add(KeyIndex.Key(id: "mail", source: "added/mail"))
+        struct Full: Error {}
+        #expect(throws: VaultError.self) {
+            try AppModel.savePasted(Data("CANARY".utf8), as: "added/mail", index: index, store: store) { _ in throw Full() }
+        }
+        #expect(try store.load().entries["added/mail"] == nil)
+        var written: Data?
+        try AppModel.savePasted(Data("CANARY".utf8), as: "added/mail", index: index, store: store) { written = $0 }
+        #expect(try store.load().entries["added/mail"] != nil)
+        #expect(written.map { String(decoding: $0, as: UTF8.self).contains("added/mail") } == true)
+    }
+
     /// A revocation counts only once the service says so; with no service running, none can be in force.
     @Test func aRevocationIsDoneOnlyWhenTheServiceSaysSo() throws {
         let socket = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString).sock").path

@@ -21,6 +21,15 @@ struct KeyIndexTests {
         #expect(index.suggestion(provider: "instagram", project: "redes", account: "cuenta.dos@correo.cl", source: "d") == "instagram-cuenta-dos-2")
     }
 
+    @Test func aLargeIndexIsReadInOnePassAndStillRefusesATwin() throws {
+        let many = (0..<5000).reversed().map { "[[key]]\nid = \"k-\($0)\"\nsource = \"s\($0)\"\n" }.joined(separator: "\n")
+        let started = Date()
+        let index = try KeyIndex.parse(many)
+        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(index.keys.count == 5000 && index.keys.first?.id == "k-0" && index.keys.map(\.id) == index.keys.map(\.id).sorted())
+        #expect(throws: VaultError.self) { try KeyIndex.parse(many + "\n[[key]]\nid = \"k-7\"\nsource = \"x\"\n") }
+    }
+
     @Test func testBadIdentifiersAndFilesAreRefused() throws {
         for id in ["", "Upper", "a b", "-a", "a-", "ñ", "a/b", "a.b", String(repeating: "a", count: 65)] {
             #expect(!KeyIndex.isValid(id: id), "\(id)")
@@ -181,15 +190,22 @@ final class Fixture: @unchecked Sendable {
     var pauseDuringFinger = false
     /// How long the person takes at the sensor, on the test's clock.
     var fingerTakes: TimeInterval = 0
+    /// Which sealing the vault holds now.
+    var sealing: String? = "r1"
+    /// Run while the finger is on the sensor.
+    var duringFinger: () -> Void = {}
+    /// Changes keys.toml: the netlify key's account, as an edit made elsewhere would.
+    var account = "mi-cuenta"
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return KeyService(
-            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"mi-cuenta\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n\n[[key]]\nid = \"vps\"\nsource = \"vps-key\"\nprovider = \"ssh\"\naccount = \"root\"\n\n[[key]]\nid = \"not-ssh\"\nsource = \"n.txt\"\nprovider = \"ssh\"\n\n[[key]]\nid = \"pinned\"\nsource = \"vps-key\"\nprovider = \"ssh\"\nservers = \"SHA256:one SHA256:two\"\n") },
+            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"\(self.account)\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n\n[[key]]\nid = \"vps\"\nsource = \"vps-key\"\nprovider = \"ssh\"\naccount = \"root\"\n\n[[key]]\nid = \"not-ssh\"\nsource = \"n.txt\"\nprovider = \"ssh\"\n\n[[key]]\nid = \"pinned\"\nsource = \"vps-key\"\nprovider = \"ssh\"\nservers = \"SHA256:one SHA256:two\"\n") },
             open: { source, prompt in
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
                 if self.pauseDuringFinger { self.paused = true }
+                self.duringFinger()
                 self.now.addTimeInterval(self.fingerTakes)
                 if source == "vps-key" { return Data("-----BEGIN OPENSSH PRIVATE KEY-----\nCANARY\n-----END OPENSSH PRIVATE KEY-----\n".utf8) }
                 return Data((source == "m.env" ? "OTHER=x\nAPI=CANARY-mail\n" : "CANARY-netlify\n").utf8)
@@ -199,7 +215,7 @@ final class Fixture: @unchecked Sendable {
                 self.confirmations.append(prompt)
                 return self.confirmAnswer
             },
-            log: log, now: { self.now }, paused: { self.paused })
+            log: log, now: { self.now }, paused: { self.paused }, revision: { _ in self.sealing })
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/bin/zsh", chain: ["zsh", "claude"])
 
@@ -330,6 +346,33 @@ struct KeyServiceTests {
         #expect(!answer.ok)
         #expect(answer.standIn == nil)
         #expect(service.isIdle)
+    }
+
+    /// A key replaced in the vault ends the permission for the old value: the next use asks for the new one.
+    @Test func aReplacedKeyEndsThePermissionForTheOldValue() throws {
+        let f = Fixture()
+        #expect(f.use("netlify").ok)
+        #expect(f.use("netlify").ok)
+        #expect(f.prompts.count == 1)
+        f.sealing = "r2"
+        #expect(f.use("netlify").ok)
+        #expect(f.prompts.count == 2)
+        #expect(f.proxy.removed.count == 1)
+        #expect(try f.log.entries().contains { $0.event == "closed" && $0.detail == "replaced in the vault" })
+    }
+
+    /// The yes was for the key as keys.toml had it when asked; changed meanwhile, nothing opens.
+    @Test func aKeyChangedInTheIndexDuringTheFingerOpensNothing() throws {
+        let f = Fixture()
+        f.duringFinger = { f.account = "otra-cuenta" }
+        let answer = f.use("netlify")
+        #expect(!answer.ok && answer.error?.contains("changed in keys.toml") == true)
+        #expect(f.proxy.added.isEmpty && f.service.isIdle)
+        f.duringFinger = {}
+        let real = f.use("netlify", real: true)
+        #expect(real.ok)
+        f.duringFinger = { f.account = "tercera" }
+        #expect(!f.use("netlify", real: true).ok)
     }
 
     /// A use stuck behind someone else's prompt says which prompt, before the client gives up in silence.

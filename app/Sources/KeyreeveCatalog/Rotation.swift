@@ -96,8 +96,6 @@ extension KeyreeveFiles {
     }
 
     public func savePlaces(_ value: KeyPlaces, for path: String) throws {
-        var all = allPlaces()
-        all[path] = value
-        try writePrivate(try JSONEncoder().encode(all), to: places)
+        try updateJSON(places, as: [String: KeyPlaces].self) { $0[path] = value }
     }
 }

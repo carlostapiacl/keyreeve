@@ -4,9 +4,17 @@ import KeyreeveVault
 
 @MainActor
 extension AppModel {
-    public func savePlaces(_ value: KeyPlaces, for item: CatalogItem) {
-        try? files.savePlaces(value, for: item.path)
+    /// Shown as saved only once it is: a rotation must never start from a plan that was not kept.
+    @discardableResult
+    public func savePlaces(_ value: KeyPlaces, for item: CatalogItem) -> Bool {
+        do {
+            try files.savePlaces(value, for: item.path)
+        } catch {
+            message = (error as? CheckError)?.description ?? T("%@ could not be saved", files.places.lastPathComponent)
+            return false
+        }
         places[item.path] = value
+        return true
     }
 
     public func chooseFile(then: (String) -> Void) {

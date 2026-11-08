@@ -28,7 +28,12 @@ extension AppModel {
                 message = T("The scan did not finish")
             }
         case .ignore:
-            try? files.ignore(item.path, until: Date().addingTimeInterval(30 * 86_400))
+            do {
+                try files.ignore(item.path, until: Date().addingTimeInterval(30 * 86_400))
+            } catch {
+                message = (error as? CheckError)?.description ?? T("%@ could not be saved", files.ignored.lastPathComponent)
+                return
+            }
             load()
         }
     }
@@ -56,8 +61,14 @@ extension AppModel {
         save(KeyEdit(tags: tags), for: item)
     }
 
+    /// The list changes only once the change is on disk; a failure says why and changes nothing.
     public func save(_ edit: KeyEdit, for item: CatalogItem) {
-        try? files.saveEdit(edit, for: item.path)
+        do {
+            try files.saveEdit(edit, for: item.path)
+        } catch {
+            message = (error as? CheckError)?.description ?? T("%@ could not be saved", files.edits.lastPathComponent)
+            return
+        }
         rebuildCatalog()
     }
 }

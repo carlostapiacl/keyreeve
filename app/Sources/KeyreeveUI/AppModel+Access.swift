@@ -97,10 +97,11 @@ extension AppModel {
         }
     }
 
-    public func endPermissions(of key: String) {
+    /// Ends one permission, or with no grant every permission for the key.
+    public func endPermissions(of key: String, grant: String? = nil) {
         let path = files.keySocket.path
         Task.detached {
-            _ = try? KeySocket.send(KeyService.Request(op: "revoke", key: key), path: path, timeout: 2)
+            _ = try? KeySocket.send(KeyService.Request(op: "revoke", key: key, grant: grant), path: path, timeout: 2)
             await MainActor.run { self.reloadUsage() }
         }
     }
@@ -174,7 +175,11 @@ extension AppModel {
         guard let at = index.keys.firstIndex(where: { $0.id == id }) else { return }
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         index.keys[at].account = clean.isEmpty ? nil : clean
-        try? saveIndex(index)
+        do {
+            try saveIndex(index)
+        } catch {
+            message = T("That identifier could not be saved")
+        }
     }
 
     public func addIdentifier(_ id: String, for item: CatalogItem, field: String?) {
@@ -195,7 +200,11 @@ extension AppModel {
     public func removeIdentifier(_ id: String) {
         var index = keyIndex
         index.remove(id: id)
-        try? saveIndex(index)
+        do {
+            try saveIndex(index)
+        } catch {
+            message = T("That identifier could not be saved")
+        }
     }
 
     /// Gives one to each sealed key that has none, which a person can change afterwards.

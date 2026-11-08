@@ -123,7 +123,7 @@ struct HomeView: View {
 
     private var headline: String {
         switch stats.needLook.count {
-        case 0: return T("Everything looks fine.")
+        case 0: return T("No alerts found.")
         case 1: return T("1 key needs you")
         default: return T("%d keys need you", stats.needLook.count)
         }

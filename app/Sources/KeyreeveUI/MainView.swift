@@ -42,7 +42,8 @@ public struct MainView: View {
 
     private var chosenItem: CatalogItem? {
         guard chosenRows.count == 1, let path = chosenRows.first else { return nil }
-        return items.first { $0.path == path }
+        // Only from what the list shows, so the detail never speaks of a key another filter hid.
+        return shown.first { $0.path == path }
     }
 
     private var scope: [CatalogItem] {
@@ -58,7 +59,24 @@ public struct MainView: View {
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
                 sidebarRow(T("All keys"), "key", .all, active.count)
                 sidebarRow(T("Vault"), "lock.shield", .vault, filter(items, by: .vault, search: "").count)
-                sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.keys.count)
+                // A request waiting shows here and in the menu bar, and never moves you away from what you were doing.
+                if model.pendingRequests.isEmpty {
+                    sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.keys.count)
+                } else {
+                    Label {
+                        HStack {
+                            Text(T("Agents")).lineLimit(1)
+                            Spacer()
+                            Text(T("%d waiting", model.pendingRequests.count))
+                                .font(Theme.caption).foregroundStyle(Theme.onAccent)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Theme.accent, in: Capsule())
+                        }
+                    } icon: {
+                        Image(systemName: "hand.raised.fill")
+                    }
+                    .tag(Sidebar.agents)
+                }
                 sidebarRow(T("Archive"), "archivebox", .archive, items.count - active.count)
                 Section(T("Projects")) {
                     ForEach(projectTags(in: active), id: \.tag) { entry in
@@ -79,9 +97,6 @@ public struct MainView: View {
             // An agent's request opens the app: show it where it is answered.
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 model.reloadRequests()
-            }
-            .onChange(of: model.pendingRequests.map(\.id)) { old, new in
-                if !Set(new).subtracting(old).isEmpty { selection = .agents }
             }
             .onChange(of: model.showRequests) { _, _ in selection = .agents }
             .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
@@ -175,7 +190,7 @@ public struct MainView: View {
     @ViewBuilder private var emptyList: some View {
         if selection == .attention {
             ContentUnavailableView(
-                T("Everything looks fine."), systemImage: "checkmark.seal",
+                T("No alerts found."), systemImage: "checkmark.seal",
                 description: Text(T("Keys asking for attention will show here.")))
         } else {
             ContentUnavailableView(T("No keys here"), systemImage: "key")

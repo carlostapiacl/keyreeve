@@ -45,7 +45,7 @@ struct KeyUsagePanel: View {
                     Text(T("%dm left", max(0, Int(grant.expires.timeIntervalSinceNow) / 60)))
                         .font(Theme.caption).foregroundStyle(Theme.muted)
                     Spacer(minLength: 4)
-                    Button(T("End")) { model.endPermissions(of: grant.key) }
+                    Button(T("End")) { model.endPermissions(of: grant.key, grant: grant.id) }
                         .buttonStyle(KRButtonStyle())
                 }
             }

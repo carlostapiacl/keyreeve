@@ -64,8 +64,8 @@ func askAccess(_ request: AccessRequest) -> AccessDecision? {
         ? "\(request.agent) pide la clave \(request.key)\(provider)"
         : "\(request.agent) asks for the key \(request.key)\(provider)"
     alert.informativeText = spanish
-        ? "Lo que dice el agente, en sus palabras:\n\u{201C}\(request.reason)\u{201D}\n\nSi permites, te pide la huella una vez y no vuelve a preguntar hasta que pase el tiempo o salgas de Keyreeve. Lo cambias cuando quieras en Agentes."
-        : "What the agent says, in its own words:\n\u{201C}\(request.reason)\u{201D}\n\nIf you allow it, your fingerprint is asked once, and nothing more until the time is up or you quit Keyreeve. Change it any time under Agents."
+        ? "Lo que dice el agente, en sus palabras:\n\u{201C}\(request.reason)\u{201D}\n\nSugiere: \(request.hours.map { "\($0) h" } ?? "siempre").\n\nSi permites, te pide la huella una vez y no vuelve a preguntar hasta que pase el tiempo o salgas de Keyreeve. Lo cambias cuando quieras en Agentes."
+        : "What the agent says, in its own words:\n\u{201C}\(request.reason)\u{201D}\n\nIt suggests: \(request.hours.map { "\($0) h" } ?? "always").\n\nIf you allow it, your fingerprint is asked once, and nothing more until the time is up or you quit Keyreeve. Change it any time under Agents."
     let durations = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
     let choices: [Int?] = AccessDecision.hourChoices.map { $0 } + [nil]
     for hours in choices {
@@ -75,7 +75,7 @@ func askAccess(_ request: AccessRequest) -> AccessDecision? {
             durations.addItem(withTitle: spanish ? "Siempre" : "Always")
         }
     }
-    durations.selectItem(at: choices.firstIndex(of: request.hours) ?? 0)
+    durations.selectItem(at: choices.firstIndex(of: AccessDecision.startingHours(for: request.hours)) ?? 0)
     alert.accessoryView = durations
     alert.addButton(withTitle: spanish ? "Permitir" : "Allow")
     let deny = alert.addButton(withTitle: spanish ? "No permitir" : "Deny")

@@ -6,6 +6,9 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A window remembered on a display you are not looking at reads as an app that did not open.
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Writing to a command that already ended must be an error to handle, not a signal that ends the
+        // app. Set once here, for the whole process, rather than by each call.
+        signal(SIGPIPE, SIG_IGN)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {
@@ -59,10 +62,11 @@ struct KeyreeveApp: App {
                 if !model.unlocked {
                     LockedView(message: model.lockMessage, unlock: model.unlock)
                         .onAppear(perform: model.unlock)
-                } else if !model.hasCatalog || model.items.isEmpty {
-                    WelcomeView(busy: model.busy, choose: model.chooseFolder)
+                } else if model.needsWelcome {
+                    WelcomeView(busy: model.busy, choose: model.chooseFolder, withoutFolder: model.startWithoutFolder)
                 } else {
-                    MainView(model: model)
+                    // With no vault yet, it opens where one is made, which a first key needs.
+                    MainView(model: model, initial: model.hasVault ? .home : .vault)
                 }
             }
             .frame(minWidth: 860, minHeight: 520)

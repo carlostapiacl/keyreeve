@@ -7,11 +7,16 @@ public struct AddKeyDraft: Identifiable {
     public let id = UUID()
     /// When an agent asked for this provider and no file had one.
     public var request: AccessRequests.Entry?
+    /// Nil is a key of no known provider, such as a secret of your own app. It is kept and can be used,
+    /// and cannot be checked or go through the proxy until a provider is set.
     public var provider: String?
+    /// The person's own words, kept as the key's description. The identifier is made from it.
     public var name = ""
     /// Held only while the sheet is open, and never shown.
     var value: String?
     public var hint: String?
+    /// What went wrong, shown in the sheet itself, next to what caused it.
+    public var error: String?
 }
 
 @MainActor
@@ -21,7 +26,7 @@ extension AppModel {
 
     public func startAddingKey(for request: AccessRequests.Entry? = nil) {
         var draft = AddKeyDraft(request: request, provider: request?.provider)
-        if let provider = request?.provider { draft.name = freeIdentifier(provider) }
+        if let provider = request?.provider { draft.name = providerName(provider) }
         addingKey = draft
     }
 
@@ -30,46 +35,49 @@ extension AppModel {
         guard var draft = addingKey else { return }
         let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else {
-            message = T("The clipboard holds no text")
+            draft.error = T("The clipboard holds no text")
+            addingKey = draft
             return
         }
         let found = providers.recognize(text)
         if draft.request == nil, let found {
             draft.provider = found.id
-            if draft.name.isEmpty { draft.name = freeIdentifier(found.id) }
+            if draft.name.isEmpty { draft.name = found.name }
         }
+        draft.error = nil
         draft.value = text
         draft.hint = ProviderDirectory.hint(of: text, provider: found)
         addingKey = draft
     }
 
-    /// A provider's name, or the same with a number when that identifier is taken.
-    public func freeIdentifier(_ base: String) -> String {
-        let taken = Set(keyIndex.keys.map(\.id))
-        if !taken.contains(base) { return base }
-        return (2...).lazy.map { "\(base)-\($0)" }.first { !taken.contains($0) }!
-    }
+    /// How a provider is called, from its recipe.
+    public func providerName(_ id: String) -> String { providers.all.first { $0.id == id }?.name ?? id }
+
+    /// The identifier a name will be saved under: free, valid, and shown before saving.
+    public func identifier(for name: String) -> String { keyIndex.identifier(for: name) }
 
     /// Seals the pasted key, gives it its identifier, and, when an agent asked, opens it to that agent.
     public func saveAddedKey(hours: Int?) {
-        guard let draft = addingKey, let value = draft.value, let provider = draft.provider else { return }
-        let id = draft.name.trimmingCharacters(in: .whitespaces)
-        guard !id.isEmpty else { return }
-        let entry = Self.addedFolder + id
+        guard var draft = addingKey, let value = draft.value else { return }
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            draft.error = T("Give it a name")
+            addingKey = draft
+            return
+        }
+        let provider = draft.provider
         do {
             var index = (try? KeyIndex.load(from: files.keyIndex)) ?? keyIndex
-            guard index.key(id) == nil else {
-                message = T("%@ is taken. Choose another name.", id)
-                return
-            }
+            let id = index.identifier(for: name)
+            let entry = Self.addedFolder + id
             // The name is checked before anything is sealed, so a bad one leaves nothing behind.
             try index.add(KeyIndex.Key(
-                id: id, source: entry, provider: provider,
-                variable: providers.all.first { $0.id == provider }?.env_var))
+                id: id, source: entry, provider: provider, description: name == id ? nil : name,
+                variable: provider.flatMap { provider in providers.all.first { $0.id == provider }?.env_var }))
             try vaultStore.update { vault in try vault.add(name: entry, value: Data(value.utf8)) }
             try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
             keyIndex = index
-            audit([(id, "pasted, \(provider)")], event: "sealed")
+            audit([(id, "pasted, \(provider ?? "no provider")")], event: "sealed")
             if let request = draft.request { try openToAgent(id, for: request, hours: hours) }
             // The clipboard keeps nothing that was a key.
             if NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) == value {
@@ -78,7 +86,10 @@ extension AppModel {
             addingKey = nil
             message = draft.request == nil ? T("%@ is saved", id) : T("%@ is saved and open to %@", id, draft.request!.agent)
         } catch {
-            message = (error as? VaultError)?.description ?? T("The vault could not be saved")
+            // Said in the sheet, which stays open with the key, so it can be tried again.
+            draft.error = (error as? VaultError)?.description ?? T("The vault could not be saved")
+            addingKey = draft
+            return
         }
         load()
     }

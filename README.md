@@ -374,7 +374,9 @@ from the provider.
 
 **Add a key** (the **+** in the window, or the menu bar) reads the clipboard, tells the provider from how the key starts, and seals it
 with no file on disk. The key itself is never shown, only its known start and its length, and the clipboard is cleared. A link opens
-the provider's page where keys are made.
+the provider's page where keys are made. Name it in your own words; its identifier, for scripts and agents, is made from that name and
+shown before saving. A key of no known provider is kept too, and can be copied: it is checked or used through the proxy once you
+choose its provider. With no keys folder at all, **Start with no folder** on the first screen opens the app where a vault is made.
 
 ### The menu bar
 

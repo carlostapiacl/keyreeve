@@ -22,7 +22,7 @@ struct AgentsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text(T("An agent asks keyreeve to run a command with a key and says why. The command gets a stand-in, and the real key only travels to the key's provider. The agent never sees the value."))
+                Text(T("An agent asks keyreeve to run a command with a key and says why. With a provider, the command gets a stand-in and the real key only travels to that provider. A program you allow by name gets the real key."))
                     .font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 if !model.pendingRequests.isEmpty { requestsCard }
@@ -166,7 +166,7 @@ struct AgentsView: View {
                         Text(T("%dm left", max(0, Int(grant.expires.timeIntervalSinceNow) / 60)))
                             .font(Theme.caption).foregroundStyle(Theme.muted)
                         Spacer(minLength: 4)
-                        Button(T("End")) { model.endPermissions(of: grant.key) }.buttonStyle(KRButtonStyle())
+                        Button(T("End")) { model.endPermissions(of: grant.key, grant: grant.id) }.buttonStyle(KRButtonStyle())
                     }
                 }
             }
@@ -368,7 +368,7 @@ struct RequestRow: View {
             guard !started else { return }
             started = true
             chosen = candidates.first?.path
-            hours = Self.durations.contains(request.hours) ? request.hours : 1
+            hours = AccessDecision.startingHours(for: request.hours)
         }
     }
 

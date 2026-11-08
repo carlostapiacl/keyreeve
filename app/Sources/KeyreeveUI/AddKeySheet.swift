@@ -46,7 +46,7 @@ public struct AddKeySheet: View {
                 GridRow {
                     Text(T("Provider")).font(Theme.body).foregroundStyle(Theme.muted)
                     Picker(T("Provider"), selection: providerBinding) {
-                        Text(T("Choose…")).tag(String?.none)
+                        Text(T("Other, or I don't know")).tag(String?.none)
                         ForEach(model.providers.all.filter { $0.problem == nil }.sorted { $0.name < $1.name }) { info in
                             Text(info.name).tag(String?.some(info.id))
                         }
@@ -56,7 +56,13 @@ public struct AddKeySheet: View {
                 }
                 GridRow {
                     Text(T("Name")).font(Theme.body).foregroundStyle(Theme.muted)
-                    TextField(T("Name"), text: nameBinding).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                    VStack(alignment: .leading, spacing: 3) {
+                        TextField(T("For example: Store mail"), text: nameBinding).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                        if let name = draft?.name, !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                            // The name stays as written; scripts and agents use this.
+                            Text(T("Identifier: %@", model.identifier(for: name))).font(Theme.code).foregroundStyle(Theme.muted)
+                        }
+                    }
                 }
                 if draft?.request != nil {
                     GridRow {
@@ -71,6 +77,15 @@ public struct AddKeySheet: View {
                 }
             }
 
+            if draft?.value != nil, draft?.provider == nil {
+                Text(T("With no provider it is kept and can be copied, and it cannot be checked or used through the proxy until you choose one."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = draft?.error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(Theme.body).foregroundStyle(Theme.bad).fixedSize(horizontal: false, vertical: true)
+            }
+
             HStack {
                 Spacer()
                 Button(T("Cancel"), action: model.cancelAddingKey).buttonStyle(KRButtonStyle())
@@ -78,13 +93,13 @@ public struct AddKeySheet: View {
                 Button(draft?.request == nil ? T("Save") : T("Save and allow")) { model.saveAddedKey(hours: hours) }
                     .buttonStyle(KRButtonStyle(primary: true))
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft?.value == nil || draft?.provider == nil || (draft?.name.trimmingCharacters(in: .whitespaces).isEmpty ?? true))
+                    .disabled(draft?.value == nil || (draft?.name.trimmingCharacters(in: .whitespaces).isEmpty ?? true))
             }
         }
         .padding(24)
         .frame(width: 520)
         .background(Theme.background)
-        .onAppear { hours = draft?.request.map { Self.durations.contains($0.hours) ? $0.hours : 1 } ?? 1 }
+        .onAppear { hours = draft?.request.map { AccessDecision.startingHours(for: $0.hours) } ?? 1 }
     }
 
     private func providerName(_ id: String?) -> String {
@@ -94,11 +109,14 @@ public struct AddKeySheet: View {
     private var providerBinding: Binding<String?> {
         Binding(get: { model.addingKey?.provider }, set: { value in
             model.addingKey?.provider = value
-            if let value, model.addingKey?.name.isEmpty ?? true { model.addingKey?.name = model.freeIdentifier(value) }
+            if let value, model.addingKey?.name.isEmpty ?? true { model.addingKey?.name = model.providerName(value) }
         })
     }
 
     private var nameBinding: Binding<String> {
-        Binding(get: { model.addingKey?.name ?? "" }, set: { model.addingKey?.name = $0 })
+        Binding(get: { model.addingKey?.name ?? "" }, set: {
+            model.addingKey?.name = $0
+            model.addingKey?.error = nil
+        })
     }
 }

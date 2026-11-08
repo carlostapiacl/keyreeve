@@ -13,14 +13,35 @@ struct KeyAccessPanel: View {
     private var identifiers: [KeyIndex.Key] { model.keyIndex.keys(forSource: item.path) }
     private var allowed: [String] { identifiers.flatMap { model.agentPolicy.commands[$0.id] ?? [] } }
 
+    /// How agents reach this key through the proxy, as the permissions say now, one line per identifier.
+    private var openToAgents: [String] {
+        let policy = model.agentPolicy
+        return identifiers.compactMap { key in
+            guard let level = policy.level(of: key.id), policy.levels[key.id] != nil else { return nil }
+            let who = (policy.agents[key.id] ?? []).isEmpty ? T("any agent") : (policy.agents[key.id] ?? []).joined(separator: ", ")
+            var line = "\(key.id): " + (level == .free ? T("Free") : T("Ask")) + " · " + who
+            if let closes = policy.until[key.id] { line += " · " + T("Open until %@", closes.formatted(date: .omitted, time: .shortened)) }
+            return line
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             CopyKeyButton(item: item, model: model)
             identifierSection
             Text(T("Agents")).font(Theme.caption).foregroundStyle(Theme.muted).padding(.top, 6)
-            Text(allowed.isEmpty ? T("No agent can use this key.") : T("Programs an agent may run with this key. Each use asks for your finger, and the agent never gets the value."))
-                .font(Theme.caption).foregroundStyle(Theme.muted)
-                .fixedSize(horizontal: false, vertical: true)
+            // From the same permissions the agents read, so this never says less than what is open.
+            ForEach(openToAgents, id: \.self) { line in
+                Text(line).font(Theme.caption).foregroundStyle(Theme.text)
+            }
+            if openToAgents.isEmpty && allowed.isEmpty {
+                Text(T("No agent can use this key.")).font(Theme.caption).foregroundStyle(Theme.muted)
+            }
+            if !allowed.isEmpty {
+                Text(T("Programs an agent may run with this key. Each use asks for your finger, and the program gets the value."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(allowed, id: \.self) { program in
                 HStack(spacing: 6) {
                     Text(URL(fileURLWithPath: program).lastPathComponent)

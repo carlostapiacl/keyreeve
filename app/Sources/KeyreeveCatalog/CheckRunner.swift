@@ -223,9 +223,12 @@ public enum CheckRunner {
         sealed.isEmpty ? nil : try JSONEncoder().encode(sealed)
     }
 
-    /// A command that stops early must fail on its own, and must not take this app with it.
+    /// A command that stops early must fail on its own, and must not take this app with it. The setting
+    /// is the process's, so it is made once, the first time, and never changed back and forth.
+    private static let brokenPipesAreErrors: Void = { signal(SIGPIPE, SIG_IGN) }()
+
     private static func send(_ data: Data, to pipe: Pipe) {
-        signal(SIGPIPE, SIG_IGN)
+        _ = brokenPipesAreErrors
         try? pipe.fileHandleForWriting.write(contentsOf: data)
         try? pipe.fileHandleForWriting.close()
     }

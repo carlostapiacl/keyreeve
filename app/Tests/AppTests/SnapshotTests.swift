@@ -61,6 +61,15 @@ struct SnapshotTests {
         #expect(names == ["claude", "codex", "motor_1", "nightly-bot"])
     }
 
+    /// An agent seen once is remembered, cleaned, after it leaves the recent lines of the log.
+    @Test func anAgentSeenOnceIsRemembered() throws {
+        let defaults = try #require(UserDefaults(suiteName: "agents-\(UUID().uuidString)"))
+        AppModel.rememberAgents(["nightly-bot", "<bad>"], defaults)
+        #expect(AppModel.rememberedAgents(defaults) == ["claude", "codex", "nightly-bot"])
+        AppModel.rememberAgents(AppModel.rememberedAgents(defaults) + ["sales"], defaults)
+        #expect(AppModel.rememberedAgents(defaults).contains("nightly-bot"))
+    }
+
     /// A key put in the vault from a script, with no file and no catalog line, is listed so it can be checked.
     @Test func aKeyAddedFromAScriptIsListed() throws {
         let (root, files, store) = try home()

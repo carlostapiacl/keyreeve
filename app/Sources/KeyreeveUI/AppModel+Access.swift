@@ -344,7 +344,22 @@ extension AppModel {
     public var knownAgents: [String] {
         let seen = usage.entries.compactMap { $0.declared?.agent }
         let named = agentPolicy.agents.values.flatMap { $0 }
-        return Self.agentNames(seen + named)
+        // Remembered across refreshes, so a bot that has been quiet for a while is still offered.
+        let names = Self.agentNames(seen + named + Self.rememberedAgents())
+        Self.rememberAgents(names)
+        return names
+    }
+
+    nonisolated static let agentsSeenKey = "keyreeve.agentsSeen"
+
+    nonisolated static func rememberedAgents(_ defaults: UserDefaults = .standard) -> [String] {
+        defaults.stringArray(forKey: agentsSeenKey) ?? []
+    }
+
+    nonisolated static func rememberAgents(_ names: [String], _ defaults: UserDefaults = .standard) {
+        // A short list, cleaned like the rest: what an agent calls itself is never trusted beyond a name.
+        let kept = Array(agentNames(names).prefix(40))
+        if kept != rememberedAgents(defaults) { defaults.set(kept, forKey: agentsSeenKey) }
     }
 
     nonisolated static func agentNames(_ names: [String]) -> [String] {

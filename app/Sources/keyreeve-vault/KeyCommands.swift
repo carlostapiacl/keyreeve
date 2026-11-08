@@ -33,12 +33,15 @@ func useKey() throws {
         guard let parsed = KeyService.seconds(from: text) else { fail("--for takes a time like 90s, 5m or 2h") }
         seconds = parsed
     }
-    let answer = try askService(
-        KeyService.Request(
-            op: "use", key: id, seconds: seconds, program: command[0], arguments: command.count - 1,
-            prompt: nil,
-            agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
-            reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal))
+    var request = KeyService.Request(
+        op: "use", key: id, seconds: seconds, program: command[0], arguments: command.count - 1,
+        prompt: nil,
+        agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
+        reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal)
+    // A key the person marked "always, no fingerprint" opens with none for a program run in the background, such
+    // as a bot started at login. The service grants it only if it finds the mark itself; the real key always asks.
+    if !wantsReal { request.unattended = true }
+    let answer = try askService(request)
     guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
     let prepared: UseEnvironment
     do {

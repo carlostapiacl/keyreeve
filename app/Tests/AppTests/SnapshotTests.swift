@@ -55,6 +55,12 @@ struct SnapshotTests {
         #expect(written.map { String(decoding: $0, as: UTF8.self).contains("added/mail") } == true)
     }
 
+    /// The agents a key can be opened to: those the log has seen, cleaned, once each, with Claude and Codex.
+    @Test func theAgentsToChooseFromAreTheOnesSeen() {
+        let names = AppModel.agentNames(["nightly-bot", "Claude", " nightly-bot ", "motor_1", "a b", "<x>", "", String(repeating: "z", count: 50)])
+        #expect(names == ["claude", "codex", "motor_1", "nightly-bot"])
+    }
+
     /// A key put in the vault from a script, with no file and no catalog line, is listed so it can be checked.
     @Test func aKeyAddedFromAScriptIsListed() throws {
         let (root, files, store) = try home()

@@ -235,6 +235,24 @@ mod swap_tests {
     use super::*;
 
     #[test]
+    fn a_meta_or_instagram_token_is_found_in_notes() {
+        let meta = crate::verify::load_recipe("meta").unwrap();
+        let notes = "Page token for the shop\nEAAGexampleCANARY123\nexpires in 60 days";
+        assert_eq!(
+            read_key_for(notes, None, &meta).unwrap().expose(),
+            "EAAGexampleCANARY123"
+        );
+        let instagram = crate::verify::load_recipe("instagram").unwrap();
+        let login = "IG login, account shop\nIGAAexampleCANARY456";
+        assert_eq!(
+            read_key_for(login, None, &instagram).unwrap().expose(),
+            "IGAAexampleCANARY456"
+        );
+        // Two of them in one file are not guessed between.
+        assert!(read_key_for("EAAone\nEAAtwo", None, &meta).is_err());
+    }
+
+    #[test]
     fn a_field_written_twice_is_read_as_the_vault_uses_it() {
         let read = read_key("T=old\nOTHER=x\nT=new\n", Some("T")).unwrap();
         assert_eq!(read.expose(), "new");

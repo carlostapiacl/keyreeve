@@ -183,9 +183,13 @@ struct KeeperTests {
         let report = try VaultKeeper.seal(
             paths: ["good.txt", "empty.txt", "binary.p12", "big.txt", "link.txt", "../outside.txt", "missing.txt"],
             folder: keys, store: store)
-        XCTAssertEqual(report.sealed, ["good.txt"])
+        XCTAssertEqual(report.sealed, ["good.txt", "binary.p12"])
         XCTAssertEqual(report.skipped["empty.txt"], .empty)
-        XCTAssertEqual(report.skipped["binary.p12"], .notText)
+        // A certificate is kept byte for byte, and comes back the same.
+        XCTAssertEqual(try store.load().open(name: "binary.p12", with: chip), Data([0xFF, 0xFE, 0x00]))
+        XCTAssertEqual(try VaultKeeper.compare(names: ["binary.p12"], folder: keys, recipient: chip, store: store).same, ["binary.p12"])
+        // Opening it as text, for a check, says what it is.
+        #expect(throws: VaultError.self) { try VaultKeeper.open(names: ["binary.p12"], recipient: chip, store: store, by: "check") }
         XCTAssertEqual(report.skipped["big.txt"], .tooLarge)
         XCTAssertEqual(report.skipped["link.txt"], .outsideFolder)
         XCTAssertEqual(report.skipped["../outside.txt"], .outsideFolder)

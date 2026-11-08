@@ -630,6 +630,7 @@ mod tests {
         assert_eq!(kind_from_prefix("AKIAABC").as_deref(), Some("aws"));
         assert_eq!(kind_from_prefix("zzz"), None);
         assert!(proven("github"));
-        assert!(!proven("meta"));
+        assert!(proven("meta"));
+        assert!(!proven("cloudflare"));
     }
 }

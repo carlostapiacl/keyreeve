@@ -59,4 +59,10 @@ struct CleanupTests {
         #expect(edit.level == "none" && edit.description == "Cloudflare account ID")
         #expect(found[1].kind == .described && found[1].edit(for: items[1]).description == nil)
     }
+
+    @Test func placesSavedBeforeThePageToRevokeStillRead() throws {
+        let old = #"{"files":[],"actions":["mis-lugares/vps1"],"nothingElse":false,"overlapMinutes":0}"#
+        let places = try JSONDecoder().decode(KeyPlaces.self, from: Data(old.utf8))
+        #expect(places.revokePage == nil && places.isDecided)
+    }
 }

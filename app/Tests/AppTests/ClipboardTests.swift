@@ -25,4 +25,15 @@ struct ClipboardTests {
         clipboard.clear()
         #expect(pasteboard.string(forType: .string) == "yours")
     }
+
+    @MainActor @Test func testAPastedKeyIsTakenOnceAndTheClipboardIsCleared() {
+        let pasteboard = board()
+        pasteboard.setString("  CANARYkey123\n", forType: .string)
+        #expect(PastedKey.take(from: pasteboard) == "CANARYkey123")
+        #expect(pasteboard.string(forType: .string) == nil)
+        // Words with spaces are not a key, and stay where they are.
+        pasteboard.setString("a note, not a key", forType: .string)
+        #expect(PastedKey.take(from: pasteboard) == nil)
+        #expect(pasteboard.string(forType: .string) == "a note, not a key")
+    }
 }

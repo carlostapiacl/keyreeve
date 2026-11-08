@@ -78,9 +78,20 @@ struct RotationPanel: View {
             if let page = provider.dashboard.flatMap(URL.init(string:)) {
                 Button(T("Open its page")) { NSWorkspace.shared.open(page) }.buttonStyle(KRButtonStyle())
             }
-            SecureField(T("New key"), text: $newKey)
+            HStack(spacing: 6) {
+                SecureField(T("New key"), text: $newKey)
+                    .textFieldStyle(.roundedBorder)
+                    .font(Theme.caption)
+                Button(T("Paste from the clipboard")) { newKey = PastedKey.take() ?? newKey }
+                    .buttonStyle(KRButtonStyle())
+                    .help(T("Takes the key you copied and clears the clipboard. It is not shown."))
+            }
+            TextField(T("Page where the old key is revoked (optional)"), text: Binding(
+                get: { places.revokePage ?? "" },
+                set: { page in change { $0.revokePage = page.isEmpty ? nil : page } }))
                 .textFieldStyle(.roundedBorder)
                 .font(Theme.caption)
+                .help(T("Opened for you when the old key is left for you to revoke."))
         }
         Text(T("Where else is this key used? Each place gets the new key before the old one is revoked."))
             .font(Theme.caption).foregroundStyle(Theme.muted)

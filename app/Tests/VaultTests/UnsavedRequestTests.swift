@@ -84,6 +84,20 @@ struct UnsavedRequestTests {
         #expect(try AgentTests().call(bridge, "rotate_key", ["key": "pexels"]).error)
     }
 
+    @Test func aRotationThatDidNotFinishIsSaidOnceAndAskedAgain() throws {
+        let world = World()
+        let bridge = bridge(world)
+        _ = try AgentTests().call(bridge, "rotate_key", ["key": "pexels", "reason": "it leaked"])
+        let asked = try #require(world.entries.first)
+        world.entries.append(AccessRequests.Entry(
+            id: asked.id, at: world.now, event: .allowed, agent: "claude", provider: asked.provider, key: "pexels",
+            kind: "rotate", result: "rolled_back. Nothing changed"))
+        let again = try AgentTests().call(bridge, "rotate_key", ["key": "pexels", "reason": "try again"]).text
+        #expect(again.hasPrefix("The last try did not finish: rolled_back. Nothing changed. A new request is waiting."))
+        #expect(world.entries.filter { $0.event == .asked }.count == 2 && world.announced == 2)
+        #expect(try AgentTests().call(bridge, "rotate_key", ["key": "pexels", "reason": "r"]).text.hasPrefix("Still waiting"))
+    }
+
     @Test func aNoToARotationIsKeptAndTheAgentStops() throws {
         let world = World()
         world.answer = .deny

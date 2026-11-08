@@ -481,6 +481,9 @@ struct RotationRequestRow: View {
                     Button(T("Open its page")) { NSWorkspace.shared.open(page) }.buttonStyle(KRButtonStyle())
                 }
                 SecureField(T("New key"), text: $newKey).textFieldStyle(.roundedBorder)
+                Button(T("Paste from the clipboard")) { newKey = PastedKey.take() ?? newKey }
+                    .buttonStyle(KRButtonStyle())
+                    .help(T("Takes the key you copied and clears the clipboard. It is not shown."))
             }
         }
         if open {

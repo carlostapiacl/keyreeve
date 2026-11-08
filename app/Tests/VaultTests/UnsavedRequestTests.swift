@@ -66,6 +66,34 @@ struct UnsavedRequestTests {
         #expect(AccessRequests.read(from: file).first?.account == nil)
     }
 
+    @Test func anAgentAsksToRotateAKeyAndLearnsHowItWentWithoutSeeingIt() throws {
+        let world = World()
+        let bridge = bridge(world)
+        let rotate = { try AgentTests().call(bridge, "rotate_key", ["key": "pexels", "reason": "it leaked"]) }
+        #expect(try rotate().text.hasPrefix("Waiting"))
+        let asked = try #require(world.entries.first)
+        #expect(asked.isRotation && asked.key == "pexels" && asked.reason == "it leaked" && world.announced == 1)
+        #expect(try rotate().text.hasPrefix("Still waiting") && world.announced == 1)
+        // A rotation request is not a request for a provider's key.
+        #expect(AccessRequests.latest(agent: "claude", provider: asked.provider, in: world.entries) == nil)
+        world.entries.append(AccessRequests.Entry(
+            id: asked.id, at: world.now, event: .allowed, agent: "claude", provider: asked.provider, key: "pexels",
+            kind: "rotate", result: "completed. Rotated. The old key is revoked."))
+        #expect(try rotate().text == "The person rotated pexels. How it went: completed. Rotated. The old key is revoked.")
+        #expect(try AgentTests().call(bridge, "rotate_key", ["key": "nope", "reason": "r"]).error)
+        #expect(try AgentTests().call(bridge, "rotate_key", ["key": "pexels"]).error)
+    }
+
+    @Test func aNoToARotationIsKeptAndTheAgentStops() throws {
+        let world = World()
+        world.answer = .deny
+        let bridge = bridge(world)
+        #expect(try AgentTests().call(bridge, "rotate_key", ["key": "pexels", "reason": "old"]).error)
+        #expect(world.entries.map(\.event) == [.asked, .declined] && world.entries.allSatisfy(\.isRotation))
+        world.answer = .later
+        #expect(try AgentTests().call(bridge, "rotate_key", ["key": "pexels", "reason": "old"]).error)
+    }
+
     @Test func aNoFromTheWindowOrTheAppStopsTheAgentAsking() throws {
         let world = World()
         world.answer = .deny

@@ -374,7 +374,16 @@ you add the second agent under **Agents**.
 
 When the agent asks for a provider whose key is not saved, the request waits in the app. Pick the file that holds it and press
 **Save and allow**: it is sealed, named and opened to that agent in one step. With no file, **Paste a new one** takes a key you copy
-from the provider.
+from the provider. If the agent knows which account the key should belong to, it says so with `account`, and the file that matches
+comes first.
+
+### When an agent asks to rotate a key
+
+With `rotate_key` an agent asks for a sealed key to be rotated, and says why: it leaked, it is old, or you asked it to. The request
+waits under **Agents** with where the new key goes, which is what you set in the key's **Security** tab: the agent cannot choose it.
+For a provider with no way to make keys from here, you make the new one at its page and paste it in the request. **Rotate this key**
+asks for your fingerprint, and the agent learns how it went when it asks again. It never sees either key. A place can be a button of
+yours that receives the new key on stdin, such as an env file on a server over ssh (`examples/places/ssh-env.sh`).
 
 ### Add a key
 

@@ -26,10 +26,14 @@ public enum AccessRequests {
         public var key: String?
         /// The account, organization or project the agent says the key should belong to, if it knows.
         public var account: String?
+        /// `rotate` for an agent asking to rotate a key it names in `key`. Missing is a request for access.
+        public var kind: String?
+        /// How a rotation went, in words, on the answer to a `rotate` request. Never a value.
+        public var result: String?
 
         public init(
             id: String, at: Date, event: Event, agent: String, provider: String, reason: String? = nil, hours: Int? = nil,
-            key: String? = nil, account: String? = nil
+            key: String? = nil, account: String? = nil, kind: String? = nil, result: String? = nil
         ) {
             self.id = id
             self.at = at
@@ -40,7 +44,11 @@ public enum AccessRequests {
             self.hours = hours
             self.key = key
             self.account = account.map { String(AgentRequest.oneLine($0).prefix(80)) }.flatMap { $0.isEmpty ? nil : $0 }
+            self.kind = kind
+            self.result = result.map { String(AgentRequest.oneLine($0).prefix(400)) }
         }
+
+        public var isRotation: Bool { kind == "rotate" }
     }
 
     public static func read(from url: URL) -> [Entry] {
@@ -73,9 +81,17 @@ public enum AccessRequests {
         return entries.filter { $0.event == .asked && !answered.contains($0.id) }
     }
 
+    /// The newest request from this agent to rotate this key, and its answer if there is one.
+    public static func latestRotation(agent: String, key: String, in entries: [Entry]) -> (asked: Entry, answer: Entry?)? {
+        guard let asked = entries.last(where: { $0.event == .asked && $0.isRotation && $0.agent == agent && $0.key == key }) else {
+            return nil
+        }
+        return (asked, entries.last { $0.id == asked.id && $0.event != .asked })
+    }
+
     /// The newest request from this agent for this provider, and its answer if there is one.
     public static func latest(agent: String, provider: String, in entries: [Entry]) -> (asked: Entry, answer: Entry?)? {
-        guard let asked = entries.last(where: { $0.event == .asked && $0.agent == agent && $0.provider == provider }) else {
+        guard let asked = entries.last(where: { $0.event == .asked && !$0.isRotation && $0.agent == agent && $0.provider == provider }) else {
             return nil
         }
         return (asked, entries.last { $0.id == asked.id && $0.event != .asked })

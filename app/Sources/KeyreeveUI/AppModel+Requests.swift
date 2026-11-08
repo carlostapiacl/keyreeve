@@ -119,4 +119,24 @@ extension AppModel {
             to: requestsFile)
         reloadRequests()
     }
+
+    /// The file behind a key an agent names, by its identifier.
+    public func item(forKey id: String?) -> CatalogItem? {
+        guard let id, let source = keyIndex.key(id)?.source else { return nil }
+        return items.first { $0.path == source }
+    }
+
+    /// Rotates the key an agent asked about, where the person said it is used, and leaves how it went for
+    /// the agent to read. The vault asks for the fingerprint as for any rotation.
+    public func rotate(for request: AccessRequests.Entry, item: CatalogItem, handedOver: String?) {
+        audit([(request.key ?? item.path, "rotation \(request.id) from \(request.agent)")], event: "allowed")
+        runRotation(item, resume: false, handedOver: handedOver) { words in
+            try? AccessRequests.append(
+                AccessRequests.Entry(
+                    id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider,
+                    key: request.key, kind: "rotate", result: words),
+                to: self.requestsFile)
+            self.reloadRequests()
+        }
+    }
 }

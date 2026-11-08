@@ -106,19 +106,24 @@ extension AppModel {
         run(plan: stub, admin: nil, resume: true, binary: binary, vaultTool: vaultTool)
     }
 
-    func runRotation(_ item: CatalogItem, resume: Bool, handedOver: String? = nil) {
-        guard !busy, let binary, let vaultTool, item.vault == .sealed || item.vault == .outdated else { return }
+    /// `done` hears how it went, in words, whether it rotated, stopped or was never confirmed.
+    func runRotation(_ item: CatalogItem, resume: Bool, handedOver: String? = nil, done: ((String) -> Void)? = nil) {
+        guard !busy, let binary, let vaultTool, item.vault == .sealed || item.vault == .outdated else {
+            done?(T("Not rotated: the key is not sealed, or the app is busy"))
+            return
+        }
         let places = self.places[item.path] ?? KeyPlaces()
         let admin = places.admin.flatMap { name in items.first { $0.path == name } }
         let original = keysFolder?.appendingPathComponent(item.path).path
         let plan = RotationPlan(
             item: item, places: places, admin: admin,
             original: original.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil })
-        run(plan: plan, admin: admin?.path, resume: resume, handedOver: handedOver, binary: binary, vaultTool: vaultTool)
+        run(plan: plan, admin: admin?.path, resume: resume, handedOver: handedOver, binary: binary, vaultTool: vaultTool, done: done)
     }
 
     private func run(
-        plan: RotationPlan, admin: String?, resume: Bool, handedOver: String? = nil, binary: URL, vaultTool: URL
+        plan: RotationPlan, admin: String?, resume: Bool, handedOver: String? = nil, binary: URL, vaultTool: URL,
+        done: ((String) -> Void)? = nil
     ) {
         let key = plan.key
         // Pressing the button is a person saying the old key can go, which ends a waiting overlap.
@@ -127,6 +132,7 @@ extension AppModel {
         openVault(reason: reason) { unlocked in
             guard let unlocked else {
                 self.message = T("Not rotated: it was not confirmed")
+                done?(T("Not rotated: it was not confirmed"))
                 return
             }
             self.confirmation.confirm()
@@ -159,8 +165,10 @@ extension AppModel {
                     case .success(let report):
                         self.message = rotationMessage(report)
                         self.note("rotated", path: key, detail: report.outcome)
+                        done?(([report.outcome, rotationMessage(report)] + report.manual).joined(separator: ". "))
                     case .failure(let error):
                         self.message = (error as? CheckError)?.description ?? T("The vault could not be opened")
+                        done?(self.message ?? "")
                     }
                 }
             }

@@ -59,7 +59,9 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
             let parts = [message["method"], message["host"], message["path"], message["status"]]
             let method = parts[0] as? String ?? "?"
             let place = "\(parts[1] as? String ?? "?")\(parts[2] as? String ?? "")"
-            onEvent?(grant, key, "\(method) \(place) \(parts[3] as? Int ?? 0)")
+            // How far it got, when it did not get all the way: the provider may have acted on it all the same.
+            let outcome = (message["outcome"] as? String).flatMap { $0 == "complete" ? nil : ", \($0)" } ?? ""
+            onEvent?(grant, key, "\(method) \(place) \(parts[3] as? Int ?? 0)\(outcome)")
         default:
             guard let grant = message["grant"] as? String else { return }
             lock.lock()

@@ -61,6 +61,9 @@ pub struct Event {
     pub method: String,
     pub path: String,
     pub status: u16,
+    /// "complete", or how far it got: "not sent", "sent in part" or "no full reply". A request the provider may
+    /// have acted on is written down even when its answer never came back whole.
+    pub outcome: String,
 }
 
 fn now() -> u64 {
@@ -465,7 +468,10 @@ impl Proxy {
             .unwrap_or_default();
         let socket = match connect_within(&addresses) {
             Ok(socket) => socket,
-            Err(_) => return answer(stream.get_mut(), 502, "that host could not be reached"),
+            Err(_) => {
+                self.record(grant.as_deref(), host, &method, &target, 0, "not sent");
+                return answer(stream.get_mut(), 502, "that host could not be reached");
+            }
         };
         socket.set_read_timeout(Some(IO_TIMEOUT))?;
         socket.set_write_timeout(Some(IO_TIMEOUT))?;
@@ -473,6 +479,7 @@ impl Proxy {
         // Connecting takes a moment, and the permission can end during it.
         if let Some(grant) = &grant {
             if !self.grants_for(host).iter().any(|live| live.id == grant.id) {
+                self.record(Some(grant), host, &method, &target, 0, "not sent");
                 return answer(stream.get_mut(), 403, "that permission has ended");
             }
         }
@@ -482,41 +489,68 @@ impl Proxy {
             upstream.flush()
         })();
         if sent.is_err() {
+            // Some of it may have reached the provider, which may have acted on it.
+            self.record(grant.as_deref(), host, &method, &target, 0, "sent in part");
             return answer(stream.get_mut(), 502, "the request could not be sent");
         }
         let mut scrub = grant
             .as_ref()
             .map(|grant| Scrubber::new(grant.real.expose(), grant.stand_in.expose()));
-        let status = match &mut scrub {
-            Some(scrub) => relay_reply(&mut upstream, stream.get_mut(), scrub)?,
-            None => {
-                let mut status = 0;
-                let mut buffer = vec![0u8; 16 * 1024];
-                loop {
-                    let count = match upstream.read(&mut buffer) {
-                        Ok(count) => count,
-                        // Many servers close without a TLS goodbye, once they have said it all.
-                        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => 0,
-                        Err(error) => return Err(error),
-                    };
-                    if count == 0 {
-                        break status;
+        let relayed = (|| -> io::Result<u16> {
+            let status = match &mut scrub {
+                Some(scrub) => relay_reply(&mut upstream, stream.get_mut(), scrub)?,
+                None => {
+                    let mut status = 0;
+                    let mut buffer = vec![0u8; 16 * 1024];
+                    loop {
+                        let count = match upstream.read(&mut buffer) {
+                            Ok(count) => count,
+                            // Many servers close without a TLS goodbye, once they have said it all.
+                            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => 0,
+                            Err(error) => return Err(error),
+                        };
+                        if count == 0 {
+                            break status;
+                        }
+                        if status == 0 {
+                            status = status_of(&buffer[..count]);
+                        }
+                        stream.get_mut().write_all(&buffer[..count])?;
                     }
-                    if status == 0 {
-                        status = status_of(&buffer[..count]);
-                    }
-                    stream.get_mut().write_all(&buffer[..count])?;
                 }
+            };
+            stream.get_mut().flush()?;
+            Ok(status)
+        })();
+        match relayed {
+            Ok(status) => {
+                stream.get_mut().conn.send_close_notify();
+                let _ = stream.get_mut().flush();
+                self.record(grant.as_deref(), host, &method, &target, status, "complete");
+                Ok(())
             }
-        };
-        stream.get_mut().flush()?;
-        stream.get_mut().conn.send_close_notify();
-        let _ = stream.get_mut().flush();
+            Err(error) => {
+                // Sent whole, so the provider may have acted on it; only its answer was lost.
+                self.record(grant.as_deref(), host, &method, &target, 0, "no full reply");
+                Err(error)
+            }
+        }
+    }
+
+    /// Writes down one request that went out with a key, however far it got. No value, no stand-in and no
+    /// query string: a provider that takes its key in the address has it in the path, kept as `{key}`.
+    fn record(
+        &self,
+        grant: Option<&Grant>,
+        host: &str,
+        method: &str,
+        target: &str,
+        status: u16,
+        outcome: &str,
+    ) {
         let Some(grant) = grant else {
-            return Ok(());
+            return;
         };
-        // A provider that takes its key in the address puts the stand-in in the path, and the stand-in
-        // works through this proxy while the permission lasts, so neither it nor the key is kept.
         let mut path = target.split('?').next().unwrap_or("").to_owned();
         for secret in [grant.stand_in.expose(), grant.real.expose()] {
             // An empty one would match between every character.
@@ -529,16 +563,16 @@ impl Proxy {
             grant: grant.id.clone(),
             key: grant.key.clone(),
             host: host.to_owned(),
-            method,
+            method: method.to_owned(),
             path,
             status,
+            outcome: outcome.to_owned(),
         };
         let _ = self
             .events
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .send(event);
-        Ok(())
     }
 }
 

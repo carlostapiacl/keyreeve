@@ -233,11 +233,15 @@ pub fn run(
     if open {
         match frozen_plan(journal, &plan.key) {
             Some(frozen) => plan = frozen,
-            // With only a name to go on, nothing says which places hold the new key.
-            None if plan.recipe.is_empty() => {
-                return Err("this rotation's plan is lost, so it needs its key's settings".into())
+            // The places and actions it started with are what undoing it needs. Today's settings may
+            // name others, so going on with them could leave the new key in some places and the old in
+            // others, or revoke the only one that works.
+            None => {
+                return Err(
+                    "this rotation's saved plan is missing, so it stops here. Finish it by hand at the provider, then mark the key replaced"
+                        .into(),
+                )
             }
-            None => {}
         }
     }
     let recipe = resolve(&plan.recipe, plan.host.as_deref())?;
@@ -386,6 +390,15 @@ fn prepare(
 
 /// Notes that a key was replaced by hand, so the next rotation does not revoke by its old id.
 pub fn forget_id(journal: &Path, key: &str) -> Result<(), String> {
+    // The same lock as a rotation, read after taking it, so the two never write over each other.
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(journal.with_extension("lock"))
+        .map_err(|e| format!("the journal: {e}"))?;
+    lock.try_lock()
+        .map_err(|_| "a rotation is running".to_owned())?;
     let mut record = Journal::open(Box::new(FileBackend::new(journal)))
         .map_err(|e| format!("the journal: {e}"))?;
     if record.phase(key) != Phase::Idle {

@@ -697,3 +697,65 @@ fn statuses_say_where_each_key_stands_with_no_value() {
     assert_eq!(list[1].phase, "completed");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn an_open_rotation_with_its_plan_lost_stops_and_touches_nothing() {
+    let dir = folder("lost-plan");
+    let journal = dir.join("rotations.jsonl");
+    // A rotation that started and was not finished, whose saved plan is gone.
+    let mut record = Journal::open(Box::new(FileBackend::new(&journal))).unwrap();
+    record
+        .append("k", 1, Event::Started { old_id: None })
+        .unwrap();
+    drop(record);
+    let plan = Plan {
+        key: "k".into(),
+        recipe: "fake".into(),
+        field: None,
+        host: None,
+        admin: None,
+        admin_field: None,
+        overlap_secs: 0,
+        known_id: None,
+        issued_name: "n".into(),
+        original: None,
+        // Today's settings, which name a place the rotation never knew.
+        place_files: vec!["/somewhere-else".into()],
+        place_actions: Vec::new(),
+        expected_events: None,
+    };
+    let plan_file = dir.join("plan.json");
+    fs::write(&plan_file, serde_json::to_string(&plan).unwrap()).unwrap();
+    let before = fs::read_to_string(&journal).unwrap();
+    let error = run(
+        &plan_file,
+        Path::new("/nonexistent-tool"),
+        &journal,
+        &Sealed::read("{}".as_bytes()).unwrap(),
+        RunOptions {
+            resume: true,
+            revoke_now: false,
+        },
+    )
+    .unwrap_err();
+    assert!(error.contains("saved plan is missing"), "{error}");
+    assert_eq!(fs::read_to_string(&journal).unwrap(), before);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn forgetting_an_id_waits_for_no_rotation_and_refuses_while_one_runs() {
+    let dir = folder("forget-lock");
+    let journal = dir.join("rotations.jsonl");
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(journal.with_extension("lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    assert!(forget_id(&journal, "k").unwrap_err().contains("running"));
+    drop(lock);
+    assert!(forget_id(&journal, "k").is_ok());
+    fs::remove_dir_all(dir).unwrap();
+}

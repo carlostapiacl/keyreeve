@@ -26,16 +26,17 @@ public enum Assistants {
     /// The assistants running now, so Cancel ends them and not only forgets their answer.
     private final class Running: @unchecked Sendable {
         let lock = NSLock()
-        var processes: [ObjectIdentifier: Process] = [:]
+        var processes: [ObjectIdentifier: (task: String, process: Process)] = [:]
     }
     private static let running = Running()
 
-    /// Ends every assistant keyreeve started that is still working.
-    public static func stopAll() {
+    /// Ends the assistants started for this task, such as the sorting window's, and leaves another window's
+    /// working. With no task, every one keyreeve started.
+    public static func stopAll(task: String? = nil) {
         running.lock.lock()
-        let all = Array(running.processes.values)
+        let chosen = running.processes.values.filter { task == nil || $0.task == task }.map(\.process)
         running.lock.unlock()
-        for process in all where process.isRunning { process.terminate() }
+        for process in chosen where process.isRunning { process.terminate() }
     }
 
     /// The ones keyreeve knows how to call. Claude Code is limited to web search, so it cannot read a file.
@@ -83,7 +84,7 @@ public enum Assistants {
 
     /// Runs it in an empty folder of its own with a small environment, no input and a deadline, and returns
     /// what it answered. Nothing from keyreeve's folder or vault is in reach of the command line.
-    public static func ask(_ assistant: Assistant, _ prompt: String, seconds: TimeInterval = 300) throws -> String {
+    public static func ask(_ assistant: Assistant, _ prompt: String, seconds: TimeInterval = 300, task: String = "") throws -> String {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("keyreeve-assistant-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -117,7 +118,7 @@ public enum Assistants {
         }
         CheckRunner.watch(process, seconds: seconds)
         running.lock.lock()
-        running.processes[ObjectIdentifier(process)] = process
+        running.processes[ObjectIdentifier(process)] = (task, process)
         running.lock.unlock()
         defer {
             running.lock.lock()
@@ -146,14 +147,15 @@ public enum Assistants {
     /// A provider file drafted from the person's description, and checked. When the check fails, the
     /// assistant is shown what failed and tries once more; then the person sees what is left. Never saved here.
     public static func draftRecipe(
-        _ assistant: Assistant, describing text: String, check: (String) throws -> CheckRunner.RecipeReport
+        _ assistant: Assistant, describing text: String, task: String = "provider",
+        check: (String) throws -> CheckRunner.RecipeReport
     ) throws -> (yaml: String, report: CheckRunner.RecipeReport) {
-        var yaml = RecipeSpec.extractYAML(try ask(assistant, RecipeSpec.guide + "\n\n" + text))
+        var yaml = RecipeSpec.extractYAML(try ask(assistant, RecipeSpec.guide + "\n\n" + text, task: task))
         var report = try check(yaml)
         if !report.ok {
             let again = RecipeSpec.guide + "\n\n" + text + "\n\nYour last file did not pass keyreeve's check. It said:\n"
                 + report.lines.joined(separator: "\n") + "\n\nThe file was:\n" + yaml + "\n\nAnswer with the corrected file only."
-            yaml = RecipeSpec.extractYAML(try ask(assistant, again))
+            yaml = RecipeSpec.extractYAML(try ask(assistant, again, task: task))
             report = try check(yaml)
         }
         return (yaml, report)

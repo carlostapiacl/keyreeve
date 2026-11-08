@@ -2,7 +2,9 @@ import Foundation
 import KeyreeveCatalog
 import Testing
 
-/// The bridge to an AI the person runs in their terminal, tried with a script that stands in for it.
+/// The bridge to an AI the person runs in their terminal, tried with a script that stands in for it. One at a time:
+/// one test stops every running assistant, and would end another's beside it.
+@Suite(.serialized)
 struct AssistantTests {
     func script(_ body: String) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("fake-ai-\(UUID().uuidString).sh")
@@ -69,10 +71,23 @@ struct AssistantTests {
         let slow = try script("sleep 30; echo late")
         defer { try? FileManager.default.removeItem(at: slow) }
         let started = Date()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { Assistants.stopAll() }
+        let fast = try script("sleep 1; echo fine")
+        defer { try? FileManager.default.removeItem(at: fast) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { Assistants.stopAll(task: "stopped") }
+        // Another window's assistant, working at the same time, is not stopped with it.
+        final class Other: @unchecked Sendable { var answer: String? }
+        let other = Other()
+        let done = DispatchGroup()
+        done.enter()
+        DispatchQueue.global().async {
+            other.answer = try? Assistants.ask(Assistant(id: "t", name: "T", command: [fast.path, "{prompt}"], readsFiles: true), "x", task: "kept")
+            done.leave()
+        }
         #expect(throws: CheckError.self) {
-            try Assistants.ask(Assistant(id: "t", name: "T", command: [slow.path, "{prompt}"], readsFiles: true), "x")
+            try Assistants.ask(Assistant(id: "t", name: "T", command: [slow.path, "{prompt}"], readsFiles: true), "x", task: "stopped")
         }
         #expect(Date().timeIntervalSince(started) < 10)
+        done.wait()
+        #expect(other.answer?.contains("fine") == true)
     }
 }

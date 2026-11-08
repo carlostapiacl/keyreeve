@@ -79,7 +79,7 @@ struct SortSheet: View {
                         if asking {
                             Button(T("Cancel")) {
                                 task?.cancel()
-                                Assistants.stopAll()
+                                Assistants.stopAll(task: "sort")
                                 asking = false
                             }
                             .buttonStyle(KRButtonStyle())
@@ -91,7 +91,7 @@ struct SortSheet: View {
                 }
                 Spacer()
                 Button(T("Cancel")) {
-                    if asking { Assistants.stopAll() }
+                    if asking { Assistants.stopAll(task: "sort") }
                     dismiss()
                 }
                 .buttonStyle(KRButtonStyle()).keyboardShortcut(.cancelAction)
@@ -133,7 +133,7 @@ struct SortSheet: View {
         let providers = model.providers
         task = Task.detached {
             do {
-                let answer = try Assistants.ask(assistant, prompt)
+                let answer = try Assistants.ask(assistant, prompt, task: "sort")
                 let found = Suggester.read(answer, items: keys, providers: providers)
                 await MainActor.run {
                     guard asking else { return }

@@ -90,6 +90,25 @@ struct VaultTests {
         #expect(file.unattended == nil && file.entries["a/key.txt"]?.unattendedSealed == nil)
     }
 
+    /// A backup is proven by opening every key in it with the recovery key, not by matching a few characters.
+    @Test func aBackupIsProvenByOpeningEveryKey() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("backup-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = VaultStore(directory: folder.appendingPathComponent("vault"))
+        var file = try vault()
+        try file.replace(name: "a/key.txt", value: Data("NEWER".utf8))
+        try store.save(file)
+        let backup = try store.backup(to: folder)
+        let read = try VaultStore.read(backup)
+        #expect(try read.openAll(with: recovery) == 1)
+        #expect(throws: VaultError.self) { try read.openAll(with: Age.X25519Identity()) }
+        // A damaged copy inside is named, so a backup that cannot bring the keys back is known before it is needed.
+        var damaged = read
+        damaged.entries["a/key.txt"]?.sealed = try Age.encrypt(Data("x".utf8), to: [Age.X25519Identity().recipient])
+        #expect(throws: VaultError("a/key.txt does not open with the recovery key")) { try damaged.openAll(with: recovery) }
+    }
+
     @Test func testRecoveryMovesTheVaultToANewChip() throws {
         var file = try vault()
         let newChip = SoftwareRecipient()

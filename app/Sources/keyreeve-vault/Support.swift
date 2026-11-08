@@ -53,8 +53,8 @@ let help = """
           ~/.keyreeve/agents.toml says which, and it starts empty. Edit it in the app, on each key.
       keyreeve-vault export <name> --recovery
           Print an age file for this key, which any age tool opens with the recovery key.
-      keyreeve-vault check-recovery
-          Check a recovery key, read from stdin, against this vault.
+      keyreeve-vault check-recovery [<backup.json>]
+          Check a recovery key, read from stdin, by opening every key with it: of this vault, or of a backup.
       keyreeve-vault recover
           Move this vault to this Mac's chip, using a recovery key read from stdin.
       keyreeve-vault backup <folder>

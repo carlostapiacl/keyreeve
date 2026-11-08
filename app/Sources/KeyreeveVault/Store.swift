@@ -92,10 +92,15 @@ public struct VaultStore: Sendable {
 
     public func load() throws -> VaultFile {
         guard exists else { throw VaultError("there is no vault yet: run keyreeve-vault init") }
+        return try Self.read(vaultURL)
+    }
+
+    /// A vault file as it is on disk: this vault's, or a backup made with `backup`.
+    public static func read(_ url: URL) throws -> VaultFile {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            let vault = try decoder.decode(VaultFile.self, from: Data(contentsOf: vaultURL))
+            let vault = try decoder.decode(VaultFile.self, from: Data(contentsOf: url))
             guard vault.schema == 2 else { throw VaultError("this vault's format is not one this version reads") }
             return vault
         } catch let error as VaultError {

@@ -368,6 +368,12 @@ extension AppModel {
         return Array(Set(cleaned + ["claude", "codex"])).sorted()
     }
 
+    /// Whether a key at "always" has the copy that lets it open with no fingerprint.
+    public func hasUnattendedCopy(_ id: String) -> Bool {
+        guard let key = keyIndex.key(id) else { return false }
+        return unattendedSources.contains(key.source)
+    }
+
     /// Which agents may use a key. Empty means any.
     public func setAgents(_ agents: [String], for id: String) {
         updatePolicy { policy in

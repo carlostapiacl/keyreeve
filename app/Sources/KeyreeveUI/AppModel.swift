@@ -53,6 +53,8 @@ public final class AppModel: ObservableObject {
     @Published public var rotations: [RotationStatus] = []
     @Published public var places: [String: KeyPlaces] = [:]
     @Published public var agentPolicy = AgentPolicy()
+    /// Sources whose sealed copy for use with no fingerprint is in the vault.
+    @Published var unattendedSources: Set<String> = []
     /// Agents' requests for keys not saved yet, with no answer.
     @Published public var pendingRequests: [AccessRequests.Entry] = []
     /// The emergency stop is on: every agent is refused.
@@ -227,6 +229,7 @@ public final class AppModel: ObservableObject {
         activity = snapshot.activity
         places = snapshot.places
         agentPolicy = snapshot.agentPolicy
+        unattendedSources = snapshot.unattendedSources
         keyIndex = snapshot.keyIndex
         usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
@@ -346,6 +349,8 @@ struct Snapshot: Sendable {
     let usage: UsageSnapshot
     /// Files that are there and could not be read. Each would otherwise look empty, which is a different thing.
     let problems: [String]
+    /// The vault's entries with a copy that opens with no fingerprint.
+    let unattendedSources: Set<String>
     let providers: ProviderDirectory?
     let rotations: [RotationStatus]?
 
@@ -428,6 +433,7 @@ struct Snapshot: Sendable {
             problems.append(T("keys.toml could not be read: %@. It was left as it is.", "\(error)"))
         }
         self.problems = problems
+        unattendedSources = Set((vault?.entries ?? [:]).filter { $0.value.unattendedSealed != nil }.keys)
         usage = UsageSnapshot(files: files)
         providers = source.binary.map { CheckRunner.providers(binary: $0) }
         rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }

@@ -70,6 +70,20 @@ struct SnapshotTests {
         #expect(AppModel.rememberedAgents(defaults).contains("nightly-bot"))
     }
 
+    /// The window knows which keys have a copy that opens with no fingerprint, so a marked one without it is said.
+    @Test func theWindowKnowsWhichKeysHaveANoFingerprintCopy() throws {
+        let (root, files, store) = try home()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try store.update { vault in
+            try vault.add(name: "marked.txt", value: Data("CANARY".utf8))
+            try vault.add(name: "plain.txt", value: Data("CANARY".utf8))
+            vault.unattended = Age.TagRecipient(publicKey: SoftwareRecipient().publicKey).string
+            try vault.sealUnattended(name: "marked.txt", value: Data("CANARY".utf8))
+        }
+        let snapshot = Snapshot(reading: .init(files: files, store: store, binary: nil, keysFolder: nil))
+        #expect(snapshot.unattendedSources == ["marked.txt"])
+    }
+
     /// A key put in the vault from a script, with no file and no catalog line, is listed so it can be checked.
     @Test func aKeyAddedFromAScriptIsListed() throws {
         let (root, files, store) = try home()

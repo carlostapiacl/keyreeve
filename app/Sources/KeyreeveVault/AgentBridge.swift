@@ -265,7 +265,7 @@ public struct AgentBridge {
                 }
                 // Only programs run_with_key would accept, so an agent is not sent to one that is refused.
                 let programs = (policy.commands[key] ?? []).filter {
-                    policy.allows($0, with: key) && policy.hashes[$0] != nil && pinned($0, policy.hashes[$0])
+                    policy.allows($0, with: key) && policy.hash(of: $0, for: key) != nil && pinned($0, policy.hash(of: $0, for: key))
                 }
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
                 return "\(key): " + parts.joined(separator: "; ")
@@ -309,11 +309,11 @@ public struct AgentBridge {
             log("refused", key, "\(name) is not allowed", reason)
             throw VaultError("\(name) may not run with \(key). A person allows programs in the app, under Agents")
         }
-        guard policy.hashes[program] != nil else {
+        guard policy.hash(of: program, for: key) != nil else {
             log("refused", key, "\(name) was allowed before programs were pinned", reason)
             throw VaultError("\(name) was allowed before keyreeve pinned programs, so a person has to allow it again in the app")
         }
-        guard pinned(program, policy.hashes[program]) else {
+        guard pinned(program, policy.hash(of: program, for: key)) else {
             log("refused", key, "\(name) changed since it was allowed", reason)
             throw VaultError("\(name) changed since a person allowed it, so it is refused until they allow it again")
         }

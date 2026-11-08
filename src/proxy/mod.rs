@@ -442,13 +442,16 @@ impl Proxy {
         let Some(grant) = grant else {
             return Ok(());
         };
-        let path = target
-            .split('?')
-            .next()
-            .unwrap_or("")
-            .chars()
-            .take(200)
-            .collect();
+        // A provider that takes its key in the address puts the stand-in in the path, and the stand-in
+        // works through this proxy while the permission lasts, so neither it nor the key is kept.
+        let mut path = target.split('?').next().unwrap_or("").to_owned();
+        for secret in [grant.stand_in.expose(), grant.real.expose()] {
+            // An empty one would match between every character.
+            if !secret.is_empty() {
+                path = path.replace(secret, "{key}");
+            }
+        }
+        let path = path.chars().take(200).collect();
         let event = Event {
             grant: grant.id.clone(),
             key: grant.key.clone(),

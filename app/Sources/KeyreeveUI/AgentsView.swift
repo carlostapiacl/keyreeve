@@ -179,7 +179,7 @@ struct AgentsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionTitle(T("3. What they did"))
                 if let line = model.usage.brokenLine {
-                    Text(T("The usage log was changed at line %d.", line)).font(Theme.caption).foregroundStyle(Theme.bad)
+                    Text((line == 0 ? T("The usage log could not be read.") : T("The usage log was changed at line %d.", line))).font(Theme.caption).foregroundStyle(Theme.bad)
                 }
                 if recent.isEmpty {
                     Text(T("No agent has asked for a key yet.")).font(Theme.caption).foregroundStyle(Theme.muted)
@@ -248,7 +248,7 @@ struct AgentKeyRow: View {
                     Image(systemName: "terminal").foregroundStyle(Theme.muted)
                     Text(URL(fileURLWithPath: program).lastPathComponent)
                         .font(Theme.code).foregroundStyle(Theme.text).lineLimit(1).help(program)
-                    if model.agentPolicy.hashes[program] == nil {
+                    if model.agentPolicy.hash(of: program, for: key.id) == nil {
                         Text(T("allow it again to pin it")).font(Theme.caption).foregroundStyle(Theme.warn)
                     }
                     Spacer(minLength: 4)

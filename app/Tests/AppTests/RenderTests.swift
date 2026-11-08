@@ -149,7 +149,7 @@ struct RenderTests {
             ready.items[3].originalMoved = true
             ready.agentPolicy = AgentPolicy(
                 commands: ["legacy": ["/Users/a/.keyreeve/agent-tools/check-mail.sh"]], levels: ["hosting": .free, "vps": .ask],
-                agents: ["vps": ["claude"]], hashes: ["/Users/a/.keyreeve/agent-tools/check-mail.sh": "abc"])
+                agents: ["vps": ["claude"]], hashes: ["vps": ["/Users/a/.keyreeve/agent-tools/check-mail.sh": "abc"]])
             let runs = AgentTranscript(url: ready.files.directory.appendingPathComponent(AgentTranscript.fileName))
             try? FileManager.default.createDirectory(at: ready.files.directory, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: runs.url)

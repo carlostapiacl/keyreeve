@@ -261,9 +261,9 @@ fn the_address_is_swapped_only_for_a_provider_that_wants_it_there() {
     curl(&in_url, &[&url(&format!("/bot{FAKE}/me"))]);
     assert!(in_url.seen.lock().unwrap()[0].contains(REAL));
     let event = in_url.events.recv().unwrap();
-    assert!(
-        event.path.contains(FAKE),
-        "the log never holds the real key"
+    assert_eq!(
+        event.path, "/bot{key}/me",
+        "the log holds neither the key nor the stand-in, which works while the permission lasts"
     );
 }
 

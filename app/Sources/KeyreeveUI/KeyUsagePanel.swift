@@ -18,7 +18,7 @@ struct KeyUsagePanel: View {
             if !identifiers.isEmpty { permissions }
             Text(T("Recent use")).font(Theme.caption).foregroundStyle(Theme.muted).padding(.top, 6)
             if let line = model.usage.brokenLine {
-                Text(T("The usage log was changed at line %d.", line))
+                Text((line == 0 ? T("The usage log could not be read.") : T("The usage log was changed at line %d.", line)))
                     .font(Theme.caption).foregroundStyle(Theme.bad)
             }
             if recent.isEmpty {
@@ -146,7 +146,7 @@ struct UsageLogSheet: View {
                 Button(T("Close")) { dismiss() }.buttonStyle(KRButtonStyle())
             }
             if let line = model.usage.brokenLine {
-                Text(T("The usage log was changed at line %d.", line)).font(Theme.caption).foregroundStyle(Theme.bad)
+                Text((line == 0 ? T("The usage log could not be read.") : T("The usage log was changed at line %d.", line))).font(Theme.caption).foregroundStyle(Theme.bad)
             }
             List(shown, id: \.hash) { UsageRow(entry: $0, showsKey: true) }
         }

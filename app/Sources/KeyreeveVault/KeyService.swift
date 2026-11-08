@@ -337,12 +337,23 @@ public final class KeyService: @unchecked Sendable {
             // Asked every time and never remembered: past this point nothing protects the value.
             asking.lock()
             defer { asking.unlock() }
+            lock.lock()
+            let revocationsBefore = revocations
+            lock.unlock()
             let sealed: Data
             do {
                 sealed = try open(key.source, FingerPrompt.real(who: name, key: id, account: key.account, reason: request.reason))
             } catch {
                 try log.append(event: "denied", key: id, observed: caller, declared: declared, detail: "real key")
                 throw error
+            }
+            // The emergency stop or a revoke while the finger was on the sensor wins over the yes.
+            lock.lock()
+            let stopped = revocations != revocationsBefore || paused()
+            lock.unlock()
+            guard !stopped else {
+                try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "stopped during the fingerprint")
+                throw VaultError("this was stopped while it was being opened")
             }
             let value = try EnvReferences.value(in: sealed, field: key.field)
             try log.append(event: "handed", key: id, observed: caller, declared: declared, detail: "real key")
@@ -381,9 +392,17 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "denied", key: id, observed: caller, declared: declared)
             throw error
         }
-        // Counted from the fingerprint, and never past the key's closing.
+        // Counted from the fingerprint, and never past the key's closing. A key that closed while the
+        // finger was on the sensor gets nothing, not a second.
         var seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
-        if let notAfter = request.notAfter { seconds = max(1, min(seconds, Int(notAfter.timeIntervalSince(now())))) }
+        if let notAfter = request.notAfter {
+            let left = Int(notAfter.timeIntervalSince(now()))
+            guard left > 0 else {
+                try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "closed during the fingerprint")
+                throw VaultError("\(id) closed while it was being opened")
+            }
+            seconds = min(seconds, left)
+        }
         let expires = now().addingTimeInterval(TimeInterval(seconds))
         let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
         let text = String(decoding: sealed, as: UTF8.self)

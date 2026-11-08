@@ -105,9 +105,11 @@ public struct AuditLog: Sendable {
         return try data.split(separator: 10).map { try Self.decoder().decode(Entry.self, from: Data($0)) }
     }
 
-    /// The first line that does not follow from the one before, or nil if the chain holds.
+    /// The first line that does not follow from the one before, or nil if the chain holds or there is no
+    /// log yet. A log that is there and cannot be read is line 0: it cannot be said to hold.
     public func firstBrokenLine() -> Int? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return 0 }
         var previous = ""
         for (index, line) in data.split(separator: 10).enumerated() {
             guard let entry = try? Self.decoder().decode(Entry.self, from: Data(line)),

@@ -68,4 +68,19 @@ public enum EnvReferences {
         }
         return trimmed
     }
+
+    /// Variables that change which program runs or what it loads, rather than what it is told. A file
+    /// from a repository could set them to run something else, so they need the person's say-so.
+    public static func changesWhatRuns(_ name: String) -> Bool {
+        let upper = name.uppercased()
+        let exact: Set<String> = [
+            "PATH", "BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "PS4", "PROMPT_COMMAND", "IFS",
+            "NODE_OPTIONS", "NODE_PATH", "PYTHONSTARTUP", "PYTHONPATH", "PYTHONHOME", "PERL5OPT", "PERL5LIB",
+            "RUBYOPT", "RUBYLIB", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "CLASSPATH",
+            "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+            "SSH_AUTH_SOCK", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "CURL_CA_BUNDLE",
+            "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "HOME",
+        ]
+        return exact.contains(upper) || upper.hasPrefix("DYLD_") || upper.hasPrefix("LD_")
+    }
 }

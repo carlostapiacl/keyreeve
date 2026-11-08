@@ -55,11 +55,25 @@ extension AgentBridge {
         // Changed as the file is now, so what the app changed while the window was open is kept.
         let closes = decision.hours.map { now().addingTimeInterval(TimeInterval($0 * 3600)) }
         let requester = agent
+        let asked = now()
+        final class Outcome: @unchecked Sendable { var stale = false }
+        let outcome = Outcome()
         try updatePolicy { policy in
+            // The yes was for the key as it was when the window opened. If the person changed it meanwhile,
+            // that change stands and this yes is dropped.
+            guard policy.level(of: key, at: asked) == nil else {
+                outcome.stale = true
+                return
+            }
             policy.levels[key] = .free
             // A key opened at an agent's request is open to that agent alone.
             policy.agents[key] = [requester]
             policy.until[key] = closes
+        }
+        guard !outcome.stale else {
+            log("refused", key, "changed while the window was open", reason)
+            kept("not opened: the key changed while the person was asked")
+            throw VaultError("\(key) changed while the person was asked, so nothing was opened. Call list_keys to see it now")
         }
         let how = closes.map { "free until \(ISO8601DateFormatter().string(from: $0))" } ?? "free, always"
         log("opened", key, "\(how), for \(agent)", reason)

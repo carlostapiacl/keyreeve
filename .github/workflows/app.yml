@@ -1,0 +1,55 @@
+name: app
+
+# The Mac app and keyreeve-vault, in Swift. Runs only when they change, and only the test groups a change
+# can reach: the vault's tests, the catalog's, the app's, or all of them.
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/app.yml"
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Which test groups this change reaches
+        id: groups
+        run: |
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- .)
+          echo "$changed"
+          vault=false; catalog=false; ui=false
+          # The app depends on the vault and the catalog, so a change to either also runs the app's tests.
+          if echo "$changed" | grep -qE '^app/(Sources/KeyreeveVault|Sources/keyreeve-vault|Tests/VaultTests)/'; then vault=true; ui=true; fi
+          if echo "$changed" | grep -qE '^app/(Sources/KeyreeveCatalog|Tests/CatalogTests)/'; then catalog=true; ui=true; fi
+          if echo "$changed" | grep -qE '^app/(Sources/KeyreeveUI|Sources/Keyreeve|Tests/AppTests)/'; then ui=true; fi
+          if echo "$changed" | grep -qE '^app/(Package\.swift|Package\.resolved)$|^\.github/workflows/app\.yml$'; then vault=true; catalog=true; ui=true; fi
+          filter=""
+          $vault && filter="${filter:+$filter|}^VaultTests\."
+          $catalog && filter="${filter:+$filter|}^CatalogTests\."
+          $ui && filter="${filter:+$filter|}^AppTests\."
+          echo "filter=$filter" >> "$GITHUB_OUTPUT"
+          echo "Test groups: ${filter:-none}"
+      - name: age, for the vault's interoperability tests
+        if: contains(steps.groups.outputs.filter, 'VaultTests')
+        run: brew install age
+      - run: swift --version
+      - run: swift build --build-tests
+      - name: Tests
+        if: steps.groups.outputs.filter != ''
+        run: swift test --skip-build --filter '${{ steps.groups.outputs.filter }}'
+      - name: The app and its command build for release
+        run: swift build -c release

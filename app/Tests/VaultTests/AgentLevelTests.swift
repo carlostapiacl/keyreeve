@@ -121,6 +121,23 @@ struct AgentLevelTests {
         #expect(AgentPolicy.load(from: url) == AgentPolicy())
     }
 
+    /// Each change keeps the file as it was, so one that went wrong is undone by copying it back; only the last
+    /// few stay.
+    @Test func eachChangeKeepsThePreviousPermissions() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("previous-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("agents.toml")
+        try AgentPolicy.update(at: url) { $0.levels["a"] = .free }
+        try AgentPolicy.update(at: url) { $0.levels["b"] = .ask }
+        let previous = AgentPolicy.previousFolder(for: url)
+        let kept = try FileManager.default.contentsOfDirectory(atPath: previous.path).sorted()
+        #expect(kept.count == 1)
+        let earlier = try AgentPolicy.parse(String(contentsOf: previous.appendingPathComponent(kept[0]), encoding: .utf8))
+        #expect(earlier.levels == ["a": .free])
+        for index in 0..<(AgentPolicy.keptVersions + 5) { try AgentPolicy.update(at: url) { $0.levels["k\(index)"] = .free } }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: previous.path).count == AgentPolicy.keptVersions)
+    }
+
     @Test func aProgramThatChangedIsRefused() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("tool-\(UUID().uuidString).sh")
         defer { try? FileManager.default.removeItem(at: file) }

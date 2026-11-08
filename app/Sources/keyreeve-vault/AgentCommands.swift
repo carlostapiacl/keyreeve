@@ -77,7 +77,7 @@ func serveAgents() throws {
     let startedAs = changeStamp(ownPath())
     // This server's parent is the agent that started it. The tree is the system's word, not the agent's.
     let observed = CallerIdentity.observe(pid: getpid())
-    let agent = AgentBridge.agentName(chain: observed.chain)
+    let agent = AgentBridge.agentName(chain: observed.chain, declared: ProcessInfo.processInfo.environment["KEYREEVE_AGENT"])
     func indexed(_ id: String) throws -> KeyIndex.Key {
         guard let key = try KeyIndex.load(from: keysFile).key(id) else { throw VaultError("no key is called \(id)") }
         return key
@@ -150,9 +150,7 @@ func serveAgents() throws {
     var line = Data()
     var tooLong = false
     let input = FileHandle.standardInput
-    while true {
-        let chunk = input.availableData
-        if chunk.isEmpty { break }
+    func take(_ chunk: Data) {
         for byte in chunk {
             if byte == 10 {
                 if tooLong {
@@ -171,5 +169,36 @@ func serveAgents() throws {
                 }
             }
         }
+    }
+    // What arrived just before the previous version handed over to this one.
+    if let pending = ProcessInfo.processInfo.environment[AgentHandOver.variable] {
+        unsetenv(AgentHandOver.variable)
+        if let chunk = Data(base64Encoded: pending) { take(chunk) }
+    }
+    while true {
+        let chunk = input.availableData
+        if chunk.isEmpty { break }
+        // A newer Keyreeve is in place: this process becomes it, keeping the agent's connection and the message that
+        // just came, so the session goes on with the new code and nobody has to start it again.
+        if line.isEmpty, !tooLong, changeStamp(ownPath()) != startedAs, chunk.count <= AgentHandOver.maxPending {
+            AgentHandOver.become(ownPath().path, pending: chunk)
+        }
+        take(chunk)
+    }
+}
+
+/// How an agent's server hands over to a newer version of itself, in the same process.
+enum AgentHandOver {
+    static let variable = "KEYREEVE_MCP_PENDING"
+    /// What fits in the environment beside everything else, with room to spare.
+    static let maxPending = 192 * 1024
+
+    /// Runs the program at this path in this process. Only if that fails does it come back, and the old one goes on.
+    static func become(_ path: String, pending: Data) {
+        guard FileManager.default.isExecutableFile(atPath: path) else { return }
+        setenv(variable, pending.base64EncodedString(), 1)
+        var pointers: [UnsafeMutablePointer<CChar>?] = [strdup(path), strdup("mcp"), nil]
+        execv(path, &pointers)
+        unsetenv(variable)
     }
 }

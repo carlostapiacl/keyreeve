@@ -57,8 +57,8 @@ struct SnapshotTests {
 
     /// The agents a key can be opened to: those the log has seen, cleaned, once each, with Claude and Codex.
     @Test func theAgentsToChooseFromAreTheOnesSeen() {
-        let names = AppModel.agentNames(["nightly-bot", "Claude", " nightly-bot ", "motor_1", "a b", "<x>", "", String(repeating: "z", count: 50)])
-        #expect(names == ["claude", "codex", "motor_1", "nightly-bot"])
+        let names = AppModel.agentNames(["nightly-bot", "Claude", " nightly-bot ", "motor_1", "a b", "<x>", "", String(repeating: "z", count: 50), "claude/sales", "a/b/c", "claude/"])
+        #expect(names == ["claude", "claude/sales", "codex", "motor_1", "nightly-bot"])
     }
 
     /// An agent seen once is remembered, cleaned, after it leaves the recent lines of the log.

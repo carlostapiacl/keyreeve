@@ -211,13 +211,19 @@ public struct AgentBridge {
     }
 
     /// The agent behind a process chain, which starts with this server.
-    public static func agentName(chain: [String]) -> String {
-        for name in chain.dropFirst() {
-            let lower = name.lowercased()
-            if lower.contains("claude") { return "claude" }
-            if lower.contains("codex") { return "codex" }
-        }
-        return chain.dropFirst().first ?? "agent"
+    public static func agentName(chain: [String], declared: String? = nil) -> String {
+        let base: String = {
+            for name in chain.dropFirst() {
+                let lower = name.lowercased()
+                if lower.contains("claude") { return "claude" }
+                if lower.contains("codex") { return "codex" }
+            }
+            return chain.dropFirst().first ?? "agent"
+        }()
+        // A session can name itself, from its own setup: Claude's sales session is "claude/sales". The program
+        // comes from the system and stays first, so the name only narrows it, and a key open to "claude" still is.
+        guard let declared, let clean = AgentPolicy.cleanAgentName(declared), clean != base else { return base }
+        return base + "/" + clean
     }
 
     /// The opened key, if the person approved this pair for a while and nothing ended it since.

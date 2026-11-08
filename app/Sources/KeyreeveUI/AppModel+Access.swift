@@ -363,8 +363,13 @@ extension AppModel {
     }
 
     nonisolated static func agentNames(_ names: [String]) -> [String] {
-        let cleaned = names.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
-            .filter { !$0.isEmpty && $0.count <= 40 && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" } }
+        // A program, or a program and the name a session gave itself, such as "claude/sales".
+        let cleaned = names.compactMap { name -> String? in
+            let parts = name.trimmingCharacters(in: .whitespaces).split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard (1...2).contains(parts.count) else { return nil }
+            let clean = parts.compactMap(AgentPolicy.cleanAgentName)
+            return clean.count == parts.count ? clean.joined(separator: "/") : nil
+        }
         return Array(Set(cleaned + ["claude", "codex"])).sorted()
     }
 

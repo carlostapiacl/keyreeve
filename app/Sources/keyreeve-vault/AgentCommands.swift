@@ -117,9 +117,32 @@ func serveAgents() throws {
         addRequest: { try AccessRequests.append($0, to: home.appendingPathComponent(AccessRequests.fileName)) },
         announce: announceRequest,
         paused: { AgentBridge.isPaused(home: home) })
-    while let line = readLine() {
-        if let answer = bridge.handle(line) {
-            FileHandle.standardOutput.write(Data((answer + "\n").utf8))
+    // One message per line, at most a megabyte: a client that sends more is told so and the line is
+    // dropped, read in pieces and never held whole.
+    let limit = 1 << 20
+    var line = Data()
+    var tooLong = false
+    let input = FileHandle.standardInput
+    while true {
+        let chunk = input.availableData
+        if chunk.isEmpty { break }
+        for byte in chunk {
+            if byte == 10 {
+                if tooLong {
+                    FileHandle.standardOutput.write(Data(#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"that message is over a megabyte"}}"#.utf8 + [10]))
+                } else if let text = String(data: line, encoding: .utf8), let answer = bridge.handle(text) {
+                    FileHandle.standardOutput.write(Data((answer + "\n").utf8))
+                }
+                line.removeAll(keepingCapacity: true)
+                tooLong = false
+            } else if !tooLong {
+                if line.count < limit {
+                    line.append(byte)
+                } else {
+                    tooLong = true
+                    line.removeAll()
+                }
+            }
         }
     }
 }

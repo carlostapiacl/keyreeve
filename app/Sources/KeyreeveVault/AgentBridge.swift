@@ -166,10 +166,15 @@ public struct AgentBridge {
         let started = Date()
         let output = try body()
         var text = output.text
-        for secret in secrets { text = Self.redact(text, value: secret) }
+        // The command as kept is cleaned too: an agent can write a value into its own arguments.
+        var shown = AgentRequest.shown(command)
+        for secret in secrets {
+            text = Self.redact(text, value: secret)
+            shown = Self.redact(shown, value: secret)
+        }
         let kept = String(decoding: Data(text.utf8).prefix(AgentRunner.maxOutput), as: UTF8.self)
         transcript(AgentTranscript.Entry(
-            at: started, agent: agent, key: key, command: AgentRequest.shown(command), reason: reason, exit: output.status,
+            at: started, agent: agent, key: key, command: shown, reason: reason, exit: output.status,
             output: kept, milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
         return "exit \(output.status)\n\(kept)"
     }

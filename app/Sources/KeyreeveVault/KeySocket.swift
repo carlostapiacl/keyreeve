@@ -89,8 +89,6 @@ public enum KeySocket {
 
     /// A private socket, ready to accept. Anything at that path is replaced.
     static func bound(path: String) throws -> Int32 {
-        let previous = umask(0o077)
-        defer { umask(previous) }
         unlink(path)
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw VaultError("the socket could not be opened") }
@@ -123,9 +121,8 @@ public enum KeySocket {
 
     public static func listen(path: String) throws -> Int32 {
         let folder = URL(fileURLWithPath: path).deletingLastPathComponent()
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // The folder is 0700, so the socket in it is out of other users' reach whatever its own mode.
+        try PrivateFile.folder(folder)
         // The system lets one process hold this and frees it when that process ends, so a busy service
         // is never mistaken for a dead one. It stays open on purpose, for as long as this process runs.
         let holder = open(path + ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
@@ -145,22 +142,40 @@ public enum KeySocket {
     }
 
     /// Serves until `shouldStop` says so.
+    /// How many requests are served at once. Past it, only what ends permissions or lists them gets in,
+    /// so the emergency stop works while every other slot waits on a fingerprint.
+    static let slots = 64
+    static let urgentSlots = 16
+
     public static func serve(descriptor: Int32, service: KeyService, shouldStop: @escaping () -> Bool = { false }) {
         var pollFD = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        let ordinary = DispatchSemaphore(value: slots)
+        let urgent = DispatchSemaphore(value: urgentSlots)
         while !shouldStop() {
             guard poll(&pollFD, 1, 1000) > 0 else { continue }
             let client = accept(descriptor, nil, nil)
             guard client >= 0 else { continue }
             _ = fcntl(client, F_SETFD, FD_CLOEXEC)
-            // A request is one short line, so a client that says nothing does not keep a thread.
-            var patience = timeval(tv_sec: 10, tv_usec: 0)
+            let full = ordinary.wait(timeout: .now()) == .timedOut
+            if full, urgent.wait(timeout: .now()) == .timedOut {
+                close(client)
+                continue
+            }
+            // A request is one short line, so a client that says nothing does not keep a thread; past
+            // the limit it gets one second.
+            var patience = timeval(tv_sec: full ? 1 : 10, tv_usec: 0)
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &patience, socklen_t(MemoryLayout<timeval>.size))
             Thread.detachNewThread {
-                defer { close(client) }
+                defer {
+                    close(client)
+                    (full ? urgent : ordinary).signal()
+                }
                 guard let pid = CallerIdentity.peer(of: client), let line = readLine(client),
                     let request = try? JSONDecoder().decode(KeyService.Request.self, from: line)
                 else { return }
-                let response = service.handle(request, caller: CallerIdentity.observe(pid: pid))
+                let response = full && !["revoke", "grants"].contains(request.op)
+                    ? KeyService.Response(ok: false, error: "the key service is busy, so try again in a moment")
+                    : service.handle(request, caller: CallerIdentity.observe(pid: pid))
                 if var out = try? JSONEncoder().encode(response) {
                     out.append(10)
                     _ = writeAll(client, out)

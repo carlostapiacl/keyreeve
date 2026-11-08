@@ -402,3 +402,11 @@ extension VaultFile {
     /// Sealing is random, so compare what was stored with what came back.
     fileprivate func withSameEntries(as other: VaultFile) -> VaultFile { other }
 }
+
+struct ReservedNameTests {
+    @Test func aFileAtAPastedKeysPathIsNeverSealedUnderIt() {
+        #expect(VaultFile.isReserved("added/openai"))
+        #expect(VaultFile.isReserved("resend#incoming"))
+        #expect(!VaultFile.isReserved("lab/added.txt"))
+    }
+}

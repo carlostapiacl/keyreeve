@@ -249,6 +249,26 @@ struct AgentTests {
         #expect(Date().timeIntervalSince(started) < 10)
     }
 
+    @Test func whatACommandLeavesRunningEndsWithIt() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("child-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let out = try AgentRunner.run(
+            ["/bin/sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $! > '\(file.path)'; echo done"], variable: "X", value: "v")
+        #expect(out.status == 0 && out.text.contains("done"))
+        let child = try #require(Int32(try String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        // Given a moment for the signal to land, the background child is gone.
+        var alive = true
+        for _ in 0..<20 where alive {
+            alive = kill(child, 0) == 0
+            if alive { usleep(50_000) }
+        }
+        #expect(!alive)
+    }
+
+    @Test func theExitStatusComesBack() throws {
+        #expect(try AgentRunner.run(["/bin/sh", "-c", "exit 3"], variable: "X", value: "v").status == 3)
+    }
+
     @Test func aProgramThatClosesItsOutputAndStaysAliveDoesNotHoldTheServer() throws {
         let started = Date()
         let out = try AgentRunner.run(

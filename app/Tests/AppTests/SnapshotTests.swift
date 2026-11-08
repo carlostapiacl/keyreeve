@@ -60,11 +60,11 @@ struct SnapshotTests {
         let (root, files, store) = try home()
         defer { try? FileManager.default.removeItem(at: root) }
         try store.update { vault in
-            try vault.add(name: "anthropic-lh.txt", value: Data("CANARY".utf8))
+            try vault.add(name: "from-a-script.txt", value: Data("CANARY".utf8))
             try vault.add(name: "from-elsewhere.txt", value: Data("CANARY".utf8), source: "/some/other/folder")
         }
         let paths = Snapshot(reading: .init(files: files, store: store, binary: nil, keysFolder: nil)).items.map(\.path)
-        #expect(paths.contains("anthropic-lh.txt"))
+        #expect(paths.contains("from-a-script.txt"))
         // One sealed from a folder of files belongs to that folder's list, not here.
         #expect(!paths.contains("from-elsewhere.txt"))
     }

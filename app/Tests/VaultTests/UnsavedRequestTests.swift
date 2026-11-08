@@ -56,8 +56,8 @@ struct UnsavedRequestTests {
         let world = World()
         _ = try AgentTests().call(
             bridge(world), "request_access",
-            ["key": "resend", "reason": "r", "account": "  restoiq\n<b>  "])
-        #expect(world.entries.first?.account == "restoiq <b>")
+            ["key": "resend", "reason": "r", "account": "  acme\n<b>  "])
+        #expect(world.entries.first?.account == "acme <b>")
         // An older line with no account still reads.
         let line = #"{"agent":"claude","at":"2026-11-08T00:00:00Z","event":"asked","id":"r-1","provider":"sentry"}"#
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("requests-\(UUID().uuidString).jsonl")
@@ -179,30 +179,30 @@ struct UnsavedRequestTests {
     @Test func anotherAccountOfASavedProviderIsAnotherKey() throws {
         let world = World()
         let keys = [
-            "meta": KeyIndex.Key(id: "meta", source: "m.txt", provider: "meta", account: "restoiq"),
-            "meta-ads": KeyIndex.Key(id: "meta-ads", source: "a.txt", provider: "meta", account: "minerva"),
+            "meta": KeyIndex.Key(id: "meta", source: "m.txt", provider: "meta", account: "acme"),
+            "meta-globex": KeyIndex.Key(id: "meta-globex", source: "a.txt", provider: "meta", account: "globex"),
         ]
         let bridge = AgentBridge(
-            policy: { AgentPolicy(levels: ["meta": .free]) }, names: { ["meta", "meta-ads"] },
+            policy: { AgentPolicy(levels: ["meta": .free]) }, names: { ["meta", "meta-globex"] },
             open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
             agent: "claude", describe: { keys },
             offered: { ["meta"] }, requests: { world.entries }, addRequest: { world.entries.append($0) })
         let ask = { (account: String) in
             try AgentTests().call(bridge, "request_access", ["key": "meta", "reason": "insights", "account": account]).text
         }
-        #expect(try ask("minerva").contains("is meta-ads, not meta"))
+        #expect(try ask("globex").contains("is meta-globex, not meta"))
         #expect(world.entries.isEmpty)
-        #expect(try ask("hernan").hasPrefix("Waiting: no meta key is saved yet"))
-        #expect(world.entries.last?.account == "hernan" && world.entries.last?.provider == "meta")
+        #expect(try ask("initech").hasPrefix("Waiting: no meta key is saved yet"))
+        #expect(world.entries.last?.account == "initech" && world.entries.last?.provider == "meta")
         // The same account as the key by that name is that key.
-        #expect(try ask("restoiq").contains("already open"))
+        #expect(try ask("acme").contains("already open"))
     }
 
     /// An agent may ask for a key to need no fingerprint; the person decides in a window that starts on no, gives
     /// their finger to seal the copy, and the key keeps the agents it was open to.
     @Test func noFingerprintIsAskedAndThePersonDecides() throws {
         final class Box: @unchecked Sendable {
-            var policy = AgentPolicy(levels: ["bot": .free], agents: ["bot": ["wapentakebot", "claude"]])
+            var policy = AgentPolicy(levels: ["bot": .free], agents: ["bot": ["nightly-bot", "claude"]])
             var answer = false
             var marked: [String] = []
             var failSeal = false
@@ -240,7 +240,7 @@ struct UnsavedRequestTests {
             decideNoFingerprint: { _ in true }, markUnattended: { key, _ in box.marked.append(key) })
         #expect(!(try AgentTests().call(fresh, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).error))
         #expect(box.policy.levels["bot"] == .always && box.marked == ["bot"])
-        #expect(box.policy.agents["bot"] == ["wapentakebot", "claude"])
+        #expect(box.policy.agents["bot"] == ["nightly-bot", "claude"])
         #expect(try AgentTests().call(fresh, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).text.contains("already needs no fingerprint"))
     }
 

@@ -52,6 +52,20 @@ struct UnsavedRequestTests {
         #expect(try ask(bridge).text.contains("Use use_key with key resend-test"))
     }
 
+    @Test func theAccountTheAgentNamesIsKeptWithTheRequest() throws {
+        let world = World()
+        _ = try AgentTests().call(
+            bridge(world), "request_access",
+            ["key": "resend", "reason": "r", "account": "  restoiq\n<b>  "])
+        #expect(world.entries.first?.account == "restoiq <b>")
+        // An older line with no account still reads.
+        let line = #"{"agent":"claude","at":"2026-11-08T00:00:00Z","event":"asked","id":"r-1","provider":"sentry"}"#
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("requests-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try (line + "\n").write(to: file, atomically: true, encoding: .utf8)
+        #expect(AccessRequests.read(from: file).first?.account == nil)
+    }
+
     @Test func aNoFromTheWindowOrTheAppStopsTheAgentAsking() throws {
         let world = World()
         world.answer = .deny

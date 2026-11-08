@@ -23,7 +23,7 @@ public enum RecipeSpec {
         Field(id: "alive_if", path: "verify.alive_if", help: "A refusal that still proves the key is alive, such as a restricted key that answers 401 with a known word.", basic: false),
         Field(id: "prefixes", path: "prefixes", help: "How its keys start, such as sk_live_. Lets the app recognise a pasted key and find it inside a file of notes.", basic: false),
         Field(id: "env_var", path: "env_var", help: "The variable programs usually read it from, such as SENTRY_AUTH_TOKEN.", basic: false),
-        Field(id: "identify", path: "identify", help: "A read-only request and the fields to keep from its answer: $.path, header:name, token:name or reply:. account names whose key it is.", basic: false),
+        Field(id: "identify", path: "identify", help: "A read-only request and the fields to keep from its answer: $.path, $.*.path for every item of a list, header:name, token:name or reply:. account names whose key it is.", basic: false),
         Field(id: "suggested_name", path: "suggested_name", help: "A name built from what identify found, such as \"Sentry · {account}\".", basic: false),
         Field(id: "create", path: "create", help: "Rotation: the request that makes a new key, with value_from and id_from saying where the answer holds them.", basic: false),
         Field(id: "revoke", path: "revoke", help: "Rotation: the request that ends a key by its id, such as DELETE /keys/{id}.", basic: false),
@@ -57,7 +57,7 @@ public enum RecipeSpec {
         # optional: verify.alive_if: { status: <code>, contains: <word in the answer> } for a restricted key that is alive
         identify:
           request: { method: GET, path: <endpoint describing the key or its account> }
-          fields: { account: $.<json path>, email: $.<json path> }
+          fields: { account: $.<json path>, email: $.<json path> }   # $.*.<path> keeps every item of a list
         suggested_name: "<Name> · {account}"
         rotate_every_days: <number>
         criticality_hint: <1 to 5>

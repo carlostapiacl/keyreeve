@@ -82,6 +82,7 @@ pub fn identify(
             return None;
         }
         match &json {
+            Some(json) if path.contains(".*") => crate::recipe::extract_all(json, path),
             Some(json) => extract(json, path),
             None => xml_tag(body, path),
         }

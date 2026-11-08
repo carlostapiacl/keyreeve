@@ -186,7 +186,7 @@ A file can also declare:
 | `self_hosted: true` | each person gives their own server, approved one at a time, always over HTTPS |
 | `prefixes` | finds the key inside a file of notes, and refuses if there are two |
 | `alive_if` | a refusal that still proves the key is alive, such as a restricted key |
-| `fields` in `identify` | `$.path`, `header:name`, `token:name` or `reply:`. Name them `scopes` or `expires` to say what a key can do and when it ends |
+| `fields` in `identify` | `$.path`, `header:name`, `token:name` or `reply:`. `$.*.slug` keeps every item of a list, such as each organization a token reaches. Name them `scopes` or `expires` to say what a key can do and when it ends |
 | `rotate_every_days` | a suggested age, shown as "older than suggested" |
 | `criticality_hint` | a rating from 1 to 5, shown faded until you confirm yours |
 

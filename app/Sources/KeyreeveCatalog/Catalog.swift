@@ -470,3 +470,30 @@ public struct CatalogSummary: Sendable {
 
     public func count(_ target: Sidebar) -> Int { counts[target] ?? 0 }
 }
+
+extension CatalogItem {
+    /// The accounts or organizations the provider said this key reaches, for telling apart several keys
+    /// of one provider.
+    public var reaches: String? {
+        guard let fields = details?.fields else { return nil }
+        return fields["organizations"] ?? fields["account"] ?? fields["email"]
+    }
+
+    /// How well this key fits the account an agent named: 2 when what the provider said of the key names
+    /// it, 1 when a tag, the key's name or its path does, 0 otherwise. Whole words only, so "lh" does not
+    /// fit "github".
+    public func fit(account hint: String?) -> Int {
+        func words(_ text: String) -> Set<String> {
+            Set(text.lowercased().split { !($0.isLetter || $0.isNumber) }.map(String.init))
+        }
+        func joined(_ text: String) -> String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
+        guard let hint, !joined(hint).isEmpty else { return 0 }
+        let wanted = joined(hint)
+        let said = (details?.fields ?? [:]).filter { ["account", "organizations", "name", "email"].contains($0.key) }.values
+            .flatMap { $0.split(separator: ",").map { joined(String($0)) } }
+        if said.contains(wanted) { return 2 }
+        let own = tags.map { joined(String($0.split(separator: ":").last ?? "")) } + [joined(name)]
+        if own.contains(wanted) || words(path).union(words(name)).contains(wanted) || words(path).contains(hint.lowercased()) { return 1 }
+        return 0
+    }
+}

@@ -24,10 +24,12 @@ public enum AccessRequests {
         public var hours: Int?
         /// The identifier the key was saved as. Only on `allowed`.
         public var key: String?
+        /// The account, organization or project the agent says the key should belong to, if it knows.
+        public var account: String?
 
         public init(
             id: String, at: Date, event: Event, agent: String, provider: String, reason: String? = nil, hours: Int? = nil,
-            key: String? = nil
+            key: String? = nil, account: String? = nil
         ) {
             self.id = id
             self.at = at
@@ -37,6 +39,7 @@ public enum AccessRequests {
             self.reason = reason.map { String(AgentRequest.oneLine($0).prefix(200)) }
             self.hours = hours
             self.key = key
+            self.account = account.map { String(AgentRequest.oneLine($0).prefix(80)) }.flatMap { $0.isEmpty ? nil : $0 }
         }
     }
 

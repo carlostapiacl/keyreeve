@@ -493,6 +493,10 @@ public struct AgentBridge {
                 "properties": [
                     "key": ["type": "string"],
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
+                    "account": [
+                        "type": "string",
+                        "description": "For a provider not saved yet: the account, organization or project the key should belong to, if you know it, such as the organization's slug. The person may have several keys of one provider, and this picks the right one",
+                    ],
                     "duration": [
                         "type": "string", "enum": ["1h", "4h", "8h", "24h", "always"],
                         "description": "What you suggest, 1h if left out. always only for a key used every day",

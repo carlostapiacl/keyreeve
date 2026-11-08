@@ -397,8 +397,16 @@ pub fn forget_id(journal: &Path, key: &str) -> Result<(), String> {
         .truncate(false)
         .open(journal.with_extension("lock"))
         .map_err(|e| format!("the journal: {e}"))?;
-    lock.try_lock()
-        .map_err(|_| "a rotation is running".to_owned())?;
+    // A moment's wait: a process starting elsewhere can hold a copy of the lock for an instant after a
+    // rotation let go of it, and that is not a rotation running.
+    let mut tries = 0;
+    while lock.try_lock().is_err() {
+        tries += 1;
+        if tries == 10 {
+            return Err("a rotation is running".to_owned());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let mut record = Journal::open(Box::new(FileBackend::new(journal)))
         .map_err(|e| format!("the journal: {e}"))?;
     if record.phase(key) != Phase::Idle {

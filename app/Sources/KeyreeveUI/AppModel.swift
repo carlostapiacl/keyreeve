@@ -317,8 +317,9 @@ public struct UsageSnapshot: Sendable, Equatable {
 
     init(files: KeyreeveFiles) {
         let log = AuditLog(url: files.audit)
-        entries = Array(((try? log.entries()) ?? []).suffix(500).reversed())
-        brokenLine = log.firstBrokenLine()
+        let recent = log.recent(500)
+        entries = recent.entries.reversed()
+        brokenLine = recent.brokenLine
         if FileManager.default.fileExists(atPath: files.keySocket.path) {
             grants = (try? KeySocket.send(KeyService.Request(op: "grants"), path: files.keySocket.path, timeout: 1))?.grants ?? []
         }

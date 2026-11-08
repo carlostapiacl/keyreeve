@@ -159,8 +159,10 @@ pub fn add_moved(items: &mut Vec<InventoryItem>, path: &std::path::Path) -> Resu
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
     let moved = parse_inventory(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut known: std::collections::HashSet<String> =
+        items.iter().map(|item| item.path.clone()).collect();
     for item in moved {
-        if !items.iter().any(|known| known.path == item.path) {
+        if known.insert(item.path.clone()) {
             items.push(item);
         }
     }
@@ -198,10 +200,12 @@ pub fn build(items: &[InventoryItem], rules: &Rules, history: &[HistoryEntry]) -
     for entry in history {
         by_file.entry(entry.file.as_str()).or_default().push(entry);
     }
+    // A provider of your own is a file to read; each is read once a build, not once per key it names.
+    let mut hints: HashMap<String, (Option<u8>, Option<u32>)> = HashMap::new();
     items
         .iter()
         .map(|item| {
-            let mut row = build_row(item, rules);
+            let mut row = build_row(item, rules, &mut hints);
             // With several recipes for one file, a pass from any of them counts, because a
             // check against the wrong provider says nothing about the key.
             let checks = by_file
@@ -222,7 +226,11 @@ pub fn build(items: &[InventoryItem], rules: &Rules, history: &[HistoryEntry]) -
         .collect()
 }
 
-fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
+fn build_row(
+    item: &InventoryItem,
+    rules: &Rules,
+    hints: &mut HashMap<String, (Option<u8>, Option<u32>)>,
+) -> Row {
     let mut tags: BTreeSet<String> = item.kinds.iter().map(|k| format!("kind:{k}")).collect();
     let is_public_key = item.path.ends_with(".pub");
     let mut level = None::<Level>;
@@ -297,9 +305,11 @@ fn build_row(item: &InventoryItem, rules: &Rules) -> Row {
             .filter(|day| is_day(day))
             .unwrap_or_default();
     }
-    let (hint, rotate_days) = recipes
-        .first()
-        .map_or((None, None), |recipe| crate::providers::hints(recipe));
+    let (hint, rotate_days) = recipes.first().map_or((None, None), |recipe| {
+        *hints
+            .entry(recipe.clone())
+            .or_insert_with(|| crate::providers::hints(recipe))
+    });
     let criticality_suggested = criticality == 0 && hint.is_some();
     if criticality_suggested {
         criticality = hint.unwrap_or(0);
@@ -657,6 +667,31 @@ files: { fixed.txt: { criticality: 2 } }
             (rows[1].criticality, rows[1].criticality_suggested),
             (1, false)
         );
+    }
+
+    #[test]
+    fn moved_files_join_once_and_in_order() {
+        let item =
+            |path: &str| format!(r#"{{"path":"{path}","modified":0,"mode":null,"format":"env"}}"#);
+        let mut items =
+            parse_inventory(&format!(r#"{{"schema":1,"items":[{}]}}"#, item("a.env"))).unwrap();
+        let ledger =
+            std::env::temp_dir().join(format!("keyreeve-moved-{}.json", std::process::id()));
+        std::fs::write(
+            &ledger,
+            format!(
+                r#"{{"schema":1,"items":[{},{},{},{}]}}"#,
+                item("b.env"),
+                item("a.env"),
+                item("c.env"),
+                item("b.env")
+            ),
+        )
+        .unwrap();
+        add_moved(&mut items, &ledger).unwrap();
+        std::fs::remove_file(&ledger).unwrap();
+        let paths: Vec<&str> = items.iter().map(|item| item.path.as_str()).collect();
+        assert_eq!(paths, ["a.env", "b.env", "c.env"]);
     }
 
     #[test]

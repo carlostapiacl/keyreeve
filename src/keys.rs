@@ -62,7 +62,9 @@ fn read_field(text: &str, field: &str) -> Result<Secret, String> {
             }
         }
     }
-    for line in text.lines().map(str::trim) {
+    // The last one, as a shell or `env` would end up with, and as the vault reads it when the key is used:
+    // checking one value and sending another would make the check say nothing.
+    for line in text.lines().rev().map(str::trim) {
         if strip_comment(line).is_some() {
             continue;
         }
@@ -231,6 +233,12 @@ pub(crate) fn holds_key(text: &str, value: &str) -> bool {
 #[cfg(test)]
 mod swap_tests {
     use super::*;
+
+    #[test]
+    fn a_field_written_twice_is_read_as_the_vault_uses_it() {
+        let read = read_key("T=old\nOTHER=x\nT=new\n", Some("T")).unwrap();
+        assert_eq!(read.expose(), "new");
+    }
 
     #[test]
     fn only_the_whole_value_changes() {

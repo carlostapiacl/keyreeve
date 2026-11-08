@@ -174,8 +174,9 @@ extension AgentBridge {
         let notes = AgentSorting.notes(for: arguments["changes"] as? [[String: Any]] ?? [], inventory: list)
         let told = notes.isEmpty ? "" : " These will not happen as asked: " + notes.prefix(40).joined(separator: "; ") + "."
         // One list at a time from each agent, so the person is not asked twice about the same files.
-        let waiting = requests().filter { $0.kind == "sort" && $0.agent == agent }
-        if let last = waiting.last, !requests().contains(where: { $0.id == last.id && $0.event != .asked }) {
+        let all = requests()
+        let waiting = all.filter { $0.kind == "sort" && $0.agent == agent }
+        if let last = waiting.last, !all.contains(where: { $0.id == last.id && $0.event != .asked }) {
             return "Still waiting: the person has not answered your last proposal yet. Call inventory later to see what changed."
         }
         let entry = AccessRequests.Entry(

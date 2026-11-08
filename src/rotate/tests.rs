@@ -756,6 +756,7 @@ fn forgetting_an_id_waits_for_no_rotation_and_refuses_while_one_runs() {
     lock.try_lock().unwrap();
     assert!(forget_id(&journal, "k").unwrap_err().contains("running"));
     drop(lock);
-    assert!(forget_id(&journal, "k").is_ok());
+    let after = forget_id(&journal, "k");
+    assert!(after.is_ok(), "{after:?}");
     fs::remove_dir_all(dir).unwrap();
 }

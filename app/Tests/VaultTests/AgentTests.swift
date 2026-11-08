@@ -50,6 +50,23 @@ struct AgentTests {
         "key": "a.env", "variable": "TOKEN", "field": "TOKEN", "command": ["deploy.sh", "--now"], "reason": "deploy",
     ]
 
+    @Test func aListingReadsEachPinnedProgramOnce() throws {
+        final class Count: @unchecked Sendable { var reads = 0 }
+        let count = Count()
+        let bridge = AgentBridge(
+            policy: Self.pinnedPolicy(["a.env": ["deploy.sh"], "other.env": ["deploy.sh"]]),
+            names: { ["a.env", "other.env"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") },
+            record: { _, _, _ in },
+            pinned: { _, _ in
+                count.reads += 1
+                return true
+            })
+        let list = try call(bridge, "list_keys", [:])
+        #expect(list.text.contains("a.env") && list.text.contains("other.env"))
+        #expect(count.reads == 1)
+    }
+
     @Test func testAnAllowedProgramRunsAndTheValueNeverComesBack() throws {
         let log = Log()
         let result = try call(bridge(log, output: "token is \(Self.canary)"), "run_with_key", run)
@@ -78,6 +95,35 @@ struct AgentTests {
         box.policy = AgentPolicy()
         #expect(try call(live, "run_with_key", run).error)
         #expect(log.opened == ["a.env"])
+    }
+
+    /// The yes was for the key and the program as they were when asked. Closed, replaced or stopped while the
+    /// finger was on the sensor, nothing runs.
+    @Test func whatChangedWhileThePersonWasAskedStopsTheRun() throws {
+        final class Box: @unchecked Sendable {
+            var policy = AgentTests.pinnedPolicy(["a.env": ["deploy.sh"]])
+            var pin = true
+            var paused = false
+        }
+        for change in ["closed", "replaced", "paused"] {
+            let box = Box()
+            let log = Log()
+            let bridge = AgentBridge(
+                policy: { box.policy }, names: { ["a.env"] },
+                open: { key, _ in
+                    log.opened.append(key)
+                    switch change {
+                    case "closed": box.policy = AgentPolicy()
+                    case "replaced": box.pin = false
+                    default: box.paused = true
+                    }
+                    return Data("TOKEN=x\n".utf8)
+                },
+                run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
+                record: { _, _, _ in }, pinned: { _, _ in box.pin }, paused: { box.paused })
+            #expect(try call(bridge, "run_with_key", run).error, "\(change)")
+            #expect(log.opened == ["a.env"] && log.ran.isEmpty, "\(change)")
+        }
     }
 
     final class Clock: @unchecked Sendable {

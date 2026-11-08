@@ -264,6 +264,15 @@ public struct AgentBridge {
             let described = describe()
             let date = now()
             let isOpen = { (key: String) in policy.level(of: key, at: date) != nil && policy.admits(agent: agent, for: key) }
+            // Checking a pin reads the whole program, and many keys allow the same one: each is read once a listing.
+            var checked: [String: Bool] = [:]
+            func pinnedOnce(_ program: String, _ hash: String?) -> Bool {
+                let pair = program + "\u{0}" + (hash ?? "")
+                if let known = checked[pair] { return known }
+                let result = pinned(program, hash)
+                checked[pair] = result
+                return result
+            }
             var lines = policy.keys.filter { known.contains($0) && isOpen($0) }.compactMap { key -> String? in
                 guard let level = policy.level(of: key, at: date) else { return nil }
                 var parts = [level == .free ? "free until the person quits Keyreeve" : "asks the person"]
@@ -278,7 +287,7 @@ public struct AgentBridge {
                 }
                 // Only programs run_with_key would accept, so an agent is not sent to one that is refused.
                 let programs = (policy.commands[key] ?? []).filter {
-                    policy.allows($0, with: key) && policy.hash(of: $0, for: key) != nil && pinned($0, policy.hash(of: $0, for: key))
+                    policy.allows($0, with: key) && policy.hash(of: $0, for: key) != nil && pinnedOnce($0, policy.hash(of: $0, for: key))
                 }
                 if !programs.isEmpty { parts.append("run_with_key with " + programs.joined(separator: ", ")) }
                 return "\(key): " + parts.joined(separator: "; ")
@@ -326,20 +335,7 @@ public struct AgentBridge {
         guard Self.isVariableName(variable) else { throw VaultError("that is not a variable name") }
         let name = URL(fileURLWithPath: program).lastPathComponent
         // Checked first, so a refused request never reaches the person's finger.
-        let policy = self.policy
-        try admit(key, policy: policy, reason: reason)
-        guard policy.allows(program, with: key) else {
-            log("refused", key, "\(name) is not allowed", reason)
-            throw VaultError("\(name) may not run with \(key). A person allows programs in the app, under Agents")
-        }
-        guard policy.hash(of: program, for: key) != nil else {
-            log("refused", key, "\(name) was allowed before programs were pinned", reason)
-            throw VaultError("\(name) was allowed before keyreeve pinned programs, so a person has to allow it again in the app")
-        }
-        guard pinned(program, policy.hash(of: program, for: key)) else {
-            log("refused", key, "\(name) changed since it was allowed", reason)
-            throw VaultError("\(name) changed since a person allowed it, so it is refused until they allow it again")
-        }
+        try admitProgram(program, key: key, policy: policy, reason: reason)
         let slot = key + "\u{0}" + program
         let sealed: Data
         if let opened = stillHeld(slot) {
@@ -361,6 +357,13 @@ public struct AgentBridge {
                 log("denied", key, "fingerprint for \(name)", reason)
                 throw error
             }
+            // Checked again as things are now: the key may have closed, the agents may have been stopped or the
+            // program replaced while the window and the finger waited, and the yes was for things as they were.
+            guard !paused() else {
+                log("refused", key, "paused while the person was asked", reason)
+                throw VaultError("Keyreeve is paused: the person stopped every agent. Ask them in the conversation")
+            }
+            try admitProgram(program, key: key, policy: policy, reason: reason)
             if case .lasting(let seconds) = approval {
                 let start = now()
                 held.entries[slot] = (start, start.addingTimeInterval(seconds), sealed)
@@ -373,6 +376,25 @@ public struct AgentBridge {
         record(key, program, reason)
         // Hidden first and cut after, so the cut cannot leave half a key showing.
         return try ran(key: key, command: command, reason: reason, hiding: [value]) { try run(command, variable, value) }
+    }
+
+    /// Refuses, and writes down, a program that may not run with this key now: the key closed to this agent,
+    /// the program not allowed or not pinned, or changed on disk since it was allowed.
+    private func admitProgram(_ program: String, key: String, policy: AgentPolicy, reason: String) throws {
+        let name = URL(fileURLWithPath: program).lastPathComponent
+        try admit(key, policy: policy, reason: reason)
+        guard policy.allows(program, with: key) else {
+            log("refused", key, "\(name) is not allowed", reason)
+            throw VaultError("\(name) may not run with \(key). A person allows programs in the app, under Agents")
+        }
+        guard policy.hash(of: program, for: key) != nil else {
+            log("refused", key, "\(name) was allowed before programs were pinned", reason)
+            throw VaultError("\(name) was allowed before keyreeve pinned programs, so a person has to allow it again in the app")
+        }
+        guard pinned(program, policy.hash(of: program, for: key)) else {
+            log("refused", key, "\(name) changed since it was allowed", reason)
+            throw VaultError("\(name) changed since a person allowed it, so it is refused until they allow it again")
+        }
     }
 
     /// Refuses, and writes down, a key that is not open to agents or not to this one.

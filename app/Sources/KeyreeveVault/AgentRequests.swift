@@ -55,6 +55,13 @@ public struct AccessDecision: Equatable, Sendable {
     public init(hours: Int?) { self.hours = hours }
 
     public static let hourChoices = [1, 4, 8, 24]
+
+    /// What a window starts on for the agent's suggestion. "Always" is never chosen for the person: it
+    /// starts on the longest bounded choice, and always takes their own click.
+    public static func startingHours(for suggested: Int?) -> Int {
+        guard let suggested, hourChoices.contains(suggested) else { return hourChoices.last ?? 24 }
+        return suggested
+    }
     /// What the agent may suggest, as the tool takes it.
     public static func hours(from duration: String) -> Int?? {
         if duration == "always" { return .some(nil) }

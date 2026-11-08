@@ -34,10 +34,13 @@ public struct LockedView: View {
 public struct WelcomeView: View {
     let choose: () -> Void
     let busy: Bool
+    /// Into the app with no folder, to make a vault and paste a first key.
+    let withoutFolder: (() -> Void)?
 
-    public init(busy: Bool = false, choose: @escaping () -> Void) {
+    public init(busy: Bool = false, choose: @escaping () -> Void, withoutFolder: (() -> Void)? = nil) {
         self.busy = busy
         self.choose = choose
+        self.withoutFolder = withoutFolder
     }
 
     public var body: some View {
@@ -57,6 +60,10 @@ public struct WelcomeView: View {
                     .buttonStyle(KRButtonStyle(primary: true))
                     .keyboardShortcut(.defaultAction)
                     .padding(.top, 6)
+                if let withoutFolder {
+                    Button(T("Start with no folder, and paste a key"), action: withoutFolder)
+                        .buttonStyle(KRButtonStyle())
+                }
             }
             Text(T("Scanning sends nothing out of this Mac. Keyreeve reads your files to describe them, and saves no value."))
                 .font(Theme.caption)

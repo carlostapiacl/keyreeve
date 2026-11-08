@@ -52,6 +52,17 @@ public final class AppModel: ObservableObject {
     @Published public var showRequests = 0
     /// Read from the settings each time; a test sets its own.
     var asksToOpenSetting: () -> Bool = { UserDefaults.standard.object(forKey: SettingsKey.askToOpen) as? Bool ?? true }
+    /// The person chose to start with no keys folder, so the welcome is not shown again.
+    @Published public var startedWithoutFolder = UserDefaults.standard.bool(forKey: "startedWithoutFolder")
+
+    /// The welcome is for someone with nothing yet: no list, no vault, no pasted key.
+    public var needsWelcome: Bool { !hasCatalog && items.isEmpty && !hasVault && !startedWithoutFolder }
+
+    public func startWithoutFolder() {
+        UserDefaults.standard.set(true, forKey: "startedWithoutFolder")
+        startedWithoutFolder = true
+    }
+
     /// A key being pasted into the vault, while its sheet is open.
     @Published public var addingKey: AddKeyDraft?
     /// The requests file as last read, so an unchanged file is not read again.
@@ -349,7 +360,9 @@ struct Snapshot: Sendable {
         let index = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
         let listed = Set(parsed.map(\.path))
         for name in (vault?.entries.keys).map(Array.init) ?? [] where name.hasPrefix(AppModel.addedFolder) && !listed.contains(name) {
-            var item = CatalogItem(path: name, recipes: index.keys(forSource: name).first?.provider.map { [$0] } ?? [])
+            let indexed = index.keys(forSource: name).first
+            var item = CatalogItem(
+                path: name, recipes: indexed?.provider.map { [$0] } ?? [], name: indexed?.description ?? indexed?.id ?? "")
             item.vault = .sealed
             item.originalMoved = true
             parsed.append(item)

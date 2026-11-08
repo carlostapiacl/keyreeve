@@ -38,6 +38,17 @@ struct KeyIndexTests {
         }
     }
 
+    @Test func aNameInYourOwnWordsGetsAValidFreeIdentifier() throws {
+        var index = KeyIndex()
+        #expect(index.identifier(for: "Mi clave de correo") == "mi-clave-de-correo")
+        #expect(index.identifier(for: "Clave Andrés · QA") == "clave-andres-qa")
+        #expect(index.identifier(for: "¿?") == "key")
+        try index.add(.init(id: "pagos", source: "a"))
+        #expect(index.identifier(for: "Pagos") == "pagos-2")
+        let long = index.identifier(for: String(repeating: "palabra ", count: 20))
+        #expect(KeyIndex.isValid(id: long) && long.count <= 43)
+    }
+
     @Test func testSuggestionsReadWellAndNeverCollide() throws {
         var index = KeyIndex()
         #expect(index.suggestion(provider: "netlify", project: "infra", source: "netlify-pat.txt") == "netlify")

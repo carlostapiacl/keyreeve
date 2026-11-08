@@ -172,6 +172,12 @@ struct AccessRequestTests {
         #expect(mode == 0o600)
     }
 
+    @Test func alwaysIsNeverChosenForThePerson() {
+        #expect(AccessDecision.startingHours(for: nil) == 24)
+        #expect(AccessDecision.startingHours(for: 4) == 4)
+        #expect(AccessDecision.startingHours(for: 48) == 24)
+    }
+
     @Test func untilIsWrittenAndReadBack() throws {
         let closes = Date(timeIntervalSince1970: 1_800_003_600)
         let policy = AgentPolicy(levels: ["resend": .ask], agents: ["resend": ["claude"]], until: ["resend": closes])

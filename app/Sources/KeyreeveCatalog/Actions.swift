@@ -305,8 +305,33 @@ extension KeyreeveFiles {
         (try? JSONDecoder().decode([String: KeyDetails].self, from: Data(contentsOf: details))) ?? [:]
     }
 
+    /// Changes one of keyreeve's own JSON files under a lock, so two windows or processes never undo each
+    /// other. Only a file that is not there counts as empty: one that is there and does not read is left
+    /// as it is and the change is refused, since writing over it would lose everything else it holds.
+    public func updateJSON<Value: Codable>(
+        _ url: URL, as type: [String: Value].Type, decoder: JSONDecoder = JSONDecoder(), encoder: JSONEncoder = JSONEncoder(),
+        _ change: (inout [String: Value]) -> Void
+    ) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let lock = open(url.path + ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard lock >= 0 else { throw CheckError(T("%@ could not be saved", url.lastPathComponent)) }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { throw CheckError(T("%@ could not be saved", url.lastPathComponent)) }
+        defer { flock(lock, LOCK_UN) }
+        var all: [String: Value] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            guard let data = try? Data(contentsOf: url), let read = try? decoder.decode(type, from: data) else {
+                throw CheckError(T("%@ is damaged, so nothing was changed. Keyreeve left it as it is.", url.lastPathComponent))
+            }
+            all = read
+        }
+        change(&all)
+        encoder.outputFormatting.formUnion([.sortedKeys, .prettyPrinted])
+        try writePrivate(try encoder.encode(all), to: url)
+    }
+
     public func saveEdit(_ edit: KeyEdit, for path: String) throws {
-        var all = (try? JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: edits))) ?? [:]
+        try updateJSON(edits, as: [String: KeyEdit].self) { all in
         var merged = all[path] ?? KeyEdit()
         merged.tags = edit.tags ?? merged.tags
         merged.level = edit.level ?? merged.level
@@ -317,9 +342,7 @@ extension KeyreeveFiles {
         merged.criticality = edit.criticality ?? merged.criticality
         merged.host = edit.host ?? merged.host
         all[path] = merged
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        try writePrivate(try encoder.encode(all), to: edits)
+        }
     }
 
     public func ignoredKeys() -> [String: Date] {
@@ -329,12 +352,11 @@ extension KeyreeveFiles {
     }
 
     public func ignore(_ path: String, until: Date) throws {
-        var all = ignoredKeys()
-        all[path] = until
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        try writePrivate(try encoder.encode(all), to: ignored)
+        try updateJSON(ignored, as: [String: Date].self, decoder: decoder, encoder: encoder) { $0[path] = until }
     }
 
     /// Changes who can read the file, and never its contents. It stays inside the folder, and

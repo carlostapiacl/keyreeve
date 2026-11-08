@@ -61,14 +61,28 @@ public struct KeyIndex: Equatable, Sendable {
 
     public mutating func remove(id: String) { keys.removeAll { $0.id == id } }
 
+    /// Lowercase ASCII letters, digits and single hyphens: "Mi clave de correo" is "mi-clave-de-correo".
+    public static func slug(_ text: String) -> String {
+        let mapped = text.lowercased().folding(options: .diacriticInsensitive, locale: nil).map { character -> Character in
+            character.isASCII && (character.isLetter || character.isNumber) ? character : "-"
+        }
+        return String(mapped).split(separator: "-").joined(separator: "-")
+    }
+
+    /// The identifier for a name a person wrote in their own words, free and valid, with a number if
+    /// taken. The name stays as written, apart from it.
+    public func identifier(for name: String) -> String {
+        let base = String(Self.slug(name).prefix(40)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let start = base.isEmpty ? "key" : base
+        if key(start) == nil, Self.isValid(id: start) { return start }
+        var number = 2
+        while key("\(start)-\(number)") != nil { number += 1 }
+        return "\(start)-\(number)"
+    }
+
     /// An identifier for a key that has none: its provider, then its project or account, then a number.
     public func suggestion(provider: String?, project: String?, account: String? = nil, source: String) -> String {
-        func slug(_ text: String) -> String {
-            let mapped = text.lowercased().folding(options: .diacriticInsensitive, locale: nil).map { character -> Character in
-                character.isASCII && (character.isLetter || character.isNumber) ? character : "-"
-            }
-            return String(mapped).split(separator: "-").joined(separator: "-")
-        }
+        let slug = Self.slug
         var fileBase = URL(fileURLWithPath: source).lastPathComponent
         while let dot = fileBase.lastIndex(of: "."), dot != fileBase.startIndex { fileBase = String(fileBase[..<dot]) }
         let base = slug(provider ?? "").isEmpty ? slug(fileBase) : slug(provider ?? "")

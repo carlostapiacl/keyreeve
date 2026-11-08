@@ -32,7 +32,7 @@ struct VaultView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
             Text(T("Keep keys out of plain files")).font(Theme.title).foregroundStyle(Theme.text)
-            Text(T("The vault seals each key with a key inside this Mac's chip. Your finger opens it, and nothing else on this Mac can read it without asking."))
+            Text(T("The vault seals each key with a key inside this Mac's chip, and your finger opens it. Until you move the original files, any program running as you can still read those."))
                 .font(Theme.body).foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Text(T("You get a recovery key once. If this Mac dies, it is the only way back in, so have paper at hand."))

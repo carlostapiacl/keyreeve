@@ -274,6 +274,15 @@ struct AgentKeyRow: View {
                 .fixedSize()
                 .disabled(level == nil && programs.isEmpty)
             }
+            if level == .always, !model.hasUnattendedCopy(key.id) {
+                // Marked, with no copy to open: an older Keyreeve dropped it, or the key was sealed again from
+                // elsewhere. It asks for the finger meanwhile, and one more makes the copy again.
+                HStack(spacing: 8) {
+                    Text(T("This key asks for a fingerprint again: its copy for use with no fingerprint is missing."))
+                        .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                    Button(T("Mark again")) { model.markAlways(key.id) }.buttonStyle(KRButtonStyle())
+                }
+            }
             if level == .always {
                 // Said where it is chosen, every time it shows.
                 Text(T("Any program running as you can use this key through the proxy without asking, while this Mac is unlocked. Keep it for keys that only read."))

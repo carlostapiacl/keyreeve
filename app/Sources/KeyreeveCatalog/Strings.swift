@@ -560,6 +560,8 @@ public let spanish: [String: String] = [
     "Opening the vault…": "Abriendo la bóveda…",
     "The vault could not be opened": "No se pudo abrir la bóveda",
     "Always, no fingerprint": "Siempre, sin huella",
+    "This key asks for a fingerprint again: its copy for use with no fingerprint is missing.": "Esta clave vuelve a pedir huella: falta su copia para usarla sin huella.",
+    "Mark again": "Volver a marcar",
     "Let agents use %@ with no fingerprint, through the proxy only": "Dejar que los agentes usen %@ sin huella, solo a través del proxy",
     "%@ is open to agents with no fingerprint, through the proxy only": "%@ quedó abierta a los agentes sin huella, solo a través del proxy",
     "%@ could not be set to need no fingerprint: %@": "No se pudo dejar %@ sin huella: %@",

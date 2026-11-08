@@ -90,6 +90,31 @@ struct VaultTests {
         #expect(file.unattended == nil && file.entries["a/key.txt"]?.unattendedSealed == nil)
     }
 
+    /// A vault with copies that need no fingerprint is saved in a format older versions refuse, rather than read,
+    /// drop those copies, and write back; without them it stays in the format every version reads.
+    @Test func aVaultWithNoFingerprintCopiesIsOneOldVersionsRefuse() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("format-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = VaultStore(directory: folder)
+        var file = try vault()
+        try store.save(file)
+        let schema = { () -> Int in
+            let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("vault.json"))) as? [String: Any]
+            return raw?["schema"] as? Int ?? 0
+        }
+        #expect(try schema() == 2)
+        file.unattended = Age.TagRecipient(publicKey: SoftwareRecipient().publicKey).string
+        try file.sealUnattended(name: "a/key.txt", value: value)
+        try store.save(file)
+        #expect(try schema() == 3)
+        #expect(try store.load().entries["a/key.txt"]?.unattendedSealed != nil)
+        try store.update { vault in
+            vault.dropUnattended(name: "a/key.txt")
+            vault.unattended = nil
+        }
+        #expect(try schema() == 2)
+    }
+
     /// A backup is proven by opening every key in it with the recovery key, not by matching a few characters.
     @Test func aBackupIsProvenByOpeningEveryKey() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("backup-\(UUID().uuidString)")

@@ -409,11 +409,11 @@ impl Proxy {
         });
         // A provider that takes its key in a header gets none in the address: the stand-in would go out as it is,
         // and the provider would only say the token is wrong. Stopped here, saying where the key goes.
-        if grant.is_none()
-            && self
-                .grants_for(host)
-                .iter()
-                .any(|grant| !grant.in_url && target.contains(grant.stand_in.expose()))
+        // Whether or not a header of the same request holds a stand-in too: the address is never swapped for them.
+        if self
+            .grants_for(host)
+            .iter()
+            .any(|grant| !grant.in_url && target.contains(grant.stand_in.expose()))
         {
             return answer(
                 stream.get_mut(),

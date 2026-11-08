@@ -38,6 +38,43 @@ struct SnapshotTests {
         #expect(read(second) == .otherFolder)
     }
 
+    /// A revocation counts only once the service says so; with no service running, none can be in force.
+    @Test func aRevocationIsDoneOnlyWhenTheServiceSaysSo() throws {
+        let socket = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString).sock").path
+        #expect(AppModel.revokeConfirmed(key: "k", grant: nil, socket: socket))
+        FileManager.default.createFile(atPath: socket, contents: Data())
+        defer { try? FileManager.default.removeItem(atPath: socket) }
+        let yes: (KeyService.Request) throws -> KeyService.Response? = { _ in KeyService.Response(ok: true) }
+        let no: (KeyService.Request) throws -> KeyService.Response? = { _ in KeyService.Response(ok: false) }
+        let saidYes = AppModel.revokeConfirmed(key: "k", grant: nil, socket: socket, send: yes)
+        let saidNo = AppModel.revokeConfirmed(key: "k", grant: nil, socket: socket, tries: 2, send: no)
+        // A socket that is there and does not answer is not a yes.
+        let silent = AppModel.revokeConfirmed(key: "k", grant: nil, socket: socket, tries: 1)
+        #expect(saidYes)
+        #expect(!saidNo)
+        #expect(!silent)
+    }
+
+    /// A file that is there and cannot be read is said to be so, never shown as an empty one.
+    @Test func damagedFilesAreNamedAndNotShownAsEmpty() throws {
+        let (root, files, store) = try home()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let read = { Snapshot(reading: .init(files: files, store: store, binary: nil, keysFolder: nil)) }
+        #expect(read().problems.isEmpty)
+        try "path,level,tags,format,modified,mode,reviewed\na.txt,ask,,text,2026-01-01,600,true\nb.txt,ask\n"
+            .write(to: files.catalog, atomically: true, encoding: .utf8)
+        try "[[agents".write(to: files.agents, atomically: true, encoding: .utf8)
+        try "{not json".write(to: store.directory.appendingPathComponent("vault.json"), atomically: true, encoding: .utf8)
+        let snapshot = read()
+        #expect(snapshot.hasVault)
+        #expect(snapshot.items.map(\.path) == ["a.txt"])
+        #expect(snapshot.problems.count == 3)
+        // In whichever language the tests run.
+        #expect(snapshot.problems.contains { $0.hasPrefix("1 ") })
+        #expect(snapshot.problems.contains { $0.contains("vault is there") || $0.contains("bóveda está") })
+        #expect(snapshot.problems.contains { $0.contains("agents") && $0.contains("damaged") })
+    }
+
     @Test func testAFinishedLoadCannotRefillALockedWindow() async throws {
         let (root, files, _) = try home()
         defer { try? FileManager.default.removeItem(at: root) }

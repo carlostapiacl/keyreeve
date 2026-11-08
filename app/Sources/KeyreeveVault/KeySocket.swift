@@ -136,11 +136,18 @@ public enum KeySocket {
 
     /// What to say when the service is there and said nothing in time. A use that waits that long is almost
     /// always waiting for a fingerprint nobody has seen yet, and that is what the agent needs to pass on.
+    /// The answer may only have been lost, so nothing here says that nothing happened.
     public static func silence(for op: String) -> String {
-        op == "use"
-            ? "no answer in two minutes: Keyreeve is most likely waiting for the person's fingerprint on this Mac. "
-                + "Ask them to look for the prompt, then try again. Nothing changed"
-            : "the key service did not answer, so nothing changed"
+        switch op {
+        case "use":
+            return "no answer in two minutes: Keyreeve is most likely waiting for the person's fingerprint on this Mac. "
+                + "Ask them to look for the prompt. Whether a permission opened is not known: `keyreeve grants` shows it"
+        case "revoke":
+            return "the key service did not answer, so it is not known whether the permissions ended. "
+                + "`keyreeve grants` shows what is in force, and quitting Keyreeve ends them all"
+        default:
+            return "the key service did not answer, so whether anything changed is not known"
+        }
     }
 
     /// Whether something is listening, whatever it answers or fails to answer.

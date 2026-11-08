@@ -336,6 +336,14 @@ public struct AgentBridge {
         let name = URL(fileURLWithPath: program).lastPathComponent
         // Checked first, so a refused request never reaches the person's finger.
         try admitProgram(program, key: key, policy: policy, reason: reason)
+        // The key is what the person allowed, and its field is part of it: an agent naming another field of the
+        // same file would hand the program a different key. The field comes from keys.toml, never the agent.
+        let field = describe()[key]?.field
+        if let asked = arguments["field"] as? String, asked != field {
+            log("refused", key, "asked for field \(asked)", reason)
+            throw VaultError(field.map { "\(key) is the field \($0) of its file, and no other" }
+                ?? "\(key) has no field set, so none can be chosen here. The person sets it in Keyreeve")
+        }
         let slot = key + "\u{0}" + program
         let sealed: Data
         if let opened = stillHeld(slot) {
@@ -372,7 +380,7 @@ public struct AgentBridge {
                 log("granted", key, "once, \(name)", reason)
             }
         }
-        let value = try EnvReferences.value(in: sealed, field: arguments["field"] as? String)
+        let value = try EnvReferences.value(in: sealed, field: field)
         record(key, program, reason)
         // Hidden first and cut after, so the cut cannot leave half a key showing.
         return try ran(key: key, command: command, reason: reason, hiding: [value]) { try run(command, variable, value) }
@@ -595,7 +603,7 @@ public struct AgentBridge {
                     "key": ["type": "string"],
                     "variable": ["type": "string", "description": "The environment variable to set"],
                     "command": ["type": "array", "items": ["type": "string"]],
-                    "field": ["type": "string", "description": "The field to use, when the key's file has several"],
+                    "field": ["type": "string", "description": "Optional. The key's own field, as list_keys says; no other is accepted"],
                     "reason": ["type": "string", "description": "Why, kept in the usage log"],
                 ],
                 "required": ["key", "variable", "command", "reason"],

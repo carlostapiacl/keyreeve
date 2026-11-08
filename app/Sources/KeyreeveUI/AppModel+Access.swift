@@ -99,18 +99,41 @@ extension AppModel {
 
     /// Ends one permission, or with no grant every permission for the key.
     public func endPermissions(of key: String, grant: String? = nil) {
+        revoke(key: key, grant: grant)
+    }
+
+    /// Ends permissions in the key service and waits for its word. Sent is not done: until the service says
+    /// so, a permission may still be in force, and the window says that rather than showing it ended.
+    func revoke(key: String? = nil, grant: String? = nil) {
         let path = files.keySocket.path
         Task.detached {
-            _ = try? KeySocket.send(KeyService.Request(op: "revoke", key: key, grant: grant), path: path, timeout: 2)
-            await MainActor.run { self.reloadUsage() }
+            let confirmed = Self.revokeConfirmed(key: key, grant: grant, socket: path)
+            await MainActor.run {
+                if !confirmed {
+                    self.message = T("Keyreeve could not confirm that the permissions ended. Quitting Keyreeve ends them all.")
+                }
+                self.reloadUsage()
+            }
         }
+    }
+
+    /// True once the service said the permissions ended, or when no service runs and so none can be in force.
+    nonisolated static func revokeConfirmed(
+        key: String?, grant: String?, socket: String, tries: Int = 3, send: (KeyService.Request) throws -> KeyService.Response? = { _ in nil }
+    ) -> Bool {
+        guard FileManager.default.fileExists(atPath: socket) else { return true }
+        let request = KeyService.Request(op: "revoke", key: key, grant: grant)
+        for attempt in 0..<tries {
+            if attempt > 0 { usleep(500_000) }
+            if let answer = (try? send(request)) ?? (try? KeySocket.send(request, path: socket, timeout: 2)), answer.ok { return true }
+        }
+        return false
     }
 
     /// Locking the app ends what the key service holds too. If it is not running, nothing is lost.
     func closeServicePermissions() {
         AgentBridge.endAll(home: files.directory)
-        let path = files.keySocket.path
-        Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: path, timeout: 2) }
+        revoke()
     }
 
     /// Writes what the person decided, so the usage log has every side of it.
@@ -328,12 +351,9 @@ extension AppModel {
             agentPolicy = after
             // What is already open follows the new terms too: a permission given under the old ones ends,
             // and the next use asks under the new.
-            let socket = files.keySocket.path
-            for key in changed.map(\.key) {
-                Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke", key: key), path: socket, timeout: 2) }
-            }
+            for key in Set(changed.map(\.key)) { revoke(key: key) }
         } catch {
-            message = T("The permissions could not be saved")
+            message = T("The permissions could not be saved") + ": \(error)"
         }
     }
 

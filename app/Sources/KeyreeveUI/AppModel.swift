@@ -231,6 +231,7 @@ public final class AppModel: ObservableObject {
         usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
+        if !snapshot.problems.isEmpty { message = snapshot.problems.joined(separator: " ") }
         reloadRequests()
         publishOffered()
         publishInventory()
@@ -343,6 +344,8 @@ struct Snapshot: Sendable {
     let agentPolicy: AgentPolicy
     let keyIndex: KeyIndex
     let usage: UsageSnapshot
+    /// Files that are there and could not be read. Each would otherwise look empty, which is a different thing.
+    let problems: [String]
     let providers: ProviderDirectory?
     let rotations: [RotationStatus]?
 
@@ -351,12 +354,26 @@ struct Snapshot: Sendable {
         files.tightenFolders()
         let ignored = files.ignoredKeys()
         let details = files.allDetails()
+        var problems: [String] = []
         let text = try? String(contentsOf: files.catalog, encoding: .utf8)
         hasCatalog = text != nil
-        var parsed = (try? CatalogParser.parse(text ?? "")) ?? []
+        var parsed: [CatalogItem] = []
+        do {
+            let read = try CatalogParser.parseCounting(text ?? "")
+            parsed = read.items
+            if read.skipped > 0 { problems.append(T("%d rows of the list could not be read. Scanning the folder again rebuilds it.", read.skipped)) }
+        } catch {
+            problems.append(T("The list of keys could not be read. Scanning the folder again rebuilds it."))
+        }
         // Reading the names and dates needs no fingerprint.
         hasVault = source.store.exists
-        let vault = try? source.store.load()
+        var vault: VaultFile?
+        do {
+            vault = hasVault ? try source.store.load() : nil
+        } catch {
+            // Not an empty vault: the keys may all be there, and nothing should act as if they were gone.
+            problems.append(T("The vault is there but could not be opened: %@. Nothing in it was changed.", "\(error)"))
+        }
         let moved = MovedOriginals(ledger: files.moved, destination: files.originals).paths
         for index in parsed.indices {
             let path = parsed[index].path
@@ -394,8 +411,20 @@ struct Snapshot: Sendable {
         items = parsed
         activity = files.activity()
         places = files.allPlaces()
-        agentPolicy = AgentPolicy.load(from: files.agents)
-        keyIndex = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
+        do {
+            agentPolicy = try AgentPolicy.loadStrict(from: files.agents)
+        } catch {
+            // Read as allowing nothing, as agents read it; changing it is refused until the file is repaired.
+            agentPolicy = AgentPolicy()
+            problems.append("\(error)")
+        }
+        do {
+            keyIndex = FileManager.default.fileExists(atPath: files.keyIndex.path) ? try KeyIndex.load(from: files.keyIndex) : KeyIndex()
+        } catch {
+            keyIndex = KeyIndex()
+            problems.append(T("keys.toml could not be read: %@. It was left as it is.", "\(error)"))
+        }
+        self.problems = problems
         usage = UsageSnapshot(files: files)
         providers = source.binary.map { CheckRunner.providers(binary: $0) }
         rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }

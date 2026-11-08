@@ -109,6 +109,18 @@ struct AgentLevelTests {
         #expect(try AgentTests().call(bridge(policy, agent: "codex", seen: seen), "list_keys", [:]).text.hasPrefix("pexels: free"))
     }
 
+    /// A damaged permissions file is never read as empty and written back, which would drop every other key.
+    @Test func aDamagedPermissionsFileIsLeftAsItIs() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("agents-\(UUID().uuidString).toml")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(try AgentPolicy.loadStrict(from: url) == AgentPolicy())
+        let damaged = "[[key]]\nname = \"a\"\nlevel = \"free\nprograms = ["
+        try damaged.write(to: url, atomically: true, encoding: .utf8)
+        #expect(throws: VaultError.self) { try AgentPolicy.update(at: url) { $0.levels["b"] = .free } }
+        #expect(try String(contentsOf: url, encoding: .utf8) == damaged)
+        #expect(AgentPolicy.load(from: url) == AgentPolicy())
+    }
+
     @Test func aProgramThatChangedIsRefused() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("tool-\(UUID().uuidString).sh")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -121,7 +133,7 @@ struct AgentLevelTests {
                 policy: { policy }, names: { ["a.env"] },
                 open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
                 run: { _, _, _ in AgentBridge.Output(status: 0, text: "ok") }, record: { _, _, _ in },
-                log: { event, _, detail, _ in logged.append("\(event) \(detail)") })
+                log: { event, _, detail, _ in logged.append("\(event) \(detail)") }, describe: AgentTests.indexed)
         }
         var run = AgentTests().run
         run["command"] = [file.path]

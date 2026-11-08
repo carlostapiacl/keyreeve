@@ -260,6 +260,17 @@ fn the_address_is_swapped_only_for_a_provider_that_wants_it_there() {
     assert_eq!(code, "400");
     assert!(body.contains("takes the key in a header"), "{body}");
     assert!(plain.seen.lock().unwrap().is_empty());
+    // Nor when the same request also holds it rightly in a header.
+    let (body, code) = curl(
+        &plain,
+        &[
+            "-H",
+            &format!("Authorization: Bearer {FAKE}"),
+            &url(&format!("/me?access_token={FAKE}")),
+        ],
+    );
+    assert_eq!(code, "400", "{body}");
+    assert!(plain.seen.lock().unwrap().is_empty());
 
     let in_url = run_with("hello", &["localhost"], true, u64::MAX);
     curl(&in_url, &[&url(&format!("/bot{FAKE}/me"))]);

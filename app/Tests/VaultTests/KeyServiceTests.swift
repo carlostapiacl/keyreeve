@@ -366,6 +366,8 @@ struct KeyServiceTests {
     @Test func aSilentServiceIsBlamedOnTheFingerprintOnlyForAUse() {
         #expect(KeySocket.silence(for: "use").contains("fingerprint"))
         #expect(!KeySocket.silence(for: "grants").contains("fingerprint"))
+        // A lost answer is not a no: none of them may say that nothing happened.
+        for op in ["use", "revoke", "grants"] { #expect(!KeySocket.silence(for: op).lowercased().contains("nothing changed")) }
     }
 
     @Test func testAUseThatCannotBeLoggedLeavesNoPermission() throws {

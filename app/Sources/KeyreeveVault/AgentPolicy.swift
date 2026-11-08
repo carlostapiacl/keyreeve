@@ -82,7 +82,9 @@ public struct AgentPolicy: Equatable, Sendable {
         defer { close(lockFile) }
         guard flock(lockFile, LOCK_EX) == 0 else { throw VaultError("the permissions could not be locked") }
         defer { flock(lockFile, LOCK_UN) }
-        let before = load(from: url)
+        // Strict here: a damaged file read as empty would be written back empty, and every other key's
+        // permissions and pins would be gone with no word. It is left as it is, for the person to see.
+        let before = try loadStrict(from: url)
         var after = before
         try change(&after)
         if after != before { try PrivateFile.write(Data(after.toml.utf8), to: url) }
@@ -91,6 +93,19 @@ public struct AgentPolicy: Equatable, Sendable {
 
     /// The pin a person gave this program for this key, if any.
     public func hash(of program: String, for key: String) -> String? { hashes[key]?[program] }
+
+    /// No file is no permission. A file that is there and cannot be read or parsed is an error, never empty.
+    public static func loadStrict(from url: URL) throws -> AgentPolicy {
+        guard FileManager.default.fileExists(atPath: url.path) else { return AgentPolicy() }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw VaultError("\(url.lastPathComponent) could not be read, so it was left as it is and nothing was changed")
+        }
+        do {
+            return try parse(text)
+        } catch {
+            throw VaultError("\(url.lastPathComponent) is damaged (\(error)), so it was left as it is and nothing was changed")
+        }
+    }
 
     /// A file that cannot be read allows nothing, so a typo never widens what an agent can do.
     public static func load(from url: URL) -> AgentPolicy {

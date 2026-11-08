@@ -4,6 +4,10 @@ import Testing
 
 struct AgentTests {
     static let canary = "CANARY-value-0123456789"
+    /// The keys as keys.toml has them: a.env is the field TOKEN of its file.
+    static let indexed: @Sendable () -> [String: KeyIndex.Key] = {
+        ["a.env": KeyIndex.Key(id: "a.env", source: "a.env", field: "TOKEN")]
+    }
 
     /// Programs allowed the way the app allows them, with a pin, which these tests accept.
     static func pinnedPolicy(_ commands: [String: [String]]) -> AgentPolicy {
@@ -19,7 +23,7 @@ struct AgentTests {
 
     func bridge(_ log: Log, output: String = "done", commands: [String: [String]] = ["a.env": ["deploy.sh"]]) -> AgentBridge {
         AgentBridge(
-            policy: Self.pinnedPolicy(commands),
+            policy: { Self.pinnedPolicy(commands) },
             names: { ["a.env", "other.env"] },
             open: { key, prompt in
                 log.opened.append(key)
@@ -31,7 +35,7 @@ struct AgentTests {
                 return AgentBridge.Output(status: 0, text: output)
             },
             record: { key, program, reason in log.recorded.append("\(key) \(program) \(reason)") },
-            pinned: { _, _ in true })
+            pinned: { _, _ in true }, describe: Self.indexed)
     }
 
     func call(_ bridge: AgentBridge, _ name: String, _ arguments: [String: Any]) throws -> (text: String, error: Bool) {
@@ -85,7 +89,7 @@ struct AgentTests {
             policy: { box.policy }, names: { ["a.env"] },
             open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
             run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
-            record: { _, _, _ in }, pinned: { _, _ in true })
+            record: { _, _, _ in }, pinned: { _, _ in true }, describe: Self.indexed)
         #expect(try call(live, "list_keys", [:]).text == "No key is allowed for agents yet.\nClosed, ask with request_access: a.env")
         #expect(try call(live, "run_with_key", run).error)
         box.policy = Self.pinnedPolicy(["a.env": ["deploy.sh"]])
@@ -95,6 +99,26 @@ struct AgentTests {
         box.policy = AgentPolicy()
         #expect(try call(live, "run_with_key", run).error)
         #expect(log.opened == ["a.env"])
+    }
+
+    /// The field is part of the key the person allowed. Another field of the same file is another key.
+    @Test func anAgentCannotChooseAnotherFieldOfTheFile() throws {
+        let log = Log()
+        var other = run
+        other["field"] = "OTHER"
+        let refused = try call(bridge(log), "run_with_key", other)
+        #expect(refused.error && refused.text.contains("field TOKEN"))
+        #expect(log.opened.isEmpty && log.ran.isEmpty)
+        // With no field, the key's own field is used.
+        var plain = run
+        plain["field"] = nil
+        #expect(!(try call(bridge(log), "run_with_key", plain).error))
+        // A key with no field set in keys.toml gets none from the agent either.
+        let unset = AgentBridge(
+            policy: { Self.pinnedPolicy(["a.env": ["deploy.sh"]]) }, names: { ["a.env"] },
+            open: { key, _ in log.opened.append(key); return Data("TOKEN=x\nOTHER=y\n".utf8) },
+            run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in }, pinned: { _, _ in true })
+        #expect(try call(unset, "run_with_key", run).text.contains("no field set"))
     }
 
     /// The yes was for the key and the program as they were when asked. Closed, replaced or stopped while the
@@ -120,7 +144,7 @@ struct AgentTests {
                     return Data("TOKEN=x\n".utf8)
                 },
                 run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
-                record: { _, _, _ in }, pinned: { _, _ in box.pin }, paused: { box.paused })
+                record: { _, _, _ in }, pinned: { _, _ in box.pin }, describe: AgentTests.indexed, paused: { box.paused })
             #expect(try call(bridge, "run_with_key", run).error, "\(change)")
             #expect(log.opened == ["a.env"] && log.ran.isEmpty, "\(change)")
         }
@@ -143,7 +167,7 @@ struct AgentTests {
                 clock.asked.append(request)
                 return clock.answers.isEmpty ? nil : clock.answers.removeFirst()
             },
-            endedAt: { clock.ended }, now: { clock.now }, pinned: { _, _ in true })
+            endedAt: { clock.ended }, now: { clock.now }, pinned: { _, _ in true }, describe: Self.indexed)
     }
 
     @Test func testOnceAsksEachTimeAndANoOpensNothing() throws {

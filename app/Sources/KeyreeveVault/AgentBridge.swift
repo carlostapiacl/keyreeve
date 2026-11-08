@@ -100,6 +100,10 @@ public struct AgentBridge {
     let revision: (_ key: String) -> String?
     /// A word for each key whose last check failed, read once a listing.
     let checkWarnings: () -> [String: String]
+    /// Asks the person whether a key may be used with no fingerprint. The window starts on no.
+    let decideNoFingerprint: (AccessRequest) -> Bool
+    /// Opens the key with the person's fingerprint and seals its copy to the chip's key that asks nothing.
+    let markUnattended: (_ key: String, _ prompt: String) throws -> Void
     let held = Held()
 
     /// What the person answers when told of a request for a key that is not saved yet.
@@ -145,8 +149,14 @@ public struct AgentBridge {
         inventory: @escaping () -> Data? = { nil },
         saveProposal: @escaping (String, Data) throws -> Void = { _, _ in throw VaultError("proposals cannot be kept here") },
         revision: @escaping (_ key: String) -> String? = { _ in nil },
-        checkWarnings: @escaping () -> [String: String] = { [:] }
+        checkWarnings: @escaping () -> [String: String] = { [:] },
+        decideNoFingerprint: @escaping (AccessRequest) -> Bool = { _ in false },
+        markUnattended: @escaping (_ key: String, _ prompt: String) throws -> Void = { _, _ in
+            throw VaultError("keys cannot be marked here")
+        }
     ) {
+        self.decideNoFingerprint = decideNoFingerprint
+        self.markUnattended = markUnattended
         self.revision = revision
         self.checkWarnings = checkWarnings
         currentPolicy = policy
@@ -617,8 +627,8 @@ public struct AgentBridge {
                         "description": "The account, organization or project the key should belong to, for a provider not saved yet or a key of a saved provider in another account, if you know it, such as the organization's slug. The person may have several keys of one provider, and this picks the right one",
                     ],
                     "duration": [
-                        "type": "string", "enum": ["1h", "4h", "8h", "24h", "always"],
-                        "description": "What you suggest, 1h if left out. always only for a key used every day",
+                        "type": "string", "enum": ["1h", "4h", "8h", "24h", "always", "no-fingerprint"],
+                        "description": "What you suggest, 1h if left out. always only for a key used every day. no-fingerprint asks the person to mark a saved key so agents use it with no fingerprint at all, through the proxy, even after Keyreeve restarts: only for a key used all the time that can do little harm, and they decide with their own click and finger",
                     ],
                 ],
                 "required": ["key", "reason"],

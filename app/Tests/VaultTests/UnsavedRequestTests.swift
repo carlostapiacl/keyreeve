@@ -198,6 +198,52 @@ struct UnsavedRequestTests {
         #expect(try ask("restoiq").contains("already open"))
     }
 
+    /// An agent may ask for a key to need no fingerprint; the person decides in a window that starts on no, gives
+    /// their finger to seal the copy, and the key keeps the agents it was open to.
+    @Test func noFingerprintIsAskedAndThePersonDecides() throws {
+        final class Box: @unchecked Sendable {
+            var policy = AgentPolicy(levels: ["bot": .free], agents: ["bot": ["wapentakebot", "claude"]])
+            var answer = false
+            var marked: [String] = []
+            var failSeal = false
+        }
+        let box = Box()
+        let bridge = AgentBridge(
+            policy: { box.policy }, names: { ["bot", "other"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude", updatePolicy: { change in change(&box.policy) },
+            decideNoFingerprint: { _ in box.answer },
+            markUnattended: { key, _ in
+                if box.failSeal { throw VaultError("no finger") }
+                box.marked.append(key)
+            })
+        let ask = { (key: String) in
+            try AgentTests().call(bridge, "request_access", ["key": key, "reason": "the bot polls all day", "duration": "no-fingerprint"])
+        }
+        // A no changes nothing, and is not asked again in this session.
+        #expect(try ask("bot").error)
+        #expect(box.policy.levels["bot"] == .free && box.marked.isEmpty)
+        #expect(try ask("bot").text.contains("already said no"))
+        // A finger not given changes nothing either.
+        let other = AgentBridge(
+            policy: { box.policy }, names: { ["bot"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude", updatePolicy: { change in change(&box.policy) },
+            decideNoFingerprint: { _ in true }, markUnattended: { _, _ in throw VaultError("no finger") })
+        #expect(try AgentTests().call(other, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).error)
+        #expect(box.policy.levels["bot"] == .free)
+        // A yes with the finger: always, sealed, and the agents it had stay.
+        let fresh = AgentBridge(
+            policy: { box.policy }, names: { ["bot"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude", updatePolicy: { change in change(&box.policy) },
+            decideNoFingerprint: { _ in true }, markUnattended: { key, _ in box.marked.append(key) })
+        #expect(!(try AgentTests().call(fresh, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).error))
+        #expect(box.policy.levels["bot"] == .always && box.marked == ["bot"])
+        #expect(box.policy.agents["bot"] == ["wapentakebot", "claude"])
+        #expect(try AgentTests().call(fresh, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).text.contains("already needs no fingerprint"))
+    }
+
     @Test func requestsWrittenAtTheSameTimeAreAllKept() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("requests-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }

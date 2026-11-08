@@ -103,7 +103,7 @@ struct ProvidersView: View {
                     building = builder
                 }
                 .buttonStyle(KRButtonStyle())
-                .help(T("Starts a file of yours with its name, hosts and page. A shipped file cannot be changed."))
+                .help(T("Starts a file of yours from the whole recipe. A shipped file cannot be changed."))
             }
         }
     }

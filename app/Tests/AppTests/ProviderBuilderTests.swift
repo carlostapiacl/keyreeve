@@ -105,4 +105,16 @@ struct ProviderBuilderTests {
         #expect(ProviderBuilder.ownFile("my-panel", in: folder) == Self.good)
         #expect(ProviderBuilder.ownFile("other", in: folder) == nil)
     }
+
+    @Test func aShippedRecipeIsCopiedWhole() {
+        let builder = ProviderBuilder(
+            draft: { _, _ in throw CheckError("no") }, validate: { _ in throw CheckError("no") }, save: { _ in "" },
+            shipped: { id in id == "resend" ? "schema: 1\nprovider: resend\nname: Resend\ntested: { check: 2026-11 }\nverify: { method: GET, path: /domains }\n" : nil })
+        builder.start(from: ProviderInfo(id: "resend", name: "Resend"))
+        #expect(builder.yaml.contains("provider: resend-mine"))
+        #expect(builder.yaml.contains("name: Resend (mine)"))
+        #expect(builder.yaml.contains("path: /domains"))
+        #expect(!builder.yaml.contains("tested:"))
+        #expect(builder.advanced)
+    }
 }

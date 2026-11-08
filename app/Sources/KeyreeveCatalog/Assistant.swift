@@ -23,6 +23,21 @@ public struct Assistant: Codable, Equatable, Identifiable, Sendable {
 }
 
 public enum Assistants {
+    /// The assistants running now, so Cancel ends them and not only forgets their answer.
+    private final class Running: @unchecked Sendable {
+        let lock = NSLock()
+        var processes: [ObjectIdentifier: Process] = [:]
+    }
+    private static let running = Running()
+
+    /// Ends every assistant keyreeve started that is still working.
+    public static func stopAll() {
+        running.lock.lock()
+        let all = Array(running.processes.values)
+        running.lock.unlock()
+        for process in all where process.isRunning { process.terminate() }
+    }
+
     /// The ones keyreeve knows how to call. Claude Code is limited to web search, so it cannot read a file.
     static func presets(home: String) -> [(Assistant, [String])] {
         let common = ["/opt/homebrew/bin", "/usr/local/bin", "\(home)/.local/bin"]
@@ -101,6 +116,14 @@ public enum Assistants {
             throw CheckError(T("%@ could not be started", assistant.name))
         }
         CheckRunner.watch(process, seconds: seconds)
+        running.lock.lock()
+        running.processes[ObjectIdentifier(process)] = process
+        running.lock.unlock()
+        defer {
+            running.lock.lock()
+            running.processes[ObjectIdentifier(process)] = nil
+            running.lock.unlock()
+        }
         final class Box: @unchecked Sendable { var data = Data() }
         let problem = Box()
         let read = DispatchGroup()

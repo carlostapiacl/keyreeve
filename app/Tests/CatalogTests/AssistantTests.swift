@@ -64,4 +64,15 @@ struct AssistantTests {
         #expect(CheckRunner.providerID(in: "provider: ../etc") == nil)
         #expect(CheckRunner.providerID(in: "provider: Mayúscula") == nil)
     }
+
+    @Test func stoppingEndsAnAssistantStillWorking() throws {
+        let slow = try script("sleep 30; echo late")
+        defer { try? FileManager.default.removeItem(at: slow) }
+        let started = Date()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { Assistants.stopAll() }
+        #expect(throws: CheckError.self) {
+            try Assistants.ask(Assistant(id: "t", name: "T", command: [slow.path, "{prompt}"], readsFiles: true), "x")
+        }
+        #expect(Date().timeIntervalSince(started) < 10)
+    }
 }

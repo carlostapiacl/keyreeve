@@ -52,6 +52,14 @@ const BUILTIN: &[(&str, &str)] = &[
     ("telegram", include_str!("../recipes/telegram.yaml")),
 ];
 
+/// The text of a recipe that ships, as it was written, so a person can start their own from it.
+pub fn builtin_text(name: &str) -> Option<&'static str> {
+    BUILTIN
+        .iter()
+        .find(|(id, _)| *id == name)
+        .map(|(_, text)| *text)
+}
+
 fn builtin() -> &'static Vec<(&'static str, Recipe)> {
     static ALL: OnceLock<Vec<(&'static str, Recipe)>> = OnceLock::new();
     ALL.get_or_init(|| {

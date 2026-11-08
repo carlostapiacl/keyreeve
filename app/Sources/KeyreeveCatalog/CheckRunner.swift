@@ -113,6 +113,32 @@ public enum CheckRunner {
         return RecipeReport(ok: ok, lines: lines, provider: providerID(in: text))
     }
 
+    /// A recipe that ships, as written, from `keyreeve recipes show`. Nil for one that does not ship.
+    public static func builtinRecipe(_ id: String, binary: URL) -> String? {
+        let process = Process()
+        let output = privatePipe()
+        process.executableURL = binary
+        process.arguments = ["recipes", "show", id]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        watch(process, seconds: 30)
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        return process.terminationStatus == 0 && !text.isEmpty ? text : nil
+    }
+
+    /// A recipe made into one of your own: a new id and name, everything else as it was.
+    public static func ownCopy(of text: String, id: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+            if line.hasPrefix("provider:") { return "provider: \(id)-mine" }
+            if line.hasPrefix("name:") { return line + " (mine)" }
+            // A copy is yours to try, so the date it was tried on keyreeve's side does not carry over.
+            if line.hasPrefix("tested:") { return "" }
+            return String(line)
+        }.joined(separator: "\n")
+    }
+
     /// The `provider:` line of a file, if it names a valid id.
     public static func providerID(in text: String) -> String? {
         for line in text.split(separator: "\n") where line.hasPrefix("provider:") {

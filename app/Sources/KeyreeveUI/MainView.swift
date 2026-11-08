@@ -246,6 +246,14 @@ public struct MainView: View {
         .scrollContentBackground(.hidden)
     }
 
+    /// Sections that show the list of keys, where filters and checks belong. The tool sections have their own.
+    private var showsList: Bool {
+        switch selection ?? .all {
+        case .home, .vault, .agents, .providers, .rotation, .log: return false
+        default: return true
+        }
+    }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
             Button {
@@ -255,7 +263,7 @@ public struct MainView: View {
             }
             .help(T("Paste a key and seal it, with no file"))
         }
-        if selection != .home {
+        if showsList {
             ToolbarItem(placement: .automatic) {
                 Menu {
                     Button(T("All keys")) { selection = .all }
@@ -363,7 +371,7 @@ public struct MainView: View {
                 Text(T("%d of %d keys", progress.done, progress.total)).monospacedDigit()
             } else if let message = model.message { Text(message).foregroundStyle(Theme.text) }
             Spacer()
-            if selection != .home { Text(T("%d of %d", shown.count, active.count)).monospacedDigit() }
+            if showsList { Text(T("%d of %d", shown.count, active.count)).monospacedDigit() }
         }
         .font(Theme.caption)
         .foregroundStyle(Theme.muted)

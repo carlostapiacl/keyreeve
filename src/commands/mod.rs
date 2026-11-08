@@ -49,6 +49,8 @@ Usage:
       Let commands use keys they never hold. The vault's service starts this and talks to it over stdin.
   keyreeve recipes [--json]
       List the providers keyreeve knows, from what ships and from ~/.keyreeve/providers.
+  keyreeve recipes show <provider>
+      Print a recipe that ships with keyreeve, to start a provider of your own from it.
   keyreeve recipes approve <provider>
       Allow a provider file of yours to receive keys at the hosts it lists.
   keyreeve recipes approve-host <provider> <server>

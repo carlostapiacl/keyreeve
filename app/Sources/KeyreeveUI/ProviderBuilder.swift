@@ -28,15 +28,18 @@ public final class ProviderBuilder: ObservableObject {
     let draft: Draft
     let validate: @Sendable (String) throws -> CheckRunner.RecipeReport
     let save: (String) throws -> String
+    /// A shipped recipe's text, to start one of your own from all of it.
+    let shipped: (String) -> String?
     private var generation = 0
 
     init(
         draft: @escaping Draft, validate: @escaping @Sendable (String) throws -> CheckRunner.RecipeReport,
-        save: @escaping (String) throws -> String
+        save: @escaping (String) throws -> String, shipped: @escaping (String) -> String? = { _ in nil }
     ) {
         self.draft = draft
         self.validate = validate
         self.save = save
+        self.shipped = shipped
     }
 
     /// Builds one against the app's command and folder.
@@ -55,7 +58,8 @@ public final class ProviderBuilder: ObservableObject {
             save: { text in
                 guard let binary else { throw CheckError(T("This app was built without its command")) }
                 return try CheckRunner.saveProvider(text, binary: binary, files: files)
-            })
+            },
+            shipped: { id in binary.flatMap { CheckRunner.builtinRecipe(id, binary: $0) } })
     }
 
     public var summary: RecipeSummary { RecipeSummary(yaml) }
@@ -94,6 +98,7 @@ public final class ProviderBuilder: ObservableObject {
 
     /// Stops waiting. The assistant's own process ends on its deadline; what it says then is dropped.
     public func cancel() {
+        Assistants.stopAll()
         generation += 1
         phase = .writing
     }
@@ -124,6 +129,15 @@ public final class ProviderBuilder: ObservableObject {
     /// A start for one of your own, from what the app already knows of a provider: its name, hosts, page,
     /// prefixes and variable. The request that checks a key is left for you or the assistant to write.
     public func start(from info: ProviderInfo) {
+        // The whole recipe when it ships, so nothing it knows is lost; else what the app knows of it.
+        if let text = shipped(info.id) {
+            yaml = CheckRunner.ownCopy(of: text, id: info.id)
+            editing = nil
+            advanced = true
+            report = nil
+            phase = .writing
+            return
+        }
         var lines = ["schema: 1", "provider: \(info.id)-mine", "name: \(info.name.isEmpty ? info.id : info.name) (mine)"]
         if let dashboard = info.dashboard { lines.append("dashboard: \(dashboard)") }
         if let prefixes = info.prefixes, !prefixes.isEmpty { lines.append("prefixes: [\(prefixes.joined(separator: ", "))]") }

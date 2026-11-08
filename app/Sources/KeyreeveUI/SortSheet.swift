@@ -56,6 +56,11 @@ struct SortSheet: View {
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill").font(Theme.body).foregroundStyle(Theme.bad)
             }
+            // Said each time, next to the button: file names can say a lot.
+            if let assistant, !rest.isEmpty {
+                Text(T("Asking sends %@ the names of %d files, their tags and the names of their fields, with your account. Never a value.", assistant.name, rest.count))
+                    .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 8) {
                 if !rest.isEmpty {
                     if let assistant {
@@ -64,14 +69,25 @@ struct SortSheet: View {
                         }
                         .buttonStyle(KRButtonStyle())
                         .disabled(asking)
-                        if asking { Button(T("Cancel")) { task?.cancel(); asking = false }.buttonStyle(KRButtonStyle()) }
+                        if asking {
+                            Button(T("Cancel")) {
+                                task?.cancel()
+                                Assistants.stopAll()
+                                asking = false
+                            }
+                            .buttonStyle(KRButtonStyle())
+                        }
                     } else {
                         Text(T("%d more need a provider of their own, or an assistant in Settings.", rest.count))
                             .font(Theme.caption).foregroundStyle(Theme.muted)
                     }
                 }
                 Spacer()
-                Button(T("Cancel")) { dismiss() }.buttonStyle(KRButtonStyle()).keyboardShortcut(.cancelAction)
+                Button(T("Cancel")) {
+                    if asking { Assistants.stopAll() }
+                    dismiss()
+                }
+                .buttonStyle(KRButtonStyle()).keyboardShortcut(.cancelAction)
                 Button(T("Apply %d", chosen.count)) {
                     model.apply(suggestions.filter { chosen.contains($0.path) })
                     dismiss()

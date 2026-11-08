@@ -29,6 +29,16 @@ pub fn run_recipes(args: &[String]) -> ExitCode {
                 }
             }
         }
+        [show, name] if show == "show" => match providers::builtin_text(name) {
+            Some(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("recipes: no recipe called {name} ships with keyreeve");
+                ExitCode::FAILURE
+            }
+        },
         [approve, name] if approve == "approve" => match providers::approve(name) {
             Ok(hosts) => {
                 if hosts.is_empty() {

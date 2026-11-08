@@ -242,6 +242,9 @@ public enum Sidebar: Hashable, Sendable {
     case tag(String)
     case vault
     case agents
+    /// Tools: rotations in progress or waiting on you, and the whole usage log.
+    case rotation
+    case log
 }
 
 public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String) -> [CatalogItem] {
@@ -251,7 +254,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .attention: return item.attention != nil
         case .archive: return item.isArchived
         case .vault: return item.vault != .none && item.vault != .otherFolder && !item.isArchived
-        case .agents: return false
+        case .agents, .rotation, .log: return false
         case .checkable: return item.canCheck && !item.isArchived
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()

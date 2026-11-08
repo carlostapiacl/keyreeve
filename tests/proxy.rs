@@ -126,6 +126,7 @@ fn run_with(reply: &'static str, hosts: &[&str], in_url: bool, expires: u64) -> 
     let (proxy, events) = Proxy::new(Options {
         extra_roots: vec![up.root.clone()],
         upstream_port: Some(up.port),
+        private_tunnels: true,
     })
     .unwrap();
     let folder = std::env::temp_dir().join(format!(
@@ -404,4 +405,31 @@ fn a_request_cut_short_does_not_stop_others() {
     stream.write_all(b"CONNECT localhost").unwrap();
     drop(stream);
     assert_eq!(curl(&run, &[&url("/")]).1, "200");
+}
+
+#[test]
+fn a_tunnel_does_not_reach_this_machine_or_a_private_network() {
+    // As in use: a program that can reach the proxy, from a sandbox too, must not use it to reach what
+    // its own network rules shut out.
+    let (proxy, _events) = Proxy::new(Options::default()).unwrap();
+    let port = proxy.listen().unwrap();
+    for target in [
+        "127.0.0.1:22",
+        "localhost:5432",
+        "169.254.169.254:80",
+        "192.168.1.1:443",
+    ] {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        write!(
+            stream,
+            "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n"
+        )
+        .unwrap();
+        let mut answer = String::new();
+        let _ = std::io::BufReader::new(stream).read_line(&mut answer);
+        assert!(answer.contains(" 403 "), "{target}: {answer}");
+    }
 }

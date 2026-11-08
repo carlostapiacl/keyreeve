@@ -121,6 +121,19 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   running as you can start the server under any name.
 - **The agent terminal keeps what came back.** The first 2,000 characters of each command's output stay in a private file, with the key
   and its stand-in taken out. A provider's answer can hold other private data, and a program that hides the key another way is not caught.
+- **A permission belongs to the key and program, not to a process.** While one is open, any program running as you that asks
+  the service for the same key and program uses it with no fingerprint. Who asked is recorded from the process tree, which a
+  program running as you can shape. Keeping agents apart from each other takes separate users or sandboxes.
+- **An SSH permission runs a real ssh-agent.** It holds the key, behind a door that only lets logins through, in a folder only
+  you can open. A program running as you can find that agent's own socket and ask it to sign anything while the permission
+  lasts. The key itself still never leaves it.
+- **A command run for an agent gets the agent server's environment,** plus the stand-in and the proxy. Anything else in that
+  environment, such as the agent's own login, the command can read.
+- **The proxy's tunnels reach the internet only.** A request to a host that is not the key's goes through untouched, and
+  never to this machine, a private network or the cloud metadata address. A key's own hosts come from its recipe, even a
+  private one for a provider you host yourself.
+- **What a command leaves running ends with it,** by its process group. A program that starts a new session on purpose leaves
+  the group, and keeps running with what it was given.
 - **A pinned program is pinned by its file.** A script that calls other programs is checked, and those programs are not.
 - **A copied key is on the clipboard for up to 60 seconds.** Any program running as you can read it in that time. The marks that ask
   history tools to skip it are a convention, and a tool can ignore them.

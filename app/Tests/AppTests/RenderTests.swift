@@ -120,6 +120,9 @@ struct RenderTests {
             ready.items[3].originalMoved = true
             ready.rotations = [RotationStatus(key: "mail-token.txt", phase: "waiting", manual: ["the id of the previous key is unknown: revoke it by hand"])]
             try render(MainView(model: ready, initial: .vault), named: "vault-rotations-\(code)", appearance: .aqua)
+            // Rotations have their own section now, and the log is a page of the window.
+            try render(MainView(model: ready, initial: .rotation), named: "rotation-\(code)", appearance: .aqua)
+            try render(MainView(model: ready, initial: .log), named: "log-\(code)", appearance: .darkAqua)
             ready.providers = ProviderDirectory([ProviderInfo(id: "aws", name: "AWS", can_rotate: true)])
             ready.items[0].vault = .sealed
             try render(MainView(model: ready, initial: .vault), named: "vault-sealed-\(code)", appearance: .aqua)

@@ -65,12 +65,33 @@ public struct KeyreeveFiles: Sendable {
         try writePrivate(try JSONEncoder().encode(["keys_folder": url.path]), to: settings)
     }
 
+    /// Written beside the target at 0600 from the first byte, then put in its place, with no change to
+    /// the process's umask, which every thread shares.
     public func writePrivate(_ data: Data, to url: URL) throws {
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try data.write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            guard chmod(directory.path, 0o700) == 0 else { throw CheckError(T("%@ could not be saved", url.lastPathComponent)) }
+        }
+        let temp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+        let descriptor = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw CheckError(T("%@ could not be saved", url.lastPathComponent)) }
+        var saved = false
+        defer {
+            close(descriptor)
+            if !saved { unlink(temp.path) }
+        }
+        guard fchmod(descriptor, 0o600) == 0 else { throw CheckError(T("%@ could not be saved", url.lastPathComponent)) }
+        try data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            var offset = 0
+            while offset < bytes.count {
+                let written = Darwin.write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+                guard written > 0 else { throw CheckError(T("%@ could not be saved", url.lastPathComponent)) }
+                offset += written
+            }
+        }
+        guard fsync(descriptor) == 0, rename(temp.path, url.path) == 0 else {
+            throw CheckError(T("%@ could not be saved", url.lastPathComponent))
+        }
+        saved = true
     }
 }

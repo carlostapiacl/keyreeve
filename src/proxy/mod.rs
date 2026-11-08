@@ -34,6 +34,8 @@ use http::{
 };
 
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
+/// A host that does not answer would otherwise hold one of the connections until the system gives up.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const TUNNEL_IDLE: Duration = Duration::from_secs(300);
 const MAX_CONNECTIONS: usize = 128;
 const SYSTEM_BUNDLES: &[&str] = &["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt"];
@@ -318,7 +320,7 @@ impl Proxy {
                 "that host is on this machine or a private network",
             );
         }
-        let upstream = match TcpStream::connect(&allowed[..]) {
+        let upstream = match connect_within(&allowed) {
             Ok(stream) => stream,
             Err(_) => return answer(&mut client, 502, "that host could not be reached"),
         };
@@ -457,7 +459,11 @@ impl Proxy {
         let name = ServerName::try_from(host.to_owned()).map_err(io::Error::other)?;
         let connection =
             ClientConnection::new(self.upstream.clone(), name).map_err(io::Error::other)?;
-        let socket = match TcpStream::connect((host, port)) {
+        let addresses: Vec<SocketAddr> = (host, port)
+            .to_socket_addrs()
+            .map(Iterator::collect)
+            .unwrap_or_default();
+        let socket = match connect_within(&addresses) {
             Ok(socket) => socket,
             Err(_) => return answer(stream.get_mut(), 502, "that host could not be reached"),
         };
@@ -534,6 +540,18 @@ impl Proxy {
             .send(event);
         Ok(())
     }
+}
+
+/// The first of these addresses that answers in time.
+fn connect_within(addresses: &[SocketAddr]) -> io::Result<TcpStream> {
+    let mut last = io::Error::new(io::ErrorKind::NotFound, "no address");
+    for address in addresses {
+        match TcpStream::connect_timeout(address, CONNECT_TIMEOUT) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
 }
 
 /// Only in headers: a stand-in in a request's body could be reflected back as the real key by a provider

@@ -102,21 +102,36 @@ public struct AuditLog: Sendable {
 
     public func entries() throws -> [Entry] {
         guard let data = try? Data(contentsOf: url) else { return [] }
-        return try data.split(separator: 10).map { try Self.decoder().decode(Entry.self, from: Data($0)) }
+        let decoder = Self.decoder()
+        return try data.split(separator: 10).map { try decoder.decode(Entry.self, from: Data($0)) }
     }
 
     /// The first line that does not follow from the one before, or nil if the chain holds or there is no
     /// log yet. A log that is there and cannot be read is line 0: it cannot be said to hold.
-    public func firstBrokenLine() -> Int? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        guard let data = try? Data(contentsOf: url) else { return 0 }
+    public func firstBrokenLine() -> Int? { recent(0).brokenLine }
+
+    /// The newest `count` entries, newest last, and whether the chain holds, from one reading of the file.
+    /// What the app shows on each refresh, so a log that grows all day is read and decoded once, not twice.
+    public func recent(_ count: Int) -> (entries: [Entry], brokenLine: Int?) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return ([], nil) }
+        guard let data = try? Data(contentsOf: url) else { return ([], 0) }
+        let decoder = Self.decoder()
+        var kept: [Entry] = []
+        var broken: Int?
         var previous = ""
         for (index, line) in data.split(separator: 10).enumerated() {
-            guard let entry = try? Self.decoder().decode(Entry.self, from: Data(line)),
-                entry.prev == previous, (try? Self.hash(of: entry)) == entry.hash
-            else { return index + 1 }
+            guard let entry = try? decoder.decode(Entry.self, from: Data(line)) else {
+                // A line that is not an entry ends what can be shown; what came before still is.
+                if broken == nil { broken = index + 1 }
+                break
+            }
+            if broken == nil, entry.prev != previous || (try? Self.hash(of: entry)) != entry.hash { broken = index + 1 }
             previous = entry.hash
+            if count > 0 {
+                kept.append(entry)
+                if kept.count > count * 2 { kept.removeFirst(kept.count - count) }
+            }
         }
-        return nil
+        return (Array(kept.suffix(count)), broken)
     }
 }

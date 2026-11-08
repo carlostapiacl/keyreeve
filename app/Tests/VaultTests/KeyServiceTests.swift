@@ -79,6 +79,21 @@ struct AuditLogTests {
         #expect(log.firstBrokenLine() == 3)
     }
 
+    @Test func theRecentEntriesAndTheChainComeFromOneReading() throws {
+        let (log, url) = log()
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(log.recent(2).entries.isEmpty && log.recent(2).brokenLine == nil)
+        for index in 0..<7 { try log.append(event: "used", key: "k\(index)") }
+        #expect(log.recent(3).entries.map(\.key) == ["k4", "k5", "k6"])
+        #expect(log.recent(3).brokenLine == nil)
+        #expect(log.recent(50).entries.count == 7)
+        var text = try String(contentsOf: url, encoding: .utf8)
+        text = text.replacingOccurrences(of: "\"key\":\"k2\"", with: "\"key\":\"zz\"")
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        #expect(log.recent(3).brokenLine == 3)
+        #expect(log.recent(3).entries.map(\.key) == ["k4", "k5", "k6"])
+    }
+
     @Test func testRemovingALineShows() throws {
         let (log, url) = log()
         defer { try? FileManager.default.removeItem(at: url) }

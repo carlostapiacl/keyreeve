@@ -97,6 +97,35 @@ struct AgentTests {
         #expect(log.opened == ["a.env"])
     }
 
+    /// The yes was for the key and the program as they were when asked. Closed, replaced or stopped while the
+    /// finger was on the sensor, nothing runs.
+    @Test func whatChangedWhileThePersonWasAskedStopsTheRun() throws {
+        final class Box: @unchecked Sendable {
+            var policy = AgentTests.pinnedPolicy(["a.env": ["deploy.sh"]])
+            var pin = true
+            var paused = false
+        }
+        for change in ["closed", "replaced", "paused"] {
+            let box = Box()
+            let log = Log()
+            let bridge = AgentBridge(
+                policy: { box.policy }, names: { ["a.env"] },
+                open: { key, _ in
+                    log.opened.append(key)
+                    switch change {
+                    case "closed": box.policy = AgentPolicy()
+                    case "replaced": box.pin = false
+                    default: box.paused = true
+                    }
+                    return Data("TOKEN=x\n".utf8)
+                },
+                run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
+                record: { _, _, _ in }, pinned: { _, _ in box.pin }, paused: { box.paused })
+            #expect(try call(bridge, "run_with_key", run).error, "\(change)")
+            #expect(log.opened == ["a.env"] && log.ran.isEmpty, "\(change)")
+        }
+    }
+
     final class Clock: @unchecked Sendable {
         var now = Date(timeIntervalSince1970: 1_800_000_000)
         var ended: Date?

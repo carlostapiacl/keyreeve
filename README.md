@@ -57,7 +57,7 @@ keyreeve check examples/recipe.yaml
 keyreeve simulate examples/recipe.yaml
 ```
 
-Tested on macOS and, in CI, on Linux. Windows has not been tried.
+CI checks the command on Linux and the app on macOS. Windows has not been tried.
 
 `simulate` builds a fake provider from the recipe, injects failures and stops the process at
 every operation, then again at every operation of the recovery. After each stop it checks that:
@@ -123,8 +123,13 @@ window. Keys are protected by the vault below.
 
 It is laid out by task. **Home** leads with what needs you, each item with its action. **My keys** is the list, with filters
 for archived keys and projects. **To review** holds what needs a look, and **Security and backup** the vault. **Agents**,
-**Rotation** and **Log** sit apart, under Tools. A key's page has four tabs: Summary, Use, Security and History, with the
-technical parts behind "More details and options".
+**Providers**, **Rotation** and **Log** sit apart, under Tools. A key's page has four tabs: Summary, Use, Security and History, with
+the technical parts behind "More details and options".
+
+An AI you already run in your terminal, such as Claude Code, Codex or OpenCode, can help on your own subscription: chosen in Settings,
+it drafts provider files under **Providers** and, in **Sort keys**, proposes a provider for keys keyreeve cannot check yet. It is given
+file names, tags and field names, never a value, and the app says so each time. keyreeve never hands it a key, but Codex, OpenCode or a
+command of your own can read files on your Mac while they work; Claude Code is limited to web search.
 
 ```bash
 app/build-app.sh
@@ -246,7 +251,8 @@ app/dist/keyreeve-vault add hosting-token
 app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
 
-Adding a key needs no fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init`
+`put <name>` adds or replaces a key, keeping the old one sealed, and `reseal <name>` seals a key's file again exactly as it is
+now, from the folder it was sealed from, for a file a script changed. Adding a key needs no fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init`
 refuses to run outside a terminal so the recovery key does not land in a log. No command prints a key, and the app copies one only
 when you press its button.
 
@@ -397,7 +403,8 @@ so until it is renewed. **Expire soon** shows the keys ending within thirty days
 Turn on **Agents can sort my keys** under **Agents**, and an agent can read, with `inventory`, each file's name, field names,
 provider and state, and the providers keyreeve knows. Never a value, and nothing at all while the switch is off. With `propose` it
 sends changes for many files at once: which provider and field, nothing to check, an internal secret, not secret at all, what it is,
-and whether to seal, check or archive it. They wait under **Agents** as one list, every change chosen to start. **Apply** keeps the
+whether to seal, check or archive it, the server of a provider you run yourself (approved by you once), the day it expires, and
+whether to split a file holding several keys of one provider. They wait under **Agents** as one list, every change chosen to start. **Apply** keeps the
 chosen ones, checks the ones it should, which may ask for your fingerprint, and seals the rest. The agent reads how it went in its
 next `inventory`. A folder of loose files ends as named keys, checked and sealed, that your agents use with `use_key`.
 

@@ -49,7 +49,7 @@ from the provider's documentation. A recipe must be under MIT, and some guides h
 ## Changing the app or the vault
 
 Run `swift test` in `app/`, which needs only the Command Line Tools. Set `KEYREEVE_RENDER_DIR` to a folder to keep
-images of each view, in light and dark. CI does not build the app, so say in your pull request that you ran these.
+images of each view, in light and dark. CI builds the app and runs the test groups a change reaches, on macOS. The rendered images are only made by hand.
 
 ## Changing the engine
 

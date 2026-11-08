@@ -127,7 +127,16 @@ func serveKeys() throws {
         confirm: { prompt in (try? EnclaveRecipient.confirm(reason: prompt)) != nil },
         log: auditLog,
         paused: { AgentBridge.isPaused(home: home) },
-        revision: { source in (try? store.load())?.entries[source]?.revision })
+        revision: { source in (try? store.load())?.entries[source]?.revision },
+        openUnattended: { id, agent, source in
+            // The person's own mark, read here and now: the key at "always", open to this agent, not paused.
+            guard let policy = try? AgentPolicy.loadStrict(from: home.appendingPathComponent(AgentPolicy.fileName)), policy.level(of: id, at: Date()) == .always,
+                policy.admits(agent: agent ?? "", for: id), !AgentBridge.isPaused(home: home),
+                let vault = try? store.load(), let blob = try? store.loadUnattendedBlob(for: vault),
+                let recipient = try? EnclaveRecipient.loadUnattended(blob: blob)
+            else { return nil }
+            return try? vault.openUnattended(name: source, with: recipient)
+        })
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
     // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
     // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an

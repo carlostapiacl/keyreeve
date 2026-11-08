@@ -286,7 +286,11 @@ public struct AgentBridge {
             }
             var lines = policy.keys.filter { known.contains($0) && isOpen($0) }.compactMap { key -> String? in
                 guard let level = policy.level(of: key, at: date) else { return nil }
-                var parts = [level == .free ? "free until the person quits Keyreeve" : "asks the person"]
+                var parts = [
+                    level == .always
+                        ? "always, with no fingerprint"
+                        : level == .free ? "free: one fingerprint after Keyreeve starts, then no questions for up to 24 h" : "asks the person"
+                ]
                 if let closes = policy.until[key] { parts.append("open until \(ISO8601DateFormatter().string(from: closes))") }
                 let info = described[key]
                 if policy.levels[key] != nil {
@@ -454,8 +458,10 @@ public struct AgentBridge {
             notAfter: policy.until[key])
         var once = false
         switch level {
-        case .free:
-            // One fingerprint covers every command until the app locks, at most a day.
+        case .free, .always:
+            // One fingerprint covers every command until the app locks, at most a day. A key marked "always" needs
+            // none, if the service finds the mark; if it does not, it asks like a free one.
+            request.unattended = level == .always ? true : nil
             request.anyProgram = true
             request.seconds = bounded(KeyService.maxSeconds, key: key, policy: policy)
             request.prompt = FingerPrompt.use(

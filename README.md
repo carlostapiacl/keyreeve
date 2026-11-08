@@ -354,7 +354,9 @@ whether Claude Code is connected, copies the command that connects it in every f
 
 - **Level.** *Only me*, the default, keeps agents out. *Ask* shows a window with the key, the command and the agent's reason in its
   own words, where you choose **Once**, 1, 4, 8 or 24 hours, or **Deny**, then confirm with your finger. *Free* asks for your finger
-  once, then covers any command until you quit Keyreeve, for a day at most.
+  once, then covers any command until you quit Keyreeve, for a day at most. *Always, no fingerprint* asks for your finger once, to seal
+  a copy of the key to a second key in the chip that opens with none, and from then on agents use it through the proxy with no question,
+  across restarts. Only you can set it, in the app; the real key, `run_with_key` and `get` still ask. Keep it for keys that only read.
 - **Agents.** Any agent, or only Claude or only Codex. The agent is named from the process that started the server, which is a strong
   hint and not proof, since everything runs as you.
 

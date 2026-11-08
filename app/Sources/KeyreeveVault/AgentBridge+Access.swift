@@ -38,7 +38,7 @@ extension AgentBridge {
         let current = policy
         if let level = current.level(of: key, at: date), current.admits(agent: agent, for: key) {
             return "\(key) is already open to \(agent)"
-                + (level == .free ? ". Use use_key." : ". Use use_key; the person is asked there, and can say yes for some hours.")
+                + (level == .ask ? ". Use use_key; the person is asked there, and can say yes for some hours." : ". Use use_key.")
         }
         // Open to other agents on terms the person chose for them. A yes here would change those terms
         // for everyone, so the person adds this agent in the app instead.

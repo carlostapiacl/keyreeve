@@ -228,6 +228,8 @@ final class Fixture: @unchecked Sendable {
     var duringFinger: () -> Void = {}
     /// Changes keys.toml: the netlify key's account, as an edit made elsewhere would.
     var account = "mi-cuenta"
+    /// Whether the person's files mark a key "always, no fingerprint": what the service itself reads.
+    var markedAlways: Set<String> = []
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -247,7 +249,10 @@ final class Fixture: @unchecked Sendable {
                 self.confirmations.append(prompt)
                 return self.confirmAnswer
             },
-            log: log, now: { self.now }, paused: { self.paused }, revision: { _ in self.sealing })
+            log: log, now: { self.now }, paused: { self.paused }, revision: { _ in self.sealing },
+            openUnattended: { key, _, source in
+                self.markedAlways.contains(key) ? Data((source == "m.env" ? "API=CANARY-mail\n" : "CANARY-netlify\n").utf8) : nil
+            })
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/bin/zsh", chain: ["zsh", "claude"])
 
@@ -378,6 +383,26 @@ struct KeyServiceTests {
         #expect(!answer.ok)
         #expect(answer.standIn == nil)
         #expect(service.isIdle)
+    }
+
+    /// A key the person marked "always" opens with no prompt; a caller that only claims it is asked as usual.
+    @Test func onlyAKeyMarkedByThePersonOpensWithNoFingerprint() throws {
+        let f = Fixture()
+        var request = KeyService.Request(op: "use", key: "netlify", program: "/usr/bin/curl", agent: "motor", reason: "stats")
+        request.unattended = true
+        request.anyProgram = true
+        // Claimed, not marked: the finger is asked.
+        #expect(f.service.handle(request, caller: f.caller).ok)
+        #expect(f.prompts.count == 1)
+        _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
+        f.markedAlways = ["netlify"]
+        let answer = f.service.handle(request, caller: f.caller)
+        #expect(answer.ok && answer.standIn == "STAND-IN" && answer.value == nil)
+        #expect(f.prompts.count == 1)
+        #expect(try f.log.entries().contains { $0.event == "granted" && $0.detail?.hasSuffix("no fingerprint") == true })
+        // The real key always asks, marked or not.
+        _ = f.use("netlify", real: true)
+        #expect(f.prompts.count == 2)
     }
 
     /// A key replaced in the vault ends the permission for the old value: the next use asks for the new one.

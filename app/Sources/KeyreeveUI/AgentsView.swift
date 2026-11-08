@@ -252,6 +252,7 @@ struct AgentKeyRow: View {
                         Text(T("Only me")).tag(AgentPolicy.Level?.none)
                         Text(T("Ask")).tag(AgentPolicy.Level?.some(.ask))
                         Text(T("Free")).tag(AgentPolicy.Level?.some(.free))
+                        Text(T("Always, no fingerprint")).tag(AgentPolicy.Level?.some(.always))
                     }
                     .labelsHidden().fixedSize()
                 } else {
@@ -265,6 +266,11 @@ struct AgentKeyRow: View {
                 }
                 .labelsHidden().fixedSize()
                 .disabled(level == nil && programs.isEmpty)
+            }
+            if level == .always {
+                // Said where it is chosen, every time it shows.
+                Text(T("Any program running as you can use this key through the proxy without asking, while this Mac is unlocked. Keep it for keys that only read."))
+                    .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(programs, id: \.self) { program in
                 HStack(spacing: 6) {
@@ -613,3 +619,14 @@ struct SortProposalRow: View {
     }
 }
 
+
+extension AgentPolicy.Level {
+    /// How the window names the level.
+    var label: String {
+        switch self {
+        case .ask: return T("Ask")
+        case .free: return T("Free")
+        case .always: return T("Always, no fingerprint")
+        }
+    }
+}

@@ -30,7 +30,7 @@ struct CheckHistoryTests {
             describe: { ["closed": KeyIndex.Key(id: "closed", source: "c.txt", provider: "meta")] },
             checkWarnings: { ["dead": "last check rejected on 2026-11-08: it may not work", "closed": "last check rejected on 2026-11-07: it may not work"] })
         let text = try AgentTests().call(bridge, "list_keys", [:]).text
-        #expect(text.contains("dead: free until the person quits Keyreeve; use_key with any command; last check rejected on 2026-11-08"))
+        #expect(text.contains("dead: free: one fingerprint after Keyreeve starts, then no questions for up to 24 h; use_key with any command; last check rejected on 2026-11-08"))
         #expect(text.contains("closed (meta, last check rejected on 2026-11-07: it may not work)"))
     }
 }

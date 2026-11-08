@@ -73,6 +73,9 @@ public final class KeyService: @unchecked Sendable {
         public var real: Bool?
         /// A permission that covers any program, for a key a person left free to agents.
         public var anyProgram: Bool?
+        /// For a key the person marked "always, no fingerprint": opened with the chip's key that asks nothing, if
+        /// the service itself finds the mark. What the caller says is never enough.
+        public var unattended: Bool?
         /// One permission to end, by its id, and no other.
         public var grant: String?
         /// When the key closes for agents. No permission for it lasts past this, a new one or one in force.
@@ -193,6 +196,9 @@ public final class KeyService: @unchecked Sendable {
     private let open: (_ source: String, _ prompt: String) throws -> Data
     /// Which sealing a source holds now, read with no fingerprint.
     private let revision: (_ source: String) -> String?
+    /// The value of a key the person marked to need no fingerprint, for this agent, or nil. It reads the mark
+    /// from the person's own files, so a caller that claims it gets nothing more.
+    private let openUnattended: (_ key: String, _ agent: String?, _ source: String) -> Data?
     private let proxy: KeyProxy?
     private let agents: SSHKeyAgents?
     private let confirm: @Sendable (_ prompt: String) -> Bool
@@ -218,8 +224,10 @@ public final class KeyService: @unchecked Sendable {
         open: @escaping (_ source: String, _ prompt: String) throws -> Data,
         proxy: KeyProxy?, agents: SSHKeyAgents? = nil, confirm: @escaping @Sendable (String) -> Bool = { _ in false },
         log: AuditLog, now: @escaping () -> Date = Date.init, paused: @escaping () -> Bool = { false },
-        promptWait: TimeInterval = 90, revision: @escaping (_ source: String) -> String? = { _ in nil }
+        promptWait: TimeInterval = 90, revision: @escaping (_ source: String) -> String? = { _ in nil },
+        openUnattended: @escaping (_ key: String, _ agent: String?, _ source: String) -> Data? = { _, _, _ in nil }
     ) {
+        self.openUnattended = openUnattended
         self.promptWait = promptWait
         self.revision = revision
         self.paused = paused
@@ -425,8 +433,10 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
-        try takeTurn(key: id, who: request.agent ?? name, caller: caller, declared: declared)
-        defer { endTurn() }
+        // A key marked to need no fingerprint opens here with no prompt, and so waits for no turn.
+        let quiet = request.unattended == true ? openUnattended(id, request.agent, key.source) : nil
+        if quiet == nil { try takeTurn(key: id, who: request.agent ?? name, caller: caller, declared: declared) }
+        defer { if quiet == nil { endTurn() } }
         // While this waited, the prompt ahead of it may have given what this needs.
         if let existing = try current(key, program: name, notAfter: request.notAfter, caller: caller) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
@@ -440,7 +450,7 @@ public final class KeyService: @unchecked Sendable {
         let sealed: Data
         do {
             // The asker's own prompt names the account already; one made here does too.
-            sealed = try open(key.source, request.prompt ?? FingerPrompt.use(
+            sealed = try quiet ?? open(key.source, request.prompt ?? FingerPrompt.use(
                 who: request.agent ?? name, key: id, account: key.account, program: name,
                 lasts: request.seconds.map { .minutes(max(1, $0 / 60)) }, reason: request.reason))
         } catch {
@@ -484,7 +494,7 @@ public final class KeyService: @unchecked Sendable {
             granted = Grant(
                 id: grantID, key: id, program: request.anyProgram == true ? Self.anyProgram : name, expires: expires,
                 standIn: standIn, door: nil)
-            detail = "\(seconds) seconds"
+            detail = "\(seconds) seconds" + (quiet == nil ? "" : ", no fingerprint")
         }
         lock.lock()
         // Locking the app, or the emergency stop, while your finger was on its way ends this too.

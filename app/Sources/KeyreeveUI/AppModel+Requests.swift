@@ -210,10 +210,7 @@ extension AppModel {
             }
         }
         let updated = { (path: String) in byPath[path].map { item in edits[path].map(item.applying) ?? item } }
-        // A file split now has new files in its place, read with the next list.
-        for path in proposal.split where chosen.contains(path) {
-            if let item = updated(path) { split(item) }
-        }
+        let toSplit = proposal.split.filter(chosen.contains).compactMap(updated)
         let toCheck = proposal.check.filter(chosen.contains).compactMap(updated)
         let toSeal = proposal.seal.filter(chosen.contains).compactMap(updated).filter { $0.vault == .none }
         audit([("\(chosen.count) keys", "sorting \(request.id) from \(request.agent)")], event: "allowed")
@@ -225,8 +222,25 @@ extension AppModel {
         reloadRequests()
         message = T("%d changes applied", chosen.count)
         rebuildCatalog()
-        let sealNow = { if !toSeal.isEmpty { self.seal(toSeal) } }
-        if toCheck.isEmpty { sealNow() } else { check(toCheck, then: sealNow) }
+        // One step after another, each when the app is free: a step started while another runs would be
+        // dropped. Sealing first, since it asks for nothing; splitting, which reads the folder again; then
+        // the checks, which may ask for the fingerprint.
+        whenIdle {
+            if !toSeal.isEmpty { self.seal(toSeal) }
+            self.whenIdle {
+                for item in toSplit { self.split(item) }
+                self.whenIdle { if !toCheck.isEmpty { self.check(toCheck) } }
+            }
+        }
+    }
+
+    /// Runs the action once nothing else is running, waiting at most ten minutes.
+    func whenIdle(_ action: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            let deadline = Date().addingTimeInterval(600)
+            while (busy || rebuildingNow) && Date() < deadline { try? await Task.sleep(for: .milliseconds(200)) }
+            action()
+        }
     }
 }
 

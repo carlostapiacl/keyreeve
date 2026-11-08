@@ -54,3 +54,18 @@ struct SortingAppTests {
         #expect(answer?.event == .allowed && answer?.id == "r-1" && answer?.result?.hasPrefix("applied 1 changes") == true)
     }
 }
+
+@MainActor
+struct WhenIdleTests {
+    @Test func aStepWaitsUntilTheAppIsFree() async throws {
+        let model = AppModel(files: KeyreeveFiles(directory: FileManager.default.temporaryDirectory.appendingPathComponent("idle-\(UUID().uuidString)")), binary: nil)
+        model.busy = true
+        var ran = false
+        model.whenIdle { ran = true }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(!ran)
+        model.busy = false
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(ran)
+    }
+}

@@ -91,6 +91,8 @@ public final class AppModel: ObservableObject {
     var lockEpoch = 0
     var clipboard = KeyClipboard()
     private var rebuilding: Task<Void, Never>?
+    /// True while the list is being rebuilt from the folder, so work that reads it waits.
+    var rebuildingNow = false
 
     public init(files: KeyreeveFiles = KeyreeveFiles(), binary: URL? = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli")) {
         self.files = files
@@ -291,11 +293,13 @@ public final class AppModel: ObservableObject {
         guard let binary else { return }
         let files = self.files
         let previous = rebuilding
+        rebuildingNow = true
         rebuilding = Task.detached {
             await previous?.value
             let failure = Result { try CheckRunner.rebuildCatalog(binary: binary, files: files) }
             await MainActor.run {
                 if case .failure(let error) = failure { self.message = (error as? CheckError)?.description }
+                self.rebuildingNow = false
                 self.load()
             }
         }
@@ -369,10 +373,19 @@ struct Snapshot: Sendable {
         // Keys pasted in the app have no file and no catalog line, and are listed from the vault.
         let index = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
         let listed = Set(parsed.map(\.path))
-        for name in (vault?.entries.keys).map(Array.init) ?? [] where name.hasPrefix(AppModel.addedFolder) && !listed.contains(name) {
+        let pasted = ((vault?.entries.keys).map(Array.init) ?? []).filter { $0.hasPrefix(AppModel.addedFolder) && !listed.contains($0) }
+        // With no catalog line, their last check and their edits are read here, as the catalog would.
+        let checked = pasted.isEmpty ? [:] : files.lastResults(for: Set(pasted))
+        let edits = pasted.isEmpty ? [:] : ((try? JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: files.edits))) ?? [:])
+        for name in pasted {
             let indexed = index.keys(forSource: name).first
             var item = CatalogItem(
                 path: name, recipes: indexed?.provider.map { [$0] } ?? [], name: indexed?.description ?? indexed?.id ?? "")
+            if let edit = edits[name] { item = item.applying(edit) }
+            if let last = checked[name] {
+                item.lastResult = last.result
+                item.lastChecked = last.day
+            }
             item.vault = .sealed
             item.originalMoved = true
             parsed.append(item)

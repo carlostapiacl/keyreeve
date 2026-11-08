@@ -35,6 +35,71 @@ public enum AgentSorting {
         return (data, list.count)
     }
 
+    /// A key that still needs something: not archived, a secret with something to check, and with no
+    /// provider, no passing check, no seal, or a field or split pending.
+    static func isPending(_ row: [String: Any]) -> Bool {
+        if row["archived"] as? Bool == true || row["level"] as? String == "none" { return false }
+        if row["untestable"] as? Bool == true || row["internal"] as? Bool == true { return row["sealed"] as? Bool != true }
+        return row["provider"] == nil || row["result"] as? String != "works" || row["sealed"] as? Bool != true
+            || row["needs"] != nil
+    }
+
+    /// Part of the inventory, so a few hundred keys fit in an agent's answer: only pending ones, only paths
+    /// holding some text, a page of them, with the totals and the providers.
+    public static func page(_ data: Data, pending: Bool, matching: String?, offset: Int, limit: Int) -> Data? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let keys = object["keys"] as? [[String: Any]]
+        else { return nil }
+        let needle = matching?.lowercased().trimmingCharacters(in: .whitespaces) ?? ""
+        let chosen = keys.filter { row in
+            (!pending || isPending(row))
+                && (needle.isEmpty || ((row["path"] as? String)?.lowercased().contains(needle) ?? false))
+        }
+        let start = min(max(offset, 0), chosen.count)
+        let end = min(start + max(min(limit, 200), 1), chosen.count)
+        var out: [String: Any] = [
+            "total": keys.count, "matching": chosen.count, "offset": start, "keys": Array(chosen[start..<end]),
+            "providers": object["providers"] ?? [],
+        ]
+        if end < chosen.count { out["next_offset"] = end }
+        return try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
+    }
+
+    /// What a proposal asks that will not happen, told to the agent at once instead of left undone in silence.
+    public static func notes(for changes: [[String: Any]], inventory data: Data) -> [String] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let keys = object["keys"] as? [[String: Any]]
+        else { return [] }
+        let rows = Dictionary(keys.compactMap { row in (row["path"] as? String).map { ($0, row) } }, uniquingKeysWith: { a, _ in a })
+        let known = Set(((object["providers"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String })
+        var notes: [String] = []
+        for change in changes {
+            guard let path = change["path"] as? String, let row = rows[path] else { continue }
+            let provider = change["provider"] as? String ?? row["provider"] as? String
+            if change["kind"] as? String == "provider", let id = change["provider"] as? String, !known.contains(id) {
+                notes.append("\(path): no provider \(id) is known, so it stays as it was")
+            }
+            if let field = change["field"] as? String, !((row["fields"] as? [String]) ?? []).contains(field) {
+                notes.append("\(path): the file has no field \(field)")
+            }
+            if change["check"] as? Bool == true {
+                switch row["level"] as? String {
+                case "never"?: notes.append("\(path): set to Only me, so it is not checked without the person")
+                case "none"?: notes.append("\(path): not a secret, so there is nothing to check")
+                default:
+                    if provider == nil { notes.append("\(path): no provider, so it cannot be checked") }
+                    if row["needs_host"] as? Bool == true, change["host"] == nil {
+                        notes.append("\(path): its provider runs on the person's own server; give host to check it")
+                    }
+                }
+            }
+            if let host = change["host"] as? String, !host.hasPrefix("https://") {
+                notes.append("\(path): host must start with https://")
+            }
+        }
+        return notes
+    }
+
     public static func proposalFile(id: String, home: URL) -> URL {
         home.appendingPathComponent(proposalsFolderName).appendingPathComponent("\(id).json")
     }

@@ -8,6 +8,9 @@ public struct SortProposal: Sendable {
     public var seal: Set<String> = []
     public var check: Set<String> = []
     public var archive: Set<String> = []
+    public var split: Set<String> = []
+    /// The server of a provider that runs on the person's own, only over https.
+    public var hosts: [String: String] = [:]
     /// Every file it touches, in the order the agent gave them.
     public var paths: [String] = []
 
@@ -23,8 +26,13 @@ public struct SortProposal: Sendable {
             if row["seal"] as? Bool == true { proposal.seal.insert(path) }
             if row["check"] as? Bool == true { proposal.check.insert(path) }
             if row["archive"] as? Bool == true { proposal.archive.insert(path) }
+            if row["split"] as? Bool == true { proposal.split.insert(path) }
+            if let host = row["host"] as? String, let url = URL(string: host), url.scheme == "https", url.host != nil {
+                proposal.hosts[path] = host
+            }
         }
         let touched = Set(proposal.suggestions.map(\.path)).union(proposal.seal).union(proposal.check).union(proposal.archive)
+            .union(proposal.split).union(proposal.hosts.keys)
         var seen = Set<String>()
         proposal.paths = rows.compactMap { $0["path"] as? String }.filter { touched.contains($0) && seen.insert($0).inserted }
         return proposal
@@ -42,6 +50,7 @@ extension CatalogItem {
         if let recipes = edit.recipes { item.recipes = recipes }
         if let field = edit.field { item.field = field }
         if let description = edit.description { item.description = description }
+        if let host = edit.host { item.host = host }
         return item
     }
 }

@@ -165,6 +165,7 @@ extension AppModel {
             if let reaches = item.reaches { row["account"] = reaches }
             if item.needsField { row["needs"] = "a field: the file holds several values" }
             if item.holdsSeveralKeys { row["needs"] = "splitting: the file holds several keys of its provider" }
+            if providers.needsHost(item) { row["needs_host"] = true }
             return row
         }
         let known = providers.all.filter { $0.problem == nil }.map { ["id": $0.id, "name": $0.name] }
@@ -188,6 +189,11 @@ extension AppModel {
             guard let item = byPath[suggestion.path] else { continue }
             edits[suggestion.path] = suggestion.edit(for: item)
         }
+        for (path, host) in proposal.hosts where chosen.contains(path) {
+            var change = edits[path] ?? KeyEdit()
+            change.host = host
+            edits[path] = change
+        }
         for path in proposal.archive where chosen.contains(path) {
             guard let item = byPath[path] else { continue }
             var change = edits[path] ?? KeyEdit()
@@ -204,6 +210,10 @@ extension AppModel {
             }
         }
         let updated = { (path: String) in byPath[path].map { item in edits[path].map(item.applying) ?? item } }
+        // A file split now has new files in its place, read with the next list.
+        for path in proposal.split where chosen.contains(path) {
+            if let item = updated(path) { split(item) }
+        }
         let toCheck = proposal.check.filter(chosen.contains).compactMap(updated)
         let toSeal = proposal.seal.filter(chosen.contains).compactMap(updated).filter { $0.vault == .none }
         audit([("\(chosen.count) keys", "sorting \(request.id) from \(request.agent)")], event: "allowed")

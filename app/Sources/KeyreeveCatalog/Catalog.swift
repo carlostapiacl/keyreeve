@@ -114,7 +114,10 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         if revoke && lastResult == "works" { return (0, T("Still works: revoke it")) }
         if revoke { return (1, T("Marked to revoke")) }
         if lastResult == "works" && isBackup { return (2, T("An old copy that still works")) }
-        if lastResult == "rejected" && !isBackup && !isDone { return (3, T("The last check was rejected")) }
+        // A value that is not secret answers to nobody, so an old refusal is no reason to look at it.
+        if lastResult == "rejected" && !isBackup && !isDone && isSecret { return (3, T("The last check was rejected")) }
+        if needsField { return (3, T("Choose which field holds the key")) }
+        if holdsSeveralKeys { return (3, T("This file holds several keys: split it")) }
         if level != "none" && mode != "600" && !mode.isEmpty { return (4, T("Others can read this file")) }
         if !reviewed { return (5, T("Not sorted yet")) }
         return nil
@@ -123,6 +126,14 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var attention: String? { attentionRanked?.text }
 
     public var isSecret: Bool { level != "none" }
+
+    /// The last check could not tell which value of the file is the key, and the file names its fields.
+    public var needsField: Bool {
+        field.isEmpty && labels.filter { !$0.isEmpty }.count > 1 && lastReason.contains("more than one value")
+    }
+
+    /// The last check found more than one key of the provider in the file, with no names to tell them apart.
+    public var holdsSeveralKeys: Bool { field.isEmpty && lastReason.contains("several keys of this provider") }
 }
 
 public enum CatalogError: Error, Equatable {
@@ -458,6 +469,8 @@ public struct CatalogSummary: Sendable {
     public let counts: [Sidebar: Int]
     public let stats: CatalogStats
     public let projects: [(tag: String, count: Int)]
+    /// Keys whose provider said the same account of them, by path: each may be another copy of one key.
+    public let sameAccount: [String: [String]]
 
     public init(items: [CatalogItem], now: Date = Date()) {
         let unarchived = items.filter { !$0.isArchived }
@@ -466,6 +479,16 @@ public struct CatalogSummary: Sendable {
         counts = Dictionary(uniqueKeysWithValues: Self.chips.map { ($0, filter(items, by: $0, search: "").count) })
         stats = CatalogStats(items: items, now: now)
         projects = projectTags(in: unarchived)
+        var groups: [String: [String]] = [:]
+        for item in unarchived {
+            guard let provider = item.recipes.first, let reaches = item.reaches, !reaches.isEmpty else { continue }
+            groups["\(provider)\u{0}\(reaches.lowercased())", default: []].append(item.path)
+        }
+        var same: [String: [String]] = [:]
+        for paths in groups.values where paths.count > 1 {
+            for path in paths { same[path] = paths.filter { $0 != path }.sorted() }
+        }
+        sameAccount = same
     }
 
     public func count(_ target: Sidebar) -> Int { counts[target] ?? 0 }

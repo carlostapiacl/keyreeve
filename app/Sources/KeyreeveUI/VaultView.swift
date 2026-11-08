@@ -293,6 +293,14 @@ struct VaultView: View {
                     }
                     .buttonStyle(KRButtonStyle())
                     .help(T("Live keys you would miss least"))
+                    Button(T("Choose those that work")) {
+                        chosen = Set(candidates.filter { $0.lastResult == "works" }.map(\.path))
+                    }
+                    .buttonStyle(KRButtonStyle())
+                    Button(T("Choose all %d", candidates.count)) {
+                        chosen = Set(candidates.map(\.path))
+                    }
+                    .buttonStyle(KRButtonStyle())
                     Button(chosen.isEmpty ? T("Seal") : T("Seal %d", chosen.count)) {
                         model.seal(candidates.filter { chosen.contains($0.path) })
                         chosen = []

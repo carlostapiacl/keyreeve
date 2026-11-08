@@ -28,6 +28,8 @@ struct KeyRow: View {
                     Text(attention).font(Theme.caption).foregroundStyle(Theme.warn)
                 } else if let account = item.details?.fields["account"] {
                     Text(account).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                } else if !item.description.isEmpty {
+                    Text(item.description).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
                 }
             }
             Spacer(minLength: 8)

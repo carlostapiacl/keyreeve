@@ -5,6 +5,8 @@ import SwiftUI
 /// person's own assistant proposes. Nothing changes until the person applies it.
 struct SortSheet: View {
     @ObservedObject var model: AppModel
+    /// Keys the person chose, asked about even when sorted already. None means every key not sorted yet.
+    var keys: [CatalogItem]?
     @Environment(\.dismiss) private var dismiss
     @State private var suggestions: [Suggestion] = []
     @State private var chosen: Set<String> = []
@@ -17,12 +19,14 @@ struct SortSheet: View {
             (T("A provider keyreeve knows"), suggestions.filter { if case .provider = $0.kind { true } else { false } }),
             (T("Nothing to check"), suggestions.filter { $0.kind == .untestable }),
             (T("Internal secret, no provider"), suggestions.filter { $0.kind == .internalSecret }),
+            (T("Not secret"), suggestions.filter { $0.kind == .notSecret }),
+            (T("Only what it is"), suggestions.filter { $0.kind == .described }),
         ].filter { !$0.rows.isEmpty }
     }
 
     var body: some View {
         let assistant = Assistants.chosen()
-        let rest = model.unsortedKeys.filter { key in !suggestions.contains { $0.path == key.path } }
+        let rest = (keys ?? model.unsortedKeys).filter { key in !suggestions.contains { $0.path == key.path } }
         VStack(alignment: .leading, spacing: 14) {
             Text(T("Sort your keys")).font(Theme.title).foregroundStyle(Theme.text)
             Text(T("From each file's tags and the names of its fields, never a value. Nothing changes until you apply it."))
@@ -42,6 +46,9 @@ struct SortSheet: View {
                                 ) {
                                     HStack(spacing: 8) {
                                         Text(row.path).font(Theme.body).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                                        if let what = row.what {
+                                            Text(what).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                                        }
                                         Spacer(minLength: 6)
                                         Text(label(row)).font(Theme.caption).foregroundStyle(Theme.text)
                                         Text(row.why == "assistant" ? T("assistant") : row.why).font(Theme.code).foregroundStyle(Theme.muted)
@@ -101,7 +108,8 @@ struct SortSheet: View {
         .frame(width: 720)
         .background(Theme.background)
         .onAppear {
-            suggestions = model.sortSuggestions
+            // Chosen keys go to the assistant; the proposals from tags are for the keys not sorted yet.
+            suggestions = keys == nil ? model.sortSuggestions : []
             chosen = Set(suggestions.map(\.path))
         }
     }
@@ -113,6 +121,8 @@ struct SortSheet: View {
             return field.map { "\(name) · \($0)" } ?? name
         case .untestable: return T("Nothing to check")
         case .internalSecret: return T("Internal secret")
+        case .notSecret: return T("Not secret")
+        case .described: return T("Description")
         }
     }
 

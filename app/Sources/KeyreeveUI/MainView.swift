@@ -30,6 +30,8 @@ public struct MainView: View {
     @State private var chosenRows: Set<CatalogItem.ID>
     @State private var confirmCheck = false
     @State private var sorting = false
+    /// The keys chosen when Sort was pressed, asked about even when sorted already. None means every unsorted key.
+    @State private var sortingKeys: [CatalogItem]?
     /// What this view worked out from the keys, kept until the keys, the filter or the search change.
     @State private var memo = ViewMemo()
 
@@ -137,7 +139,7 @@ public struct MainView: View {
                 model.reloadRequests()
             }
             .onChange(of: model.showRequests) { _, _ in go(.agents) }
-            .sheet(isPresented: $sorting) { SortSheet(model: model) }
+            .sheet(isPresented: $sorting) { SortSheet(model: model, keys: sortingKeys) }
             .confirmationDialog(
                 T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
             ) {
@@ -194,7 +196,7 @@ public struct MainView: View {
     /// One click to the views people use most. The chips wrap to a second line instead of scrolling: a
     /// scroll view at the top of the column reaches under the toolbar, where its clicks are lost.
     private var filterBar: some View {
-        Wrap(spacing: 6, lineSpacing: 6) {
+        FlowRow(spacing: 6) {
             filterChip(T("All"), .all)
             filterChip(T("Can be checked"), .checkable)
             filterChip(T("Critical keys"), .critical)
@@ -338,16 +340,23 @@ public struct MainView: View {
                         }
                         Divider()
                         Button(T("Nothing to check")) { model.markUntestable(scope) }
+                        Button(T("Ask what they are")) {
+                            sortingKeys = scope
+                            sorting = true
+                        }
                     } label: {
                         Label(T("Provider for %d", chosenRows.count), systemImage: "tag")
                     }
                 } else {
                     Button {
+                        sortingKeys = chosenRows.isEmpty ? nil : scope
                         sorting = true
                     } label: {
-                        Label(T("Sort keys"), systemImage: "wand.and.stars")
+                        Label(chosenRows.isEmpty ? T("Sort keys") : T("Ask what it is"), systemImage: "wand.and.stars")
                     }
-                    .help(T("Propose a provider for keys keyreeve cannot check yet"))
+                    .help(chosenRows.isEmpty
+                        ? T("Propose a provider for keys keyreeve cannot check yet")
+                        : T("Ask your assistant what this key is, from its name and fields, never its value"))
                 }
             }
             ToolbarItem(placement: .automatic) {
@@ -419,50 +428,6 @@ public struct MainView: View {
         .frame(height: 26)
         .background(Theme.surface)
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
-    }
-}
-
-/// Lays its views out in a row, and goes on to the next line when one does not fit.
-struct Wrap: Layout {
-    var spacing: CGFloat
-    var lineSpacing: CGFloat
-
-    private func lines(_ sizes: [CGSize], width: CGFloat) -> [[Int]] {
-        var result: [[Int]] = [[]]
-        var used: CGFloat = 0
-        for (index, size) in sizes.enumerated() {
-            if !result[result.count - 1].isEmpty, used + spacing + size.width > width {
-                result.append([])
-                used = 0
-            }
-            used += (result[result.count - 1].isEmpty ? 0 : spacing) + size.width
-            result[result.count - 1].append(index)
-        }
-        return result
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        let width = proposal.width ?? sizes.reduce(0) { $0 + $1.width + spacing }
-        let rows = lines(sizes, width: width)
-        let height = rows.map { row in row.map { sizes[$0].height }.max() ?? 0 }.reduce(0, +)
-            + CGFloat(max(rows.count - 1, 0)) * lineSpacing
-        let widest = rows.map { row in row.map { sizes[$0].width }.reduce(0, +) + CGFloat(max(row.count - 1, 0)) * spacing }.max() ?? 0
-        return CGSize(width: min(widest, width), height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        var y = bounds.minY
-        for row in lines(sizes, width: bounds.width) {
-            var x = bounds.minX
-            let height = row.map { sizes[$0].height }.max() ?? 0
-            for index in row {
-                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sizes[index]))
-                x += sizes[index].width + spacing
-            }
-            y += height + lineSpacing
-        }
     }
 }
 

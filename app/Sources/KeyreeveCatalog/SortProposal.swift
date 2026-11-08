@@ -9,7 +9,8 @@ public struct SortProposal: Sendable {
     public var check: Set<String> = []
     public var archive: Set<String> = []
     public var split: Set<String> = []
-    /// The server of a provider that runs on the person's own, only over https.
+    /// The server of a provider that runs on the person's own, as keyreeve keeps it: a name, and a port
+    /// when there is one, such as panel.example.com. Always reached over https.
     public var hosts: [String: String] = [:]
     /// Every file it touches, in the order the agent gave them.
     public var paths: [String] = []
@@ -27,9 +28,7 @@ public struct SortProposal: Sendable {
             if row["check"] as? Bool == true { proposal.check.insert(path) }
             if row["archive"] as? Bool == true { proposal.archive.insert(path) }
             if row["split"] as? Bool == true { proposal.split.insert(path) }
-            if let host = row["host"] as? String, let url = URL(string: host), url.scheme == "https", url.host != nil {
-                proposal.hosts[path] = host
-            }
+            if let host = (row["host"] as? String).flatMap(Self.server) { proposal.hosts[path] = host }
         }
         let touched = Set(proposal.suggestions.map(\.path)).union(proposal.seal).union(proposal.check).union(proposal.archive)
             .union(proposal.split).union(proposal.hosts.keys)
@@ -39,6 +38,18 @@ public struct SortProposal: Sendable {
     }
 
     public func suggestion(for path: String) -> Suggestion? { suggestions.first { $0.path == path } }
+
+    /// A server as keyreeve keeps it, from `panel.example.com`, `panel.example.com:8443` or the same after
+    /// `https://`. Any other scheme, a path or a user is not a server.
+    public static func server(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let rest = trimmed.hasPrefix("https://") ? String(trimmed.dropFirst(8)) : trimmed
+        let bare = rest.hasSuffix("/") ? String(rest.dropLast()) : rest
+        guard !bare.isEmpty, !bare.contains("://"), !bare.contains("/"), !bare.contains("@"),
+            let url = URL(string: "https://\(bare)"), let host = url.host, !host.isEmpty
+        else { return nil }
+        return url.port.map { "\(host):\($0)" } ?? host
+    }
 }
 
 extension CatalogItem {

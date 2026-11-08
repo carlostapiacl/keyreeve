@@ -94,4 +94,23 @@ public struct KeyreeveFiles: Sendable {
         }
         saved = true
     }
+
+    /// The last check of each of these keys, from the history of checks: its result and its day.
+    public func lastResults(for names: Set<String>) -> [String: (result: String, day: String)] {
+        guard let text = try? String(contentsOf: history, encoding: .utf8) else { return [:] }
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.timeZone = TimeZone(identifier: "UTC")
+        day.dateFormat = "yyyy-MM-dd"
+        var found: [String: (result: String, day: String)] = [:]
+        for line in text.split(separator: "\n") {
+            guard let row = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                let file = row["file"] as? String, names.contains(file), let result = row["result"] as? String
+            else { continue }
+            let at = (row["at"] as? Double).map { day.string(from: Date(timeIntervalSince1970: $0)) } ?? ""
+            found[file] = (result, at)
+        }
+        return found
+    }
 }
+

@@ -93,8 +93,8 @@ public enum AgentSorting {
                     }
                 }
             }
-            if let host = change["host"] as? String, !host.hasPrefix("https://") {
-                notes.append("\(path): host must start with https://")
+            if let host = change["host"] as? String, host.contains("://") && !host.hasPrefix("https://") {
+                notes.append("\(path): host is reached over https only, so give it as a name, such as panel.example.com")
             }
         }
         return notes

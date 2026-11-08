@@ -49,13 +49,14 @@ public enum AgentRunner {
         }
         // A program can ignore being asked to stop, or leave a child holding the output open. Neither
         // may hold the server, which has one request at a time.
-        let finished = reader.wait(timeout: .now() + limit) == .success
+        // One deadline for both: a program can close its output and stay alive, and the end of the output
+        // says nothing about the end of the program.
+        let deadline = DispatchTime.now() + limit
+        let finished = reader.wait(timeout: deadline) == .success && exited.wait(timeout: deadline) == .success
         if !finished, process.isRunning {
             process.terminate()
-            Thread.sleep(forTimeInterval: 1)
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            if exited.wait(timeout: .now() + 1) == .timedOut, process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }
-        if finished { exited.wait() }
         let status: Int32 = finished ? process.terminationStatus : -1
         return AgentBridge.Output(status: status, text: String(decoding: collected.data, as: UTF8.self))
     }

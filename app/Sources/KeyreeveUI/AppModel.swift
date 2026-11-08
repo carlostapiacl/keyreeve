@@ -87,7 +87,8 @@ public final class AppModel: ObservableObject {
             ?? T("open your key catalog")
         confirm(reason: reason) { success in
             guard success else {
-                self.lockMessage = T("Not unlocked. Try again.")
+                // A second unlock while the first prompt is open is told no; the first still decides.
+                if !self.askingFinger { self.lockMessage = T("Not unlocked. Try again.") }
                 return
             }
             self.confirmation.confirm()
@@ -143,12 +144,15 @@ public final class AppModel: ObservableObject {
     }
 
     /// One request for the finger at a time. A second one cancels the first, which reads as a sensor that
-    /// did not take the touch. A request made while one is open has nothing to add, so it is dropped.
-    /// Returns false only if this Mac cannot ask.
+    /// did not take the touch. A request made while one is open is answered no at once, so whatever waits
+    /// on it moves on instead of waiting forever. Returns false only if this Mac cannot ask.
     func askFinger(
         _ context: LAContext, _ policy: LAPolicy, _ reason: String, done: @escaping @MainActor (Bool) -> Void
     ) -> Bool {
-        guard !askingFinger else { return true }
+        guard !askingFinger else {
+            Task { @MainActor in done(false) }
+            return true
+        }
         var error: NSError?
         guard fingerGate.canAsk(context, policy, &error) else { return false }
         askingFinger = true

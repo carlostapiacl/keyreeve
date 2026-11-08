@@ -23,9 +23,27 @@ func runWithKey() throws {
 }
 
 func runWithEnv() throws {
-    guard arguments.count >= 4, arguments[2] == "--" else { fail(help, code: 2) }
+    guard arguments.count >= 4, let dash = arguments.firstIndex(of: "--"), dash >= 2, dash + 1 < arguments.count else {
+        fail(help, code: 2)
+    }
+    var allowed: Set<String> = []
+    var index = 2
+    while index < dash {
+        guard arguments[index] == "--allow", index + 1 < dash else { fail(help, code: 2) }
+        allowed.insert(arguments[index + 1].uppercased())
+        index += 2
+    }
     let lines = EnvReferences.parse(try String(contentsOfFile: arguments[1], encoding: .utf8))
-    let command = Array(arguments[3...])
+    // A file can name a variable that decides what runs. That takes the person's word, not the file's.
+    let risky = lines.compactMap { line -> String? in
+        switch line {
+        case .value(let name, _), .reference(let name, _, _): return name
+        }
+    }.filter { EnvReferences.changesWhatRuns($0) && !allowed.contains($0.uppercased()) }
+    guard risky.isEmpty else {
+        fail("\(arguments[1]) sets \(risky.joined(separator: ", ")), which changes what runs. If you meant it, add --allow NAME for each")
+    }
+    let command = Array(arguments[(dash + 1)...])
     let references = lines.contains { if case .reference = $0 { true } else { false } }
     var recipient: EnclaveRecipient?
     if references {

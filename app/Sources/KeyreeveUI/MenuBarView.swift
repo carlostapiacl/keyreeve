@@ -38,6 +38,9 @@ public struct MenuBarView: View {
                 Button(T("Quit Keyreeve")) { NSApp.terminate(nil) }.buttonStyle(KRButtonStyle())
                     .help(T("Agent permissions end when you quit."))
             }
+            if let message = model.message {
+                Text(message).font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+            }
             Button {
                 model.lockEverything()
                 read()

@@ -83,5 +83,6 @@ public enum AccessRequests {
         return (try? JSONDecoder().decode([String].self, from: data)) ?? []
     }
 
-    public static func newID() -> String { "r-" + UUID().uuidString.prefix(8).lowercased() }
+    /// The whole UUID: answers are matched to requests by it, and eight characters repeat in a long log.
+    public static func newID() -> String { "r-" + UUID().uuidString.lowercased() }
 }

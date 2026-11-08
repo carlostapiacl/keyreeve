@@ -41,9 +41,10 @@ let help = """
           Show who used which key, or check that the log was not edited.
       keyreeve-vault log [--since 7d] [--key <id>] [--csv]
           Everything keyreeve logged, in time order and with no value: uses, agents, requests, checks.
-      keyreeve-vault env <file.env> -- <command> [args...]
+      keyreeve-vault env <file.env> [--allow NAME] -- <command> [args...]
           Run a command with an env file whose values can be keyreeve://name or keyreeve://name#FIELD.
-          Asks for one fingerprint. The file holds references, so it is safe in a repository.
+          Asks for one fingerprint. The file holds references, so it is safe in a repository. A variable that
+          changes what runs (PATH, DYLD_*, NODE_OPTIONS, BASH_ENV and others) is refused unless you --allow it.
       keyreeve-vault mcp
           Serve agents over MCP. They run allowed programs with a key and never get its value.
           ~/.keyreeve/agents.toml says which, and it starts empty. Edit it in the app, on each key.

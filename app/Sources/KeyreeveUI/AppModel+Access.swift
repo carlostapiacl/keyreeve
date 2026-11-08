@@ -119,13 +119,23 @@ extension AppModel {
     }
 
     /// The emergency stop: ends every permission, pauses every agent and locks the window.
+    /// It waits for the service's answer, at most two seconds, and says so if anything did not take: an
+    /// emergency stop that only looks done is worse than one that says it failed.
     public func lockEverything() {
-        audit([("-", "every permission ended and agents paused")], event: "paused")
         AgentBridge.setPaused(true, home: files.directory)
-        agentsPaused = true
-        closeServicePermissions()
+        let paused = AgentBridge.isPaused(home: files.directory)
+        agentsPaused = paused
+        AgentBridge.endAll(home: files.directory)
+        let socket = files.keySocket.path
+        // No service running means no permission is open.
+        let revoked = !KeySocket.isListening(path: socket)
+            || (try? KeySocket.send(KeyService.Request(op: "revoke"), path: socket, timeout: 2))?.ok == true
+        audit([("-", paused && revoked ? "every permission ended and agents paused"
+            : "incomplete: paused \(paused), permissions ended \(revoked)")], event: "paused")
         lock()
-        message = T("Everything is locked and agents are paused")
+        message = paused && revoked
+            ? T("Everything is locked and agents are paused")
+            : T("Lock everything did not finish. Quit Keyreeve to end every permission.")
     }
 
     public func resumeAgents() {
@@ -244,7 +254,7 @@ extension AppModel {
         updatePolicy { policy in
             if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
             // Pinned as it is now: if it changes, agents cannot run it until you allow it again.
-            policy.hashes[program] = hash
+            policy.hashes[id, default: [:]][program] = hash
         }
     }
 
@@ -276,6 +286,7 @@ extension AppModel {
         updatePolicy { policy in
             policy.commands[id]?.removeAll { $0 == program }
             if policy.commands[id]?.isEmpty == true { policy.commands[id] = nil }
+            policy.hashes[id]?[program] = nil
         }
     }
 
@@ -292,7 +303,10 @@ extension AppModel {
 
     public func disallow(program: String, for item: CatalogItem) {
         updatePolicy { policy in
-            for key in keyIndex.keys(forSource: item.path) { policy.commands[key.id]?.removeAll { $0 == program } }
+            for key in keyIndex.keys(forSource: item.path) {
+                policy.commands[key.id]?.removeAll { $0 == program }
+                policy.hashes[key.id]?[program] = nil
+            }
         }
     }
 
@@ -300,8 +314,15 @@ extension AppModel {
     func updatePolicy(_ change: (inout AgentPolicy) -> Void) {
         do {
             let (before, after) = try AgentPolicy.update(at: files.agents, change)
-            audit(after.changes(from: before))
+            let changed = after.changes(from: before)
+            audit(changed)
             agentPolicy = after
+            // What is already open follows the new terms too: a permission given under the old ones ends,
+            // and the next use asks under the new.
+            let socket = files.keySocket.path
+            for key in changed.map(\.key) {
+                Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke", key: key), path: socket, timeout: 2) }
+            }
         } catch {
             message = T("The permissions could not be saved")
         }

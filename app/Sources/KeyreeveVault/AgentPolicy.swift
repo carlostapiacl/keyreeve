@@ -19,13 +19,15 @@ public struct AgentPolicy: Equatable, Sendable {
     /// The agents a key is limited to. Missing or empty means any agent.
     public var agents: [String: [String]]
     /// Each allowed program's SHA-256, taken when a person allowed it. A program that changed since is refused.
-    public var hashes: [String: String]
+    /// For each key, each allowed program's SHA-256, taken when a person allowed it for that key. A new
+    /// version allowed for one key is not allowed for another.
+    public var hashes: [String: [String: String]]
     /// When a key opened for some hours closes again. Missing means it stays open.
     public var until: [String: Date]
 
     public init(
         commands: [String: [String]] = [:], levels: [String: Level] = [:], agents: [String: [String]] = [:],
-        hashes: [String: String] = [:], until: [String: Date] = [:]
+        hashes: [String: [String: String]] = [:], until: [String: Date] = [:]
     ) {
         self.commands = commands
         self.levels = levels
@@ -93,6 +95,9 @@ public struct AgentPolicy: Equatable, Sendable {
         return (before, after)
     }
 
+    /// The pin a person gave this program for this key, if any.
+    public func hash(of program: String, for key: String) -> String? { hashes[key]?[program] }
+
     /// A file that cannot be read allows nothing, so a typo never widens what an agent can do.
     public static func load(from url: URL) -> AgentPolicy {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return AgentPolicy() }
@@ -121,7 +126,7 @@ public struct AgentPolicy: Equatable, Sendable {
             if table == "allow" && programs == nil { throw VaultError("each [[allow]] needs a key and programs") }
             if let hashes {
                 guard hashes.count == (programs ?? []).count else { throw bad }
-                for (program, hash) in zip(programs ?? [], hashes) where !hash.isEmpty { policy.hashes[program] = hash }
+                for (program, hash) in zip(programs ?? [], hashes) where !hash.isEmpty { policy.hashes[key, default: [:]][program] = hash }
             }
             if let programs { policy.commands[key, default: []] += programs }
             if let level { policy.levels[key] = level }
@@ -188,7 +193,7 @@ public struct AgentPolicy: Equatable, Sendable {
             let programs = commands[key] ?? []
             if !programs.isEmpty {
                 out += "programs = [\(programs.map(Self.quoted).joined(separator: ", "))]\n"
-                out += "hashes = [\(programs.map { Self.quoted(hashes[$0] ?? "") }.joined(separator: ", "))]\n"
+                out += "hashes = [\(programs.map { Self.quoted(hash(of: $0, for: key) ?? "") }.joined(separator: ", "))]\n"
             }
         }
         return out

@@ -53,9 +53,8 @@ public final class SSHDoor: @unchecked Sendable {
         agent.standardInput = FileHandle.nullDevice
         agent.standardOutput = FileHandle.nullDevice
         agent.standardError = FileHandle.nullDevice
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // ssh-agent makes its socket private itself, inside this 0700 folder.
+        try PrivateFile.folder(folder)
         unlink(private_)
         do {
             try agent.run()

@@ -76,10 +76,7 @@ public struct AgentPolicy: Equatable, Sendable {
     /// once never undo each other. Returns the file as it was and as it is now.
     @discardableResult
     public static func update(at url: URL, _ change: (inout AgentPolicy) throws -> Void) throws -> (before: AgentPolicy, after: AgentPolicy) {
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try PrivateFile.folder(url.deletingLastPathComponent())
         let lockFile = open(url.path + ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
         guard lockFile >= 0 else { throw VaultError("the permissions could not be locked") }
         defer { close(lockFile) }
@@ -88,10 +85,7 @@ public struct AgentPolicy: Equatable, Sendable {
         let before = load(from: url)
         var after = before
         try change(&after)
-        if after != before {
-            try Data(after.toml.utf8).write(to: url, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        }
+        if after != before { try PrivateFile.write(Data(after.toml.utf8), to: url) }
         return (before, after)
     }
 

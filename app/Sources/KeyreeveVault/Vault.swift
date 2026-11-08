@@ -126,8 +126,15 @@ public struct VaultFile: Codable, Equatable {
 
     /// Names a rotation keeps for itself, so a key can never be overwritten by one.
     public static func isTemporary(_ name: String) -> Bool {
-        name.hasSuffix("#pending") || name.hasSuffix("#previous")
+        name.hasSuffix("#pending") || name.hasSuffix("#previous") || name.hasSuffix("#incoming")
     }
+
+    /// Where keys pasted in the app live. A file in a keys folder at this path is never sealed under
+    /// it, so a pasted key and a file can never share a name.
+    public static let pastedFolder = "added/"
+
+    /// A name the vault keeps for itself: a rotation's copies, or a pasted key.
+    public static func isReserved(_ name: String) -> Bool { isTemporary(name) || name.hasPrefix(pastedFolder) }
 
     /// A name can be a file's path, which can hold spaces and accents. What matters is that it
     /// stays on one line when a person reads it, and inside the sealed text.

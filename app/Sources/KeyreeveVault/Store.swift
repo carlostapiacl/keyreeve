@@ -182,12 +182,7 @@ public struct VaultStore: Sendable {
         return try body()
     }
 
-    private func prepareDirectory() throws {
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    }
+    private func prepareDirectory() throws { try PrivateFile.folder(directory) }
 
     /// Reaches the disk before it returns: a rotation records a step only after this. The new file
     /// is private from its first byte, and the rename leaves the old file or the new one.

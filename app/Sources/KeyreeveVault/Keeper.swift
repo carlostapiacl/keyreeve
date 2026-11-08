@@ -59,7 +59,7 @@ public enum VaultKeeper {
                     report.already.append(path)
                     continue
                 }
-                if VaultFile.isTemporary(path) {
+                if VaultFile.isReserved(path) {
                     report.skipped[path] = .reservedName
                     continue
                 }
@@ -207,12 +207,7 @@ public struct MovedOriginals {
         return (try? JSONDecoder().decode(Ledger.self, from: data)) ?? Ledger()
     }
 
-    func write(_ value: Ledger) throws {
-        let previous = umask(0o077)
-        defer { umask(previous) }
-        try JSONEncoder().encode(value).write(to: ledger, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ledger.path)
-    }
+    func write(_ value: Ledger) throws { try PrivateFile.write(try JSONEncoder().encode(value), to: ledger) }
 
     public var paths: Set<String> { Set(read().items.map(\.path)) }
 
@@ -229,8 +224,6 @@ public struct MovedOriginals {
             let source = folder.appendingPathComponent(path)
             let target = destination.appendingPathComponent(path)
             guard manager.fileExists(atPath: source.path), !manager.fileExists(atPath: target.path) else { continue }
-            let previous = umask(0o077)
-            defer { umask(previous) }
             let folderOfTarget = target.deletingLastPathComponent()
             try manager.createDirectory(at: folderOfTarget, withIntermediateDirectories: true)
             try makePrivate(folderOfTarget)

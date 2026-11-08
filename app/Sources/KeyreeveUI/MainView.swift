@@ -38,7 +38,33 @@ public struct MainView: View {
     }
 
     private var items: [CatalogItem] { model.items }
-    private var shown: [CatalogItem] { filter(items, by: selection ?? .all, search: search) }
+    /// A filter of My keys, apart from the sidebar's choice: a list row cannot be selected for a filter
+    /// with no row, and the sidebar would drop it and show every key.
+    @State private var filterOverride: Sidebar?
+    /// What the list shows: a filter when one is on, else the sidebar's section.
+    private var current: Sidebar { filterOverride ?? selection ?? .all }
+
+    /// Goes to a section or a filter. Sections are sidebar rows; a filter shows My keys with it on.
+    private func go(_ target: Sidebar) {
+        switch target {
+        case .home, .all, .attention, .vault, .agents, .providers, .rotation, .log:
+            filterOverride = nil
+            selection = target
+        default:
+            selection = .all
+            filterOverride = target
+        }
+    }
+
+    /// The sidebar's own choice. Clicking a row there takes any filter off.
+    private var sidebarSelection: Binding<Sidebar?> {
+        Binding(get: { filterOverride == nil ? selection : .all }, set: { value in
+            filterOverride = nil
+            selection = value
+        })
+    }
+
+    private var shown: [CatalogItem] { filter(items, by: current, search: search) }
     private var active: [CatalogItem] { items.filter { !$0.isArchived } }
     private var toReview: Int { items.filter { $0.attention != nil }.count }
 
@@ -57,7 +83,7 @@ public struct MainView: View {
     public var body: some View {
         NavigationSplitView {
             // By task, not by part of the app: what you have, what needs you, how it is kept. The tools follow.
-            List(selection: $selection) {
+            List(selection: sidebarSelection) {
                 Label(T("Home"), systemImage: "house").tag(Sidebar.home)
                 sidebarRow(T("My keys"), "key", .all, active.count)
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
@@ -100,7 +126,7 @@ public struct MainView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 model.reloadRequests()
             }
-            .onChange(of: model.showRequests) { _, _ in selection = .agents }
+            .onChange(of: model.showRequests) { _, _ in go(.agents) }
             .sheet(isPresented: $sorting) { SortSheet(model: model) }
             .confirmationDialog(
                 T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
@@ -110,21 +136,25 @@ public struct MainView: View {
             } message: {
                 Text(T("Each key goes to its own provider, and only to read. Keys set to Only me stay out."))
             }
-            .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
+            .onAppear {
+                if !model.pendingRequests.isEmpty { go(.agents) }
+                // A start on a filter, such as from a link, goes through the same path.
+                if let start = selection { go(start) }
+            }
         }
     }
 
     @ViewBuilder private var content: some View {
         if selection == .home {
             HomeView(stats: CatalogStats(items: items), activity: model.activity, model: model) { target, path in
-                selection = target
+                go(target)
                 search = ""
                 chosenRows = path.map { [$0] } ?? []
             }
         } else if selection == .vault {
-            VaultView(model: model, part: .security) { selection = $0 }
+            VaultView(model: model, part: .security) { go($0) }
         } else if selection == .rotation {
-            VaultView(model: model, part: .rotation) { selection = $0 }
+            VaultView(model: model, part: .rotation) { go($0) }
         } else if selection == .log {
             UsageLogSheet(model: model, inline: true)
         } else if selection == .agents {
@@ -175,13 +205,13 @@ public struct MainView: View {
     private func filterChip(_ title: String, _ target: Sidebar) -> some View {
         FilterChip(
             title: title, count: filter(items, by: target, search: "").count,
-            isOn: (pressedChip ?? selection) == target
+            isOn: (pressedChip ?? current) == target
         ) {
             // Filtering a long list takes a moment, so the chip answers first and the list follows.
             pressedChip = target
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(30))
-                selection = target
+                go(target)
                 chosenRows = []
                 pressedChip = nil
             }
@@ -189,7 +219,7 @@ public struct MainView: View {
     }
 
     private var title: String {
-        switch selection ?? .home {
+        switch filterOverride ?? selection ?? .home {
         case .home: return T("Home")
         case .attention: return T("To review")
         case .all: return T("My keys")
@@ -215,24 +245,24 @@ public struct MainView: View {
             EmptyHint(
                 title: T("Nothing matches “%@”", search), text: T("Search looks in names, files, notes and what providers said."),
                 action: T("Clear the search"), run: { search = "" })
-        } else if selection == .attention {
+        } else if current == .attention {
             EmptyHint(
                 title: T("No alerts found."), text: T("Keys asking for attention will show here."),
-                action: T("See my keys"), run: { selection = .all })
+                action: T("See my keys"), run: { go(.all) })
         } else if items.isEmpty {
             EmptyHint(
                 title: T("No keys yet"), text: T("Paste a key, or choose the folder that holds your key files."),
                 action: T("Add a key"), run: { model.startAddingKey() })
-        } else if selection == .checkable {
+        } else if current == .checkable {
             EmptyHint(
                 title: T("No key can be checked yet"), text: T("Open a key and choose its provider, under More details and options."),
-                action: T("See my keys"), run: { selection = .all })
-        } else if selection == .archive {
+                action: T("See my keys"), run: { go(.all) })
+        } else if current == .archive {
             EmptyHint(title: T("Nothing archived"), text: T("Archiving hides a key from your lists. It does not stop it."))
         } else {
             EmptyHint(
                 title: T("No keys in this view"), text: T("Another filter may show them."),
-                action: T("See my keys"), run: { selection = .all })
+                action: T("See my keys"), run: { go(.all) })
         }
     }
 
@@ -266,21 +296,21 @@ public struct MainView: View {
         if showsList {
             ToolbarItem(placement: .automatic) {
                 Menu {
-                    Button(T("All keys")) { selection = .all }
-                    Button(T("Critical keys")) { selection = .critical }
-                    Button(T("Older than suggested")) { selection = .stale }
-                    Button(T("Internal secrets")) { selection = .internalOnly }
-                    Button(T("Can be checked")) { selection = .checkable }
+                    Button(T("All keys")) { go(.all) }
+                    Button(T("Critical keys")) { go(.critical) }
+                    Button(T("Older than suggested")) { go(.stale) }
+                    Button(T("Internal secrets")) { go(.internalOnly) }
+                    Button(T("Can be checked")) { go(.checkable) }
                     Divider()
                     ForEach(["free", "ask", "never", "none"], id: \.self) { level in
-                        Button(levelName(level)) { selection = .level(level) }
+                        Button(levelName(level)) { go(.level(level)) }
                     }
                     Divider()
-                    Button(T("Archive")) { selection = .archive }
+                    Button(T("Archive")) { go(.archive) }
                     // Projects were sidebar rows; they are filters of My keys now.
                     Menu(T("Projects")) {
                         ForEach(projectTags(in: active), id: \.tag) { entry in
-                            Button("\(entry.tag) (\(entry.count))") { selection = .tag(entry.tag) }
+                            Button("\(entry.tag) (\(entry.count))") { go(.tag(entry.tag)) }
                         }
                     }
                 } label: {

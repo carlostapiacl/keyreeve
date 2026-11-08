@@ -124,15 +124,21 @@ extension AgentBridge {
             let reason = arguments["reason"] as? String, !reason.isEmpty
         else { throw VaultError("this needs key and reason") }
         guard try names().contains(key) else { throw VaultError("no key called \(key) is in the vault") }
+        // A try that did not finish is said once, with a new request in its place, so the person can try
+        // again at once instead of waiting out the hour.
+        var lastTry: String?
         if let last = AccessRequests.latestRotation(agent: agent, key: key, in: requests()) {
             let since = now().timeIntervalSince(last.answer?.at ?? .distantPast)
+            let result = last.answer?.result ?? "no words were kept"
             switch last.answer?.event {
             case nil:
                 return "Still waiting: the person decides in Keyreeve, under Agents. Call rotate_key again later to learn how it went."
             case .declined? where since < 3600:
                 throw VaultError("the person said no to rotating \(key) within the hour. Ask them in the conversation instead")
+            case .allowed? where since < 3600 && Self.rotationDone(result):
+                return "The person rotated \(key). How it went: \(result)"
             case .allowed? where since < 3600:
-                return "The person rotated \(key). How it went: \(last.answer?.result ?? "no words were kept")"
+                lastTry = result
             default:
                 break
             }
@@ -149,7 +155,11 @@ extension AgentBridge {
             log("denied", key, "rotation", reason)
             throw VaultError("the person said no to rotating \(key)")
         case .open, .later:
-            return "Waiting: the request to rotate \(key) is in Keyreeve, where the person decides with their fingerprint. Call rotate_key again later to learn how it went."
+            let waiting = "The request to rotate \(key) is in Keyreeve, where the person decides with their fingerprint. Call rotate_key again later to learn how it went."
+            return lastTry.map { "The last try did not finish: \($0). A new request is waiting. " + waiting } ?? "Waiting: " + waiting
         }
     }
+
+    /// A rotation that ended with the new key in place, whatever is left for the person to do by hand.
+    static func rotationDone(_ result: String) -> Bool { result.hasPrefix("completed") || result.hasPrefix("waiting") }
 }

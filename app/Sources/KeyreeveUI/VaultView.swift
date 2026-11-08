@@ -1,3 +1,4 @@
+import AppKit
 import KeyreeveCatalog
 import KeyreeveVault
 import SwiftUI
@@ -150,6 +151,10 @@ struct VaultView: View {
                                 .buttonStyle(KRButtonStyle(primary: true))
                                 .disabled(model.busy)
                             } else {
+                                if status.waitsForManualRevoke, let page = revokePage(for: status) {
+                                    Button(T("Open the page to revoke it")) { NSWorkspace.shared.open(page) }
+                                        .buttonStyle(KRButtonStyle())
+                                }
                                 if status.waitsForManualRevoke {
                                     Button(T("Check that the old key is dead")) { model.confirmOldKeyDead(status) }
                                         .buttonStyle(KRButtonStyle(primary: true))
@@ -174,6 +179,14 @@ struct VaultView: View {
             }
             .padding(14)
         }
+    }
+
+    /// Where the old key of a rotation is revoked: the page kept for that key, or else its provider's.
+    private func revokePage(for status: RotationStatus) -> URL? {
+        let item = model.items.first { $0.path == status.key }
+        let page = model.places[status.key]?.revokePage
+            ?? item.flatMap { model.providers.rotator(of: $0)?.dashboard }
+        return page.flatMap(URL.init(string:)).flatMap { $0.scheme == "https" ? $0 : nil }
     }
 
     /// The keys themselves, since using one is why they are here. Each opens on a fingerprint.

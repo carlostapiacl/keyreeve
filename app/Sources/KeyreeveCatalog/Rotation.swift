@@ -83,6 +83,9 @@ public struct KeyPlaces: Codable, Equatable, Sendable {
     public var overlapMinutes = 1440
     /// Another key that creates and revokes, when this one cannot.
     public var admin: String?
+    /// The exact page where this key is revoked by hand, such as an integration's settings, when it is not
+    /// the provider's usual page. The app opens it when the old key is left for the person to revoke.
+    public var revokePage: String?
 
     public init() {}
 

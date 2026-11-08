@@ -67,7 +67,25 @@ struct KeyDetail: View {
     // MARK: Tabs
 
     @ViewBuilder private var summary: some View {
-        if let attention = item.attention {
+        if !item.description.isEmpty {
+            Text(item.description).font(Theme.body).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+        }
+        if item.needsField { fieldChoice }
+        if item.holdsSeveralKeys {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(T("Several keys of this provider share this file, so keyreeve cannot tell which to check."))
+                    .font(Theme.body).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                Button(T("Split into one file per key")) { model.split(item) }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .help(T("Each key gets its own file beside this one. This file moves to keyreeve's originals folder."))
+            }
+        }
+        if let others = model.summary.sameAccount[item.path], !others.isEmpty {
+            Label(T("Same account as %@. It may be the same key: keep one and archive the other.", others.joined(separator: ", ")),
+                  systemImage: "square.on.square")
+                .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+        }
+        if let attention = item.attention, !item.needsField, !item.holdsSeveralKeys {
             VStack(alignment: .leading, spacing: 8) {
                 Label(attention, systemImage: "exclamationmark.triangle.fill")
                     .font(Theme.body).foregroundStyle(Theme.warn)
@@ -78,7 +96,8 @@ struct KeyDetail: View {
         HStack(alignment: .top, spacing: 12) {
             box(T("Status")) {
                 Label(statusText, systemImage: statusIcon).font(Theme.rowTitle).foregroundStyle(statusColor)
-                if !item.lastReason.isEmpty {
+                // The two reasons above already say this in the person's words, with what to do.
+                if !item.lastReason.isEmpty && !item.needsField && !item.holdsSeveralKeys {
                     Text(item.lastReason).font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -116,6 +135,19 @@ struct KeyDetail: View {
             .padding(.top, 10)
         } label: {
             Text(T("More details and options")).font(Theme.section).foregroundStyle(Theme.text)
+        }
+    }
+
+    /// The fields of a file with several, one click each: the next check reads the one chosen.
+    private var fieldChoice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(T("This file holds several values. Which one is the key?"))
+                .font(Theme.body).foregroundStyle(Theme.text)
+            FlowRow(spacing: 6) {
+                ForEach(item.labels.filter { !$0.isEmpty }, id: \.self) { label in
+                    Button(label) { model.setField(label, for: item) }.buttonStyle(KRButtonStyle())
+                }
+            }
         }
     }
 

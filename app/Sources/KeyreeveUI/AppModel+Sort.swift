@@ -1,5 +1,6 @@
 import Foundation
 import KeyreeveCatalog
+import KeyreeveVault
 
 @MainActor
 extension AppModel {
@@ -41,5 +42,61 @@ extension AppModel {
 
     public func markUntestable(_ chosen: [CatalogItem]) {
         apply(chosen.map { Suggestion(path: $0.path, kind: .untestable, why: "chosen") })
+    }
+}
+
+extension AppModel {
+    /// Names the field that holds the key, in a file with several. The next check reads that one.
+    public func setField(_ field: String, for item: CatalogItem) {
+        save(KeyEdit(field: field), for: item)
+        message = T("Field saved: %@. Check the key to see if it works.", field)
+    }
+
+    /// Gives each key of a file of notes a file of its own beside it, private and with the same provider and
+    /// tags, and moves the old file to keyreeve's originals folder. Nothing is deleted.
+    public func split(_ item: CatalogItem) {
+        guard let folder = keysFolder, let provider = item.recipes.first,
+            let prefixes = providers.all.first(where: { $0.id == provider })?.prefixes, !prefixes.isEmpty
+        else {
+            message = T("Only a provider whose keys have a known start can be split")
+            return
+        }
+        let source = folder.appendingPathComponent(item.path)
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: source.path))?[.size] as? Int, size < 1_048_576,
+            let text = try? String(contentsOf: source, encoding: .utf8)
+        else {
+            message = T("That file could not be read as text, so it was not saved")
+            return
+        }
+        let keys = KeySplit.keys(in: text, prefixes: prefixes)
+        guard keys.count > 1 else {
+            message = T("This file holds one key, so there is nothing to split")
+            return
+        }
+        let names = KeySplit.names(for: item.path, count: keys.count) {
+            FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
+        }
+        do {
+            for (name, key) in zip(names, keys) {
+                try PrivateFile.write(Data((key + "\n").utf8), to: folder.appendingPathComponent(name))
+            }
+            var edits: [String: KeyEdit] = [:]
+            for name in names {
+                edits[name] = KeyEdit(tags: item.tags, recipes: [provider], description: item.description.isEmpty ? nil : item.description)
+            }
+            try files.saveEdits(edits)
+            let day = DateFormatter()
+            day.locale = Locale(identifier: "en_US_POSIX")
+            day.dateFormat = "yyyy-MM-dd"
+            let target = files.originals.appendingPathComponent("\(day.string(from: Date()))-split").appendingPathComponent(item.path)
+            try PrivateFile.folder(files.originals)
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: source, to: target)
+            note("split", path: item.path, detail: names.joined(separator: ", "))
+            message = T("%d files made. The old one is in %@", names.count, target.deletingLastPathComponent().path)
+        } catch {
+            message = T("The files could not be moved")
+        }
+        refresh()
     }
 }

@@ -9,6 +9,10 @@ public struct Suggestion: Identifiable, Equatable, Sendable {
         /// Kept and sealed; nothing to check.
         case untestable
         case internalSecret
+        /// Not a secret at all, such as an account id or a public key.
+        case notSecret
+        /// Only what it is, in a few words.
+        case described
     }
 
     public var id: String { path }
@@ -16,23 +20,34 @@ public struct Suggestion: Identifiable, Equatable, Sendable {
     public var kind: Kind
     /// Why, in a few words, such as the tag it came from.
     public let why: String
+    /// What the key is, in a few words, such as "Cloudflare account ID". Kept as its description when it has none.
+    public var what: String?
 
-    public init(path: String, kind: Kind, why: String) {
+    public init(path: String, kind: Kind, why: String, what: String? = nil) {
         self.path = path
         self.kind = kind
         self.why = why
+        self.what = what
     }
 
     /// The change it makes, keeping the file's other tags.
     public func edit(for item: CatalogItem) -> KeyEdit {
+        var edit: KeyEdit
         switch kind {
         case .provider(let id, let field):
-            return KeyEdit(tags: item.tags.filter { $0 != "untestable" }, recipes: [id], field: field ?? "")
+            edit = KeyEdit(tags: item.tags.filter { $0 != "untestable" }, recipes: [id], field: field ?? "")
         case .untestable:
-            return KeyEdit(tags: item.tags.filter { $0 != "untestable" } + ["untestable"], recipes: [])
+            edit = KeyEdit(tags: item.tags.filter { $0 != "untestable" } + ["untestable"], recipes: [])
         case .internalSecret:
-            return KeyEdit(tags: item.tags.filter { $0 != "internal" } + ["internal"], recipes: [])
+            edit = KeyEdit(tags: item.tags.filter { $0 != "internal" } + ["internal"], recipes: [])
+        case .notSecret:
+            edit = KeyEdit(level: "none", recipes: [])
+        case .described:
+            edit = KeyEdit()
         }
+        // What the person wrote is kept; a description only fills an empty one.
+        if item.description.isEmpty, let what { edit.description = what }
+        return edit
     }
 }
 
@@ -91,10 +106,15 @@ extension Suggester {
 
     public static func prompt(for items: [CatalogItem], providers: ProviderDirectory) -> String {
         let ids = providers.all.filter { $0.problem == nil }.map(\.id).sorted().joined(separator: ", ")
+        let language = Language.current.resolved == .spanish ? "Spanish" : "English"
         return """
             You sort API keys for keyreeve. For each key below you get its file path, its tags and the names of the fields
             inside the file. You never see a value. Answer with one JSON array and nothing else, one object per key:
-            {"path": "<as given>", "kind": "provider" | "untestable" | "internal" | "unknown", "provider": "<id>", "field": "<name>"}
+            {"path": "<as given>", "kind": "provider" | "untestable" | "internal" | "public" | "unknown", "provider": "<id>", "field": "<name>", "what": "<a few words>"}
+
+            - what: in \(language), at most eight words saying what the file holds, such as "Cloudflare account ID" or
+              "Login for the Instagram account". Give it for every key you can tell anything about.
+            - public: not a secret at all, such as an account or project id, a public key or a site key meant for browsers.
 
             - provider: the key belongs to one of these providers, by id: \(ids). Give "field" only when the file has
               several fields and one of the given names holds that provider's key.
@@ -118,14 +138,18 @@ extension Suggester {
         let known = Set(providers.all.filter { $0.problem == nil }.map(\.id))
         return rows.compactMap { row in
             guard let path = row["path"] as? String, let item = byPath[path], let kind = row["kind"] as? String else { return nil }
+            // Words of the assistant's, kept short and on one line.
+            let what = (row["what"] as? String).map { $0.split(whereSeparator: \.isNewline).joined(separator: " ") }
+                .map { String($0.trimmingCharacters(in: .whitespaces).prefix(80)) }.flatMap { $0.isEmpty ? nil : $0 }
             switch kind {
             case "provider":
                 guard let id = row["provider"] as? String, known.contains(id) else { return nil }
                 let field = (row["field"] as? String).flatMap { item.labels.contains($0) ? $0 : nil }
-                return Suggestion(path: path, kind: .provider(id, field: field), why: "assistant")
-            case "untestable": return Suggestion(path: path, kind: .untestable, why: "assistant")
-            case "internal": return Suggestion(path: path, kind: .internalSecret, why: "assistant")
-            default: return nil
+                return Suggestion(path: path, kind: .provider(id, field: field), why: "assistant", what: what)
+            case "untestable": return Suggestion(path: path, kind: .untestable, why: "assistant", what: what)
+            case "internal": return Suggestion(path: path, kind: .internalSecret, why: "assistant", what: what)
+            case "public": return Suggestion(path: path, kind: .notSecret, why: "assistant", what: what)
+            default: return what.map { Suggestion(path: path, kind: .described, why: "assistant", what: $0) }
             }
         }
     }

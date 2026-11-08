@@ -33,11 +33,11 @@ struct CleanupTests {
     }
 
     @Test func keysWhoseProviderSaidTheSameAccountAreFoundTogether() {
-        let orgs = ["organizations": "carlos-tapia, restoiq"]
+        let orgs = ["organizations": "jane-doe, acme"]
         let items = [
             CatalogItem(path: "a.txt", recipes: ["sentry"], details: KeyDetails(provider: "sentry", fields: orgs)),
             CatalogItem(path: "b.txt", recipes: ["sentry"], details: KeyDetails(provider: "sentry", fields: orgs)),
-            CatalogItem(path: "c.txt", recipes: ["sentry"], details: KeyDetails(provider: "sentry", fields: ["account": "lh"])),
+            CatalogItem(path: "c.txt", recipes: ["sentry"], details: KeyDetails(provider: "sentry", fields: ["account": "globex"])),
             CatalogItem(path: "d.txt", recipes: ["github"], details: KeyDetails(provider: "github", fields: orgs)),
         ]
         let same = CatalogSummary(items: items).sameAccount

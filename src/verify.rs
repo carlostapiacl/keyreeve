@@ -126,6 +126,16 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
     let request = Request::for_step(recipe, step, &[], &credential);
     let host = request.rendered.host.clone();
     match transport.send(&request) {
+        // A pass that says inside that the key was turned down, as some providers answer a bad key.
+        Ok(response)
+            if step.accepts(response.status)
+                && step
+                    .reject_body
+                    .iter()
+                    .any(|text| response.body.expose().contains(text.as_str())) =>
+        {
+            Verdict::Rejected
+        }
         Ok(response) if step.accepts(response.status) => Verdict::Works { host },
         Ok(response)
             if step.alive_if.as_ref().is_some_and(|alive| {
@@ -366,6 +376,42 @@ mod tests {
             sent: Vec::new(),
         };
         check(&recipe, &Secret::new("CANARYkey"), &mut transport)
+    }
+
+    struct Says(&'static str);
+
+    impl Transport for Says {
+        fn send(&mut self, _: &Request) -> Result<Response, TransportError> {
+            Ok(Response {
+                headers: Vec::new(),
+                status: 200,
+                body: Secret::new(self.0),
+            })
+        }
+    }
+
+    #[test]
+    fn a_pass_that_says_the_key_is_bad_is_a_rejection() {
+        let recipe = crate::recipe::Recipe::parse(
+            "schema: 1\nprovider: quotes\nname: Quotes\nhosts: [api.example.com]\nauth: { type: url }\n\
+             verify: { method: GET, path: \"/q?apikey={key}\", reject_body: [\"apikey is invalid\"] }\n",
+        )
+        .unwrap();
+        let key = Secret::new("CANARYkey");
+        let bad = check(
+            &recipe,
+            &key,
+            &mut Says(r#"{"Error Message": "the parameter apikey is invalid or missing"}"#),
+        );
+        assert_eq!(bad, Verdict::Rejected);
+        assert!(check(&recipe, &key, &mut Says(r#"{"Global Quote": {}}"#)).works());
+        // Texts too short to mean anything, or too many, are refused when the file is read.
+        for list in ["[\"no\"]", "[\"aaaaaa\",\"bbbbbb\",\"cccccc\",\"dddddd\",\"eeeeee\",\"ffffff\",\"gggggg\",\"hhhhhh\",\"iiiiii\"]"] {
+            let text = format!(
+                "schema: 1\nprovider: quotes\nname: Quotes\nhosts: [api.example.com]\nauth: {{ type: url }}\nverify: {{ method: GET, path: \"/q?apikey={{key}}\", reject_body: {list} }}\n"
+            );
+            assert!(crate::recipe::Recipe::parse(&text).is_err(), "{list}");
+        }
     }
 
     #[test]

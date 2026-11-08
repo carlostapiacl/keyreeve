@@ -388,10 +388,13 @@ struct Snapshot: Sendable {
             let changed = source.keysFolder.map { VaultKeeper.isOutdated(entry, path: path, folder: $0) } ?? false
             parsed[index].vault = changed ? .outdated : .sealed
         }
-        // Keys pasted in the app have no file and no catalog line, and are listed from the vault.
+        // Keys pasted in the app, or put in the vault from a script with `keyreeve-vault add`, have no file and no
+        // catalog line, and are listed from the vault, so each can be checked and named like any other.
         let index = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
         let listed = Set(parsed.map(\.path))
-        let pasted = ((vault?.entries.keys).map(Array.init) ?? []).filter { $0.hasPrefix(AppModel.addedFolder) && !listed.contains($0) }
+        let pasted = (vault?.entries ?? [:]).filter { name, entry in
+            !listed.contains(name) && !VaultFile.isTemporary(name) && (name.hasPrefix(AppModel.addedFolder) || entry.source == nil)
+        }.keys.sorted()
         // With no catalog line, their last check and their edits are read here, as the catalog would.
         let checked = pasted.isEmpty ? [:] : files.lastResults(for: Set(pasted))
         let edits = pasted.isEmpty ? [:] : ((try? JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: files.edits))) ?? [:])

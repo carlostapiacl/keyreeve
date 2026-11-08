@@ -539,7 +539,7 @@ extension CatalogItem {
     }
 
     /// How well this key fits the account an agent named: 2 when what the provider said of the key names
-    /// it, 1 when a tag, the key's name or its path does, 0 otherwise. Whole words only, so "lh" does not
+    /// it, 1 when a tag, the key's name or its path does, 0 otherwise. Whole words only, so "hub" does not
     /// fit "github".
     public func fit(account hint: String?) -> Int {
         func words(_ text: String) -> Set<String> {

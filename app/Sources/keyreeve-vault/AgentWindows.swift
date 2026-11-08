@@ -85,6 +85,30 @@ func askAccess(_ request: AccessRequest) -> AccessDecision? {
     return AccessDecision(hours: choices[durations.indexOfSelectedItem])
 }
 
+/// Asks whether agents may use a key with no fingerprint at all. It starts on keeping the key as it is: Return and
+/// Escape both keep it, and only a click on the other button changes it.
+func askNoFingerprint(_ request: AccessRequest) -> Bool {
+    let spanish = Locale.preferredLanguages.first?.hasPrefix("es") ?? false
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    app.activate(ignoringOtherApps: true)
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    let provider = request.provider.map { " (\($0))" } ?? ""
+    alert.messageText = spanish
+        ? "\(request.agent) pide usar \(request.key)\(provider) sin huella, siempre"
+        : "\(request.agent) asks to use \(request.key)\(provider) with no fingerprint, always"
+    alert.informativeText = spanish
+        ? "Lo que dice el agente, en sus palabras:\n\u{201C}\(request.reason)\u{201D}\n\nSi aceptas, pones la huella una vez y desde ahí los agentes usan esta clave a través del proxy sin preguntarte, también después de reiniciar. Cualquier programa que corra con tu usuario podría usarla así mientras la Mac esté desbloqueada. Úsalo solo para claves que hacen poco daño. Lo quitas cuando quieras en Agentes."
+        : "What the agent says, in its own words:\n\u{201C}\(request.reason)\u{201D}\n\nIf you accept, you give your finger once, and from then on agents use this key through the proxy with no question, after a restart too. Any program running as you could use it that way while this Mac is unlocked. Keep it for keys that can do little harm. Take it off any time under Agents."
+    let keep = alert.addButton(withTitle: spanish ? "Dejar como está" : "Keep it as it is")
+    keep.keyEquivalent = "\r"
+    let allow = alert.addButton(withTitle: spanish ? "Siempre, sin huella" : "Always, no fingerprint")
+    allow.keyEquivalent = ""
+    alert.window.level = .floating
+    return answered(alert) == 1
+}
+
 /// Tells the person an agent asked for a key that is not saved yet. Saving happens in the app, which
 /// knows the keys folder, so this only offers to open it.
 func announceRequest(_ request: AccessRequests.Entry) -> AgentBridge.Announcement {

@@ -55,6 +55,20 @@ struct SnapshotTests {
         #expect(written.map { String(decoding: $0, as: UTF8.self).contains("added/mail") } == true)
     }
 
+    /// A key put in the vault from a script, with no file and no catalog line, is listed so it can be checked.
+    @Test func aKeyAddedFromAScriptIsListed() throws {
+        let (root, files, store) = try home()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try store.update { vault in
+            try vault.add(name: "from-a-script.txt", value: Data("CANARY".utf8))
+            try vault.add(name: "from-elsewhere.txt", value: Data("CANARY".utf8), source: "/some/other/folder")
+        }
+        let paths = Snapshot(reading: .init(files: files, store: store, binary: nil, keysFolder: nil)).items.map(\.path)
+        #expect(paths.contains("from-a-script.txt"))
+        // One sealed from a folder of files belongs to that folder's list, not here.
+        #expect(!paths.contains("from-elsewhere.txt"))
+    }
+
     /// A revocation counts only once the service says so; with no service running, none can be in force.
     @Test func aRevocationIsDoneOnlyWhenTheServiceSaysSo() throws {
         let socket = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString).sock").path

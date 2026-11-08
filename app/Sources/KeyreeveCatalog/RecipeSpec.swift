@@ -21,6 +21,7 @@ public enum RecipeSpec {
         Field(id: "auth", path: "auth", help: "How the key travels: a header (the usual), the address (url), HTTP Basic, an OAuth exchange, an AWS signature, an SSH greeting, or a program of yours (command).", basic: true),
         Field(id: "verify", path: "verify", help: "One read-only request that answers whether the key works, such as GET /user. A 401 means rejected; reject lists other statuses that mean the same.", basic: true),
         Field(id: "alive_if", path: "verify.alive_if", help: "A refusal that still proves the key is alive, such as a restricted key that answers 401 with a known word.", basic: false),
+        Field(id: "reject_body", path: "verify.reject_body", help: "Texts that, in an answer that would pass, mean the key was turned down: for a provider that answers 200 to a bad key and says so inside.", basic: false),
         Field(id: "prefixes", path: "prefixes", help: "How its keys start, such as sk_live_. Lets the app recognise a pasted key and find it inside a file of notes.", basic: false),
         Field(id: "env_var", path: "env_var", help: "The variable programs usually read it from, such as SENTRY_AUTH_TOKEN.", basic: false),
         Field(id: "identify", path: "identify", help: "A read-only request and the fields to keep from its answer: $.path, $.*.path for every item of a list, header:name, token:name or reply:. account names whose key it is.", basic: false),
@@ -55,6 +56,7 @@ public enum RecipeSpec {
         # or auth: { type: ssh }      for an SSH key, greeting a server
         verify: { method: GET, path: <a read-only endpoint that needs the key>, reject: [<statuses meaning a bad key, besides 401>] }
         # optional: verify.alive_if: { status: <code>, contains: <word in the answer> } for a restricted key that is alive
+        # optional: verify.reject_body: [<text the provider puts in a 200 answer to a bad key>]
         identify:
           request: { method: GET, path: <endpoint describing the key or its account> }
           fields: { account: $.<json path>, email: $.<json path> }   # $.*.<path> keeps every item of a list

@@ -136,3 +136,12 @@ public enum Assistants {
         return (yaml, report)
     }
 }
+
+extension Assistants {
+    /// The one chosen in Settings: none until the person picks one.
+    public static func chosen(defaults: UserDefaults = .standard) -> Assistant? {
+        guard let id = defaults.string(forKey: Assistant.settingsKey), id != "none" else { return nil }
+        if id == "custom" { return defaults.string(forKey: Assistant.customKey).flatMap(custom) }
+        return available().first { $0.id == id }
+    }
+}

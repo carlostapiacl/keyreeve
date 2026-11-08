@@ -43,6 +43,9 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
 
     /// A secret with no provider, such as a signing key, so there is nowhere to check it.
     public var isInternal: Bool { tags.contains("internal") }
+    /// Kept and sealed, with nothing a provider could answer about it: a login, a database, a document, a
+    /// public key. It is not offered for checks and does not count as unchecked.
+    public var isUntestable: Bool { tags.contains("untestable") }
 
     /// True if the file has not changed for longer than its provider suggests for a key.
     public func isOlderThanSuggested(at now: Date = Date()) -> Bool {
@@ -86,7 +89,7 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     }
 
     /// A key at level `never` is for a person alone, and a key with no recipe must not be guessed.
-    public var canCheck: Bool { (level == "free" || level == "ask") && !recipes.isEmpty && !isInternal }
+    public var canCheck: Bool { (level == "free" || level == "ask") && !recipes.isEmpty && !isInternal && !isUntestable }
 
     /// Why a check is not offered, for the button's help text.
     public var whyNoCheck: String? {
@@ -352,7 +355,8 @@ public struct CatalogStats: Sendable {
         works = secretItems.filter { $0.lastResult == "works" }.count
         rejected = secretItems.filter { $0.lastResult == "rejected" }.count
         noAnswer = secretItems.filter { $0.lastResult == "forbidden" || $0.lastResult == "no_result" }.count
-        neverChecked = secretItems.filter { $0.lastResult.isEmpty }.count
+        // Only what could be checked: a key with no way to check it is not waiting on anything.
+        neverChecked = secretItems.filter { $0.canCheck && $0.lastResult.isEmpty }.count
         canCheck = items.filter(\.canCheck).count
 
         let tags = projectTags(in: secretItems)

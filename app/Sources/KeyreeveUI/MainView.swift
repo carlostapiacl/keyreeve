@@ -29,6 +29,7 @@ public struct MainView: View {
     @State private var pressedChip: Sidebar?
     @State private var chosenRows: Set<CatalogItem.ID>
     @State private var confirmCheck = false
+    @State private var sorting = false
 
     public init(model: AppModel, initial: Sidebar = .home, chosen: CatalogItem.ID? = nil) {
         self.model = model
@@ -99,6 +100,7 @@ public struct MainView: View {
                 model.reloadRequests()
             }
             .onChange(of: model.showRequests) { _, _ in selection = .agents }
+            .sheet(isPresented: $sorting) { SortSheet(model: model) }
             .confirmationDialog(
                 T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
             ) {
@@ -271,6 +273,27 @@ public struct MainView: View {
                     }
                 } label: {
                     Label(T("Show"), systemImage: "line.3.horizontal.decrease.circle")
+                }
+            }
+            ToolbarItem(placement: .automatic) {
+                // Several chosen keys: one provider for all, or nothing to check.
+                if chosenRows.count > 1 {
+                    Menu {
+                        ForEach(model.providers.all.filter { $0.problem == nil }.sorted { $0.name < $1.name }) { provider in
+                            Button(provider.name) { model.assign(provider: provider.id, to: scope) }
+                        }
+                        Divider()
+                        Button(T("Nothing to check")) { model.markUntestable(scope) }
+                    } label: {
+                        Label(T("Provider for %d", chosenRows.count), systemImage: "tag")
+                    }
+                } else {
+                    Button {
+                        sorting = true
+                    } label: {
+                        Label(T("Sort keys"), systemImage: "wand.and.stars")
+                    }
+                    .help(T("Propose a provider for keys keyreeve cannot check yet"))
                 }
             }
             ToolbarItem(placement: .automatic) {

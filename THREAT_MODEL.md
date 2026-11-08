@@ -43,8 +43,8 @@ recipe is accepted only when typed at the `verify` command for one run, and such
 ## What it does not protect against
 
 - **A recipe that lists a malicious host.** It can send the credential to any host it declares.
-  Listing the hosts is what makes this visible, so you have to read them. Changing the hosts on
-  a recipe update should require new approval, and that check does not exist yet.
+  Listing the hosts is what makes this visible, so you have to read them. A provider file of yours that you approved is trusted
+  for the hosts it listed then: changing them undoes the approval until you approve it again.
 - **A recipe that names the wrong header.** Validation cannot know which header a provider reads.
 - **A host that stores what it receives,** such as one that logs headers.
 - **Anything running as your user.** It can read the same memory and files.
@@ -117,6 +117,12 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **`get` hands out the real key.** It is for tools such as seisin that take a key from a command's output. It asks for your finger
   every time and never remembers a yes, because any program running as you could run it again. What it prints is in the hands of
   whoever ran it: seisin keeps it inside one role, masks it in the output and limits where the role can connect.
+- **An agent that sorts sees names.** With "Agents can sort my keys" on, `inventory` gives an agent every file's path, field
+  names, tags, provider and state. Never a value, but names can say a lot. `propose` changes nothing on its own: it waits for you,
+  and Apply may check keys, sending each one only to its provider's hosts, or to a server of yours you approved. `rotate_key` and
+  `request_access` also only leave a request. The reason an agent gives is its own text.
+- **Your terminal AI may read your files.** keyreeve hands it names and asks it for words, never a key, in an empty folder with a
+  small environment. Claude Code is limited to web search; Codex, OpenCode and a command of your own can read what you can.
 - **Naming the agent is a hint.** keyreeve reads which program started its server, so "only Claude" keeps an honest Codex out. A program
   running as you can start the server under any name.
 - **The agent terminal keeps what came back.** The first 2,000 characters of each command's output stay in a private file, with the key

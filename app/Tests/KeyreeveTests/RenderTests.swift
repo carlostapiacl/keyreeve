@@ -70,6 +70,22 @@ struct RenderTests {
         XCTAssertEqual((parsed?["StartCalendarInterval"] as? [String: Int])?["Weekday"], 1)
     }
 
+    @Test func testClaudeCodesSettingsSayWhereKeyreeveIsConnected() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("claude-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let server = #"{"type":"stdio","command":"/x/dist/keyreeve-vault","args":["mcp"]}"#
+        try #"{"projects":{"/p/b":{"mcpServers":{"k":\#(server)}},"/p/a":{"mcpServers":{"other":{"command":"/bin/other","args":["mcp"]}}}}}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(AgentConnection.read(from: file), .folders(["/p/b"]))
+        try #"{"mcpServers":{"vault":\#(server)},"projects":{"/p/b":{"mcpServers":{"k":\#(server)}}}}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(AgentConnection.read(from: file), .everywhere)
+        // Another server of the same program that is not the agent server does not count.
+        try #"{"mcpServers":{"k":{"command":"/x/keyreeve-vault","args":["serve"]}}}"#.write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(AgentConnection.read(from: file), .none)
+        XCTAssertEqual(AgentConnection.read(from: file.appendingPathExtension("missing")), .none)
+    }
+
     @Test func testTheViewsDrawInEachLanguageAndAppearance() throws {
         defer { UserDefaults.standard.removeObject(forKey: Language.settingsKey) }
         for language in [Language.english, Language.spanish] {
@@ -123,6 +139,32 @@ struct RenderTests {
                 named: "usage-\(code)", appearance: .darkAqua)
             ready.usage.brokenLine = 3
             try render(UsageLogSheet(model: ready), named: "usage-log-\(code)", appearance: .aqua)
+            ready.usage.brokenLine = nil
+            ready.keyIndex = KeyIndex(keys: [
+                KeyIndex.Key(id: "vps", source: "old-cloud.csv", provider: KeyService.sshProvider),
+                KeyIndex.Key(id: "hosting", source: "hosting-readonly.txt", provider: "hosting", variable: "HOSTING_TOKEN"),
+                KeyIndex.Key(id: "legacy", source: "notes/legacy-mail.txt"),
+            ])
+            ready.items[1].vault = .sealed
+            ready.items[3].originalMoved = true
+            ready.agentPolicy = AgentPolicy(
+                commands: ["legacy": ["/Users/a/.keyreeve/agent-tools/check-mail.sh"]], levels: ["hosting": .free, "vps": .ask],
+                agents: ["vps": ["claude"]], hashes: ["/Users/a/.keyreeve/agent-tools/check-mail.sh": "abc"])
+            let runs = AgentTranscript(url: ready.files.directory.appendingPathComponent(AgentTranscript.fileName))
+            try? FileManager.default.createDirectory(at: ready.files.directory, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: runs.url)
+            runs.append(AgentTranscript.Entry(
+                at: Date(timeIntervalSince1970: 1_793_900_000), agent: "claude", key: "hosting", command: "curl -s https://api.hosting.example/v1/sites",
+                reason: "list the sites before deploying", exit: 0, output: "{\"sites\":[{\"name\":\"blog\"}]}", milliseconds: 412))
+            runs.append(AgentTranscript.Entry(
+                at: Date(timeIntervalSince1970: 1_793_900_060), agent: "codex", key: "vps", command: "ssh root@203.0.113.7 uptime", reason: "check the server",
+                exit: 255, output: "Permission denied (publickey).", milliseconds: 1830))
+            try render(MainView(model: ready, initial: .agents), named: "agents-\(code)", appearance: .aqua)
+            try render(MainView(model: ready, initial: .agents), named: "agents-dark-\(code)", appearance: .darkAqua)
+            try render(
+                VStack(alignment: .leading, spacing: 10) { ForEach(Array(runs.entries().enumerated()), id: \.offset) { TerminalRow(run: $0.element) } }
+                    .padding(24).frame(width: 700).background(Theme.background),
+                named: "agents-terminal-\(code)", appearance: .darkAqua)
         }
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import KeyreeveVault
 
@@ -52,13 +53,16 @@ func runWithEnv() throws {
 }
 
 func serveAgents() throws {
-    let policy = AgentPolicy.load(from: home.appendingPathComponent(AgentPolicy.fileName))
+    let policyFile = home.appendingPathComponent(AgentPolicy.fileName)
+    // This server's parent is the agent that started it. The tree is the system's word, not the agent's.
+    let observed = CallerIdentity.observe(pid: getpid())
+    let agent = AgentBridge.agentName(chain: observed.chain)
     func indexed(_ id: String) throws -> KeyIndex.Key {
         guard let key = try KeyIndex.load(from: keysFile).key(id) else { throw VaultError("no key is called \(id)") }
         return key
     }
     let bridge = AgentBridge(
-        policy: policy,
+        policy: { AgentPolicy.load(from: policyFile) },
         names: {
             let sealed = try store.load().entries.keys
             return try KeyIndex.load(from: keysFile).keys.filter { sealed.contains($0.source) }.map(\.id)
@@ -73,7 +77,28 @@ func serveAgents() throws {
             // Marked here, since a path's folders are dropped from the log.
             let program = URL(fileURLWithPath: $1).lastPathComponent
             store.recordUse(of: $0, by: "agent:\(program)", reason: $2)
-        })
+        },
+        approve: askApproval,
+        endedAt: { AgentBridge.endedAt(home: home) },
+        agent: agent,
+        service: askService,
+        log: { event, key, detail, reason in
+            try? auditLog.append(
+                event: event, key: key, observed: observed,
+                declared: AuditLog.Declared(agent: agent, reason: reason), detail: detail)
+        },
+        describe: {
+            let keys = (try? KeyIndex.load(from: keysFile).keys) ?? []
+            return Dictionary(keys.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        },
+        transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) },
+        decideAccess: askAccess,
+        updatePolicy: { change in try AgentPolicy.update(at: policyFile, change) },
+        offered: { AccessRequests.readOffered(from: home.appendingPathComponent(AccessRequests.offeredFileName)) },
+        requests: { AccessRequests.read(from: home.appendingPathComponent(AccessRequests.fileName)) },
+        addRequest: { try AccessRequests.append($0, to: home.appendingPathComponent(AccessRequests.fileName)) },
+        announce: announceRequest,
+        paused: { AgentBridge.isPaused(home: home) })
     while let line = readLine() {
         if let answer = bridge.handle(line) {
             FileHandle.standardOutput.write(Data((answer + "\n").utf8))

@@ -5,7 +5,7 @@ import SwiftUI
 /// Plain words for each access level. The stored values stay the same in every language.
 func levelName(_ level: String) -> String {
     switch level {
-    case "free": return T("Agents can use it")
+    case "free": return T("Checked without asking")
     case "ask": return T("Ask me")
     case "never": return T("Only me")
     default: return T("Not secret")
@@ -58,6 +58,7 @@ public struct MainView: View {
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
                 sidebarRow(T("All keys"), "key", .all, active.count)
                 sidebarRow(T("Vault"), "lock.shield", .vault, filter(items, by: .vault, search: "").count)
+                sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.keys.count)
                 sidebarRow(T("Archive"), "archivebox", .archive, items.count - active.count)
                 Section(T("Projects")) {
                     ForEach(projectTags(in: active), id: \.tag) { entry in
@@ -75,6 +76,15 @@ public struct MainView: View {
             .background(Theme.background)
             .navigationTitle(title)
             .toolbar { toolbar }
+            // An agent's request opens the app: show it where it is answered.
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                model.reloadRequests()
+            }
+            .onChange(of: model.pendingRequests.map(\.id)) { old, new in
+                if !Set(new).subtracting(old).isEmpty { selection = .agents }
+            }
+            .onChange(of: model.showRequests) { _, _ in selection = .agents }
+            .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
         }
     }
 
@@ -87,6 +97,8 @@ public struct MainView: View {
             }
         } else if selection == .vault {
             VaultView(model: model)
+        } else if selection == .agents {
+            AgentsView(model: model)
         } else {
             VStack(spacing: 0) {
                 filterBar
@@ -149,6 +161,7 @@ public struct MainView: View {
         case .all: return T("All keys")
         case .archive: return T("Archive")
         case .vault: return T("Vault")
+        case .agents: return T("Agents")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")
@@ -180,6 +193,14 @@ public struct MainView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            Button {
+                model.startAddingKey()
+            } label: {
+                Label(T("Add a key"), systemImage: "plus")
+            }
+            .help(T("Paste a key and seal it, with no file"))
+        }
         if selection != .home {
             ToolbarItem(placement: .automatic) {
                 Menu {

@@ -71,11 +71,21 @@ public final class KeyService: @unchecked Sendable {
         public var cwd: String?
         /// Asks for the value itself, for what cannot use a stand-in. It is never remembered.
         public var real: Bool?
+        /// A permission that covers any program, for a key a person left free to agents.
+        public var anyProgram: Bool?
+        /// One permission to end, by its id, and no other.
+        public var grant: String?
+        /// When the key closes for agents. No permission for it lasts past this, a new one or one in force.
+        public var notAfter: Date?
 
         public init(
             op: String, key: String? = nil, seconds: Int? = nil, program: String? = nil, arguments: Int? = nil,
-            prompt: String? = nil, agent: String? = nil, reason: String? = nil, cwd: String? = nil, real: Bool? = nil
+            prompt: String? = nil, agent: String? = nil, reason: String? = nil, cwd: String? = nil, real: Bool? = nil,
+            anyProgram: Bool? = nil, grant: String? = nil, notAfter: Date? = nil
         ) {
+            self.notAfter = notAfter
+            self.anyProgram = anyProgram
+            self.grant = grant
             self.op = op
             self.key = key
             self.seconds = seconds
@@ -113,11 +123,15 @@ public final class KeyService: @unchecked Sendable {
         public var sshIdentity: String?
         public var variable: String?
         public var grants: [GrantInfo]?
+        /// The permission this answer used.
+        public var grant: String?
 
         public init(
             ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil,
-            proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, sshIdentity: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil
+            proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, sshIdentity: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil,
+            grant: String? = nil
         ) {
+            self.grant = grant
             self.ok = ok
             self.error = error
             self.value = value
@@ -135,13 +149,20 @@ public final class KeyService: @unchecked Sendable {
         public var key: String
         public var program: String
         public var expires: Date
+
+        public init(id: String, key: String, program: String, expires: Date) {
+            self.id = id
+            self.key = key
+            self.program = program
+            self.expires = expires
+        }
     }
 
     private struct Grant {
         let id: String
         let key: String
         let program: String
-        let expires: Date
+        var expires: Date
         let standIn: String
         /// An SSH key signs for whichever program asks, so its permission is for the key alone.
         let door: SSHDoorHandle?
@@ -173,6 +194,9 @@ public final class KeyService: @unchecked Sendable {
     private let confirm: @Sendable (_ prompt: String) -> Bool
     private let log: AuditLog
     private let now: () -> Date
+    /// The person's emergency stop. Checked before and after the fingerprint, so a use that was already
+    /// waiting cannot finish once it is on.
+    private let paused: () -> Bool
     private var grants: [Grant] = []
     /// Guards the list, and is never held while a person is being asked, so `revoke` always gets through.
     private let lock = NSLock()
@@ -184,8 +208,9 @@ public final class KeyService: @unchecked Sendable {
         index: @escaping () throws -> KeyIndex,
         open: @escaping (_ source: String, _ prompt: String) throws -> Data,
         proxy: KeyProxy?, agents: SSHKeyAgents? = nil, confirm: @escaping @Sendable (String) -> Bool = { _ in false },
-        log: AuditLog, now: @escaping () -> Date = Date.init
+        log: AuditLog, now: @escaping () -> Date = Date.init, paused: @escaping () -> Bool = { false }
     ) {
+        self.paused = paused
         self.proxy = proxy
         self.agents = agents
         self.confirm = confirm
@@ -235,10 +260,14 @@ public final class KeyService: @unchecked Sendable {
             case "revoke":
                 lock.lock()
                 dropExpired()
-                revocations += 1
-                let closing = grants.filter { request.key == nil || $0.key == request.key }
+                // Ending one permission that is done with does not cancel what others are opening.
+                if request.grant == nil { revocations += 1 }
+                let ends = { (grant: Grant) in
+                    (request.key == nil || grant.key == request.key) && (request.grant == nil || grant.id == request.grant)
+                }
+                let closing = grants.filter(ends)
                 for grant in closing { end(grant) }
-                grants.removeAll { request.key == nil || $0.key == request.key }
+                grants.removeAll(where: ends)
                 lock.unlock()
                 for grant in closing {
                     try? log.append(event: "closed", key: grant.key, grant: grant.id, observed: caller)
@@ -257,17 +286,31 @@ public final class KeyService: @unchecked Sendable {
 
     /// An SSH key's permission covers every program. Any other covers one key with one program, so one
     /// for `netlify` does not also cover something else without showing you that it asked.
-    private func grantInForce(key: String, program: String) -> Grant? {
+    /// The program name of a permission a person gave for any program.
+    public static let anyProgram = "*"
+
+    /// A permission in force for this key and program. One that would outlast the key's closing is cut
+    /// to it here, and ended by the service's own clock when that comes.
+    private func grantInForce(key: String, program: String, notAfter: Date? = nil) -> Grant? {
         lock.lock()
         defer { lock.unlock() }
         dropExpired()
-        return grants.first { $0.key == key && ($0.door != nil || $0.program == program) }
+        guard let at = grants.firstIndex(where: {
+            $0.key == key && ($0.door != nil || $0.program == program || $0.program == Self.anyProgram)
+        }) else { return nil }
+        let id = grants[at].id
+        if let notAfter, grants[at].expires > notAfter {
+            grants[at].expires = notAfter
+            // Already past it: the permission ends now and a new one is needed.
+            dropExpired()
+        }
+        return grants.first { $0.id == id }
     }
 
     private func answer(for grant: Grant, variable: String?) throws -> Response {
-        if let door = grant.door { return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity) }
+        if let door = grant.door { return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity, grant: grant.id) }
         guard let proxy else { throw VaultError("the proxy is not available") }
-        return Response(ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable)
+        return Response(ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable, grant: grant.id)
     }
 
     private func use(_ request: Request, caller: AuditLog.Observed?) throws -> Response {
@@ -285,13 +328,18 @@ public final class KeyService: @unchecked Sendable {
         let name = URL(fileURLWithPath: program).lastPathComponent
         // The account is the file's word and not the caller's, and it is how you notice the wrong one.
         let account = key.account.map { " (\($0))" } ?? ""
+        // The emergency stop holds for the real key too, and before any finger is asked.
+        guard !paused() else {
+            try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "paused")
+            throw VaultError("Keyreeve is paused")
+        }
         if request.real == true {
             // Asked every time and never remembered: past this point nothing protects the value.
             asking.lock()
             defer { asking.unlock() }
             let sealed: Data
             do {
-                sealed = try open(key.source, "give the real key \(id)\(account) to \(name)")
+                sealed = try open(key.source, FingerPrompt.real(who: name, key: id, account: key.account, reason: request.reason))
             } catch {
                 try log.append(event: "denied", key: id, observed: caller, declared: declared, detail: "real key")
                 throw error
@@ -305,14 +353,18 @@ public final class KeyService: @unchecked Sendable {
             throw VaultError(
                 "\(id) has no provider, so nothing says where it may go. Set one (`ssh` for an SSH key), or use --real")
         }
-        if let existing = grantInForce(key: id, program: name) {
+        guard provider == Self.sshProvider || proxy != nil else {
+            try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "no proxy")
+            throw VaultError("the proxy is not available")
+        }
+        if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
         asking.lock()
         defer { asking.unlock() }
         // While this waited, the prompt ahead of it may have given what this needs.
-        if let existing = grantInForce(key: id, program: name) {
+        if let existing = grantInForce(key: id, program: name, notAfter: request.notAfter) {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
@@ -321,12 +373,17 @@ public final class KeyService: @unchecked Sendable {
         lock.unlock()
         let sealed: Data
         do {
-            sealed = try open(key.source, (request.prompt ?? "run \(name) with the key \(id)") + account)
+            // The asker's own prompt names the account already; one made here does too.
+            sealed = try open(key.source, request.prompt ?? FingerPrompt.use(
+                who: request.agent ?? name, key: id, account: key.account, program: name,
+                lasts: request.seconds.map { .minutes(max(1, $0 / 60)) }, reason: request.reason))
         } catch {
             try log.append(event: "denied", key: id, observed: caller, declared: declared)
             throw error
         }
-        let seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
+        // Counted from the fingerprint, and never past the key's closing.
+        var seconds = min(max(request.seconds ?? Self.defaultSeconds, 1), Self.maxSeconds)
+        if let notAfter = request.notAfter { seconds = max(1, min(seconds, Int(notAfter.timeIntervalSince(now())))) }
         let expires = now().addingTimeInterval(TimeInterval(seconds))
         let grantID = "g-" + UUID().uuidString.prefix(8).lowercased()
         let text = String(decoding: sealed, as: UTF8.self)
@@ -344,12 +401,14 @@ public final class KeyService: @unchecked Sendable {
             // From here the value lives in the proxy, and this process keeps only the stand-in.
             let standIn = try proxy.add(
                 grant: grantID, key: id, provider: provider, text: text, field: key.field, expires: expires)
-            granted = Grant(id: grantID, key: id, program: name, expires: expires, standIn: standIn, door: nil)
+            granted = Grant(
+                id: grantID, key: id, program: request.anyProgram == true ? Self.anyProgram : name, expires: expires,
+                standIn: standIn, door: nil)
             detail = "\(seconds) seconds"
         }
         lock.lock()
-        // Locking the app while your finger was on its way ends this too.
-        guard revocations == revocationsBefore else {
+        // Locking the app, or the emergency stop, while your finger was on its way ends this too.
+        guard revocations == revocationsBefore, !paused() else {
             end(granted)
             lock.unlock()
             throw VaultError("this was revoked while it was being opened")

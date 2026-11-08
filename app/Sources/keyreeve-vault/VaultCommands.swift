@@ -67,6 +67,12 @@ func exportKey() throws {
     FileHandle.standardOutput.write(entry.sealed)
 }
 
+func backupVault() throws {
+    guard arguments.count == 2 else { fail(help, code: 2) }
+    let target = try store.backup(to: URL(fileURLWithPath: arguments[1]))
+    print("Saved \(target.path). It opens with your recovery key, through keyreeve-vault recover.")
+}
+
 func checkRecovery() throws {
     let vault = try store.load()
     let text = String(decoding: readSecret(prompt: "Recovery key"), as: UTF8.self)

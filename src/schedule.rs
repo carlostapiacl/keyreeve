@@ -22,7 +22,8 @@ fn read_or_empty(path: &Path) -> String {
 pub fn rows(home: &Path) -> Result<Vec<catalog::Row>, String> {
     let inventory =
         fs::read_to_string(home.join("inventory.json")).map_err(|e| format!("inventory: {e}"))?;
-    let items = catalog::parse_inventory(&inventory)?;
+    let mut items = catalog::parse_inventory(&inventory)?;
+    catalog::add_moved(&mut items, &home.join("moved.json"))?;
     let rules_text = read_or_empty(&home.join("rules.yaml"));
     let mut rules = if rules_text.is_empty() {
         catalog::Rules::default()
@@ -37,7 +38,7 @@ pub fn rows(home: &Path) -> Result<Vec<catalog::Row>, String> {
     Ok(catalog::build(&items, &rules, &history))
 }
 
-/// Which keys this check may touch. Only those you set to "agents can use it", which is the same
+/// Which keys this check may touch. Only those you set to "checked without asking", which is the same
 /// promise: no fingerprint.
 pub fn eligible(rows: &[catalog::Row]) -> Vec<&catalog::Row> {
     rows.iter()
@@ -56,22 +57,34 @@ pub struct Summary {
     pub checked: usize,
     pub works: usize,
     pub stopped: usize,
+    /// Keys whose file is no longer in the folder. The vault holds them, and opening it takes your finger.
+    pub skipped: usize,
 }
 
 pub fn run(home: &Path) -> Result<Summary, String> {
     let settings: Settings = serde_json::from_str(&read_or_empty(&home.join("app-settings.json")))
         .map_err(|_| "no keys folder is set".to_owned())?;
     let keys = PathBuf::from(settings.keys_folder);
+    run_in(home, &keys)
+}
+
+fn run_in(home: &Path, keys: &Path) -> Result<Summary, String> {
     let rows = rows(home)?;
     let at = now();
     let mut records = Vec::new();
     let mut summary = Summary::default();
     for row in eligible(&rows) {
+        // A sealed key whose original left the folder is not checked here, and is not a key that stopped.
+        let file = keys.join(&row.path);
+        if !file.is_file() {
+            summary.skipped += 1;
+            continue;
+        }
         let field = (!row.field.is_empty()).then_some(row.field.as_str());
         let host = (!row.host.is_empty()).then_some(row.host.as_str());
         let mut worked = false;
         for recipe in &row.recipes {
-            let verdict = run_at(recipe, &KeySource::File(keys.join(&row.path)), field, host);
+            let verdict = run_at(recipe, &KeySource::File(file.clone()), field, host);
             let (result, reason) = match &verdict {
                 Ok(verdict) => (verdict.code(), verdict.reason()),
                 Err(why) => (
@@ -163,6 +176,70 @@ mod tests {
         ];
         let chosen: Vec<&str> = eligible(&rows).iter().map(|r| r.path.as_str()).collect();
         assert_eq!(chosen, ["yes"]);
+    }
+
+    #[test]
+    fn a_key_that_left_the_folder_is_skipped_and_stays_on_the_list() {
+        let dir =
+            std::env::temp_dir().join(format!("keyreeve-schedule-gone-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let keys = dir.join("keys");
+        fs::create_dir_all(&keys).unwrap();
+        let item = |path: &str| {
+            format!(r#"{{"path":"{path}","modified":0,"mode":"600","format":"text"}}"#)
+        };
+        fs::write(
+            dir.join("inventory.json"),
+            format!(r#"{{"schema":1,"items":[{}]}}"#, item("deleted.txt")),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("moved.json"),
+            format!(r#"{{"schema":1,"items":[{}]}}"#, item("sealed.txt")),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("rules.yaml"),
+            "files:\n  deleted.txt:\n    level: free\n    recipes: [github]\n  sealed.txt:\n    level: free\n    recipes: [github]\n",
+        )
+        .unwrap();
+        let worked = |file: &str| HistoryEntry {
+            at: 1,
+            file: file.into(),
+            recipe: "github".into(),
+            result: "works".into(),
+            reason: None,
+        };
+        append_history(
+            &dir.join("history.jsonl"),
+            &[worked("deleted.txt"), worked("sealed.txt")],
+        )
+        .unwrap();
+
+        let summary = run_in(&dir, &keys).unwrap();
+        assert_eq!(
+            summary,
+            Summary {
+                checked: 0,
+                works: 0,
+                stopped: 0,
+                skipped: 2
+            }
+        );
+        let list = fs::read_to_string(dir.join("catalog.csv")).unwrap();
+        assert!(
+            list.contains("sealed.txt"),
+            "a moved key must stay on the list"
+        );
+        let history = fs::read_to_string(dir.join("history.jsonl")).unwrap();
+        assert_eq!(
+            history.lines().count(),
+            2,
+            "nothing is recorded for a key that was not checked"
+        );
+        // With no folder at all, the same keys are skipped.
+        assert_eq!(run_in(&dir, &dir.join("nowhere")).unwrap().skipped, 2);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

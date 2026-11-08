@@ -341,6 +341,8 @@ pub struct Entry {
     /// The programs this file runs, shown before you approve it.
     pub programs: Vec<String>,
     pub actions: Vec<CustomAction>,
+    /// How this provider's keys start, so a pasted key can be recognised.
+    pub prefixes: Vec<String>,
 }
 
 impl Entry {
@@ -364,6 +366,7 @@ impl Entry {
             problem: None,
             programs: runs_of(recipe),
             actions: recipe.actions.clone(),
+            prefixes: recipe.prefixes.clone(),
         }
     }
 
@@ -466,6 +469,7 @@ pub fn list() -> Vec<Entry> {
                 problem: Some(problem),
                 programs: Vec::new(),
                 actions: Vec::new(),
+                prefixes: Vec::new(),
             }),
         }
     }

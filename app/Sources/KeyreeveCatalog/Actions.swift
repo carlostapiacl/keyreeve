@@ -83,13 +83,15 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let problem: String?
     public let programs: [String]?
     public let actions: [CustomAction]?
+    /// How this provider's keys start, from its recipe.
+    public let prefixes: [String]?
 
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
         approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, can_rotate: Bool = false,
         can_rotate_by_hand: Bool = false, single_rotation: Bool = false, tested: Tested = Tested(), env_var: String? = nil,
         self_hosted: Bool = false,
-        problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil
+        problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil, prefixes: [String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -108,6 +110,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         self.problem = problem
         self.programs = programs
         self.actions = actions
+        self.prefixes = prefixes
     }
 
     public var needsApproval: Bool { source == "local" && !approved && problem == nil }
@@ -116,6 +119,19 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
 public struct ProviderDirectory: Sendable {
     public let all: [ProviderInfo]
     public init(_ all: [ProviderInfo] = []) { self.all = all }
+
+    /// The provider a pasted key belongs to, by the longest prefix any recipe declares, so `sk_live_`
+    /// is Stripe even though `sk_` is ElevenLabs. Nil when no prefix matches.
+    public func recognize(_ value: String) -> ProviderInfo? {
+        all.flatMap { info in (info.prefixes ?? []).filter { value.hasPrefix($0) }.map { (info, $0.count) } }
+            .max { $0.1 < $1.1 }?.0
+    }
+
+    /// Shown in place of a key: its known start and its length, and nothing that would let it be used.
+    public static func hint(of value: String, provider: ProviderInfo?) -> String {
+        let prefix = (provider?.prefixes ?? []).filter { value.hasPrefix($0) }.max { $0.count < $1.count } ?? ""
+        return "\(prefix)… (\(value.count))"
+    }
 
     public static func parse(_ data: Data) -> ProviderDirectory {
         ProviderDirectory((try? JSONDecoder().decode([ProviderInfo].self, from: data)) ?? [])

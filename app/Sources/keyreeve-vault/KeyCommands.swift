@@ -33,50 +33,25 @@ func useKey() throws {
         guard let parsed = KeyService.seconds(from: text) else { fail("--for takes a time like 90s, 5m or 2h") }
         seconds = parsed
     }
-    let shown = command.joined(separator: " ")
     let answer = try askService(
         KeyService.Request(
             op: "use", key: id, seconds: seconds, program: command[0], arguments: command.count - 1,
-            prompt: "run \(shown.prefix(120)) with the key \(id)",
+            prompt: nil,
             agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
             reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal))
     guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
-    if let socket = answer.sshSocket {
-        setenv("SSH_AUTH_SOCK", socket, 1)
-        var running = command
-        if let identity = answer.sshIdentity {
-            running = SSHCommand.arguments(for: command, socket: socket, identity: identity)
-            for (name, value) in SSHCommand.variables(socket: socket, identity: identity) { setenv(name, value, 0) }
-        }
-        var pointers: [UnsafeMutablePointer<CChar>?] = running.map { strdup($0) } + [nil]
-        execvp(command[0], &pointers)
-        fail("could not run \(command[0])")
+    let prepared: UseEnvironment
+    do {
+        prepared = try UseEnvironment(answer: answer, command: command, variable: options["--as"] ?? answer.variable, real: wantsReal)
+    } catch let error as VaultError {
+        fail(answer.sshSocket == nil && (options["--as"] ?? answer.variable) == nil
+            ? "\(id) has no variable set, so say which with --as" : error.description, code: 2)
     }
-    guard let variable = options["--as"] ?? answer.variable else {
-        fail("\(id) has no variable set, so say which with --as", code: 2)
-    }
-    if wantsReal {
-        guard let value = answer.value else { fail("the key could not be used", code: 77) }
-        setenv(variable, value, 1)
-    } else {
-        guard let standIn = answer.standIn, let proxy = answer.proxy else {
-            fail("the key could not be used", code: 77)
-        }
-        setenv(variable, standIn, 1)
-        let address = "http://127.0.0.1:\(proxy.port)"
-        for name in ["HTTPS_PROXY", "https_proxy"] { setenv(name, address, 1) }
-        // Node does not read those variables unless it is told to.
-        setenv("NODE_USE_ENV_PROXY", "1", 1)
-        setenv("NODE_EXTRA_CA_CERTS", proxy.ca, 1)
-        // A name on this list would skip the proxy and go straight out with a useless stand-in.
-        unsetenv("NO_PROXY")
-        unsetenv("no_proxy")
-        for name in ["SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT", "AWS_CA_BUNDLE", "CARGO_HTTP_CAINFO", "DENO_CERT"] {
-            setenv(name, proxy.bundle, 1)
-        }
-    }
-    var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
-    execvp(command[0], &pointers)
+    for name in prepared.unset { unsetenv(name) }
+    for (name, value) in prepared.setIfMissing { setenv(name, value, 0) }
+    for (name, value) in prepared.set { setenv(name, value, 1) }
+    var pointers: [UnsafeMutablePointer<CChar>?] = prepared.command.map { strdup($0) } + [nil]
+    execvp(prepared.command[0], &pointers)
     fail("could not run \(command[0])")
 }
 
@@ -103,7 +78,9 @@ func grantKey() throws {
     let answer = try askService(
         KeyService.Request(
             op: "use", key: id, seconds: seconds, program: program,
-            prompt: isSSH ? "use the SSH key \(id)" : "let \(program) use the key \(id)",
+            prompt: FingerPrompt.use(
+                who: program, key: id, account: try? KeyIndex.load(from: keysFile).key(id)?.account,
+                lasts: seconds.map { $0 >= 3600 ? .hours($0 / 3600) : .minutes(max(1, $0 / 60)) }),
             agent: ProcessInfo.processInfo.environment["KEYREEVE_AGENT"], reason: "permission given ahead of time",
             cwd: FileManager.default.currentDirectoryPath))
     guard answer.ok else { fail(answer.error ?? "the key could not be used", code: 77) }
@@ -132,7 +109,14 @@ func serveKeys() throws {
     let descriptor = try KeySocket.listen(path: socketPath)
     // Beside this program, in the app's bundle.
     let command = ownPath().deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
-    let proxy = try? ProxyProcess(binary: command, runFolder: home.appendingPathComponent("run"))
+    let proxy: ProxyProcess?
+    do {
+        proxy = try ProxyProcess(binary: command, runFolder: home.appendingPathComponent("run"))
+    } catch {
+        // SSH keys still work without it, so the service runs, but say why use_key will fail.
+        FileHandle.standardError.write(Data("keyreeve-vault: no proxy, \(command.path) did not start: \(error)\n".utf8))
+        proxy = nil
+    }
     let service = KeyService(
         index: { try KeyIndex.load(from: keysFile) },
         open: { source, prompt in
@@ -141,7 +125,8 @@ func serveKeys() throws {
         },
         proxy: proxy, agents: SystemSSHAgents(folder: home.appendingPathComponent("run"), askpass: ownPath().path),
         confirm: { prompt in (try? EnclaveRecipient.confirm(reason: prompt)) != nil },
-        log: auditLog)
+        log: auditLog,
+        paused: { AgentBridge.isPaused(home: home) })
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
     // Stops after a while with nothing in force, so no process stays around for nothing.
     var idleSince = Date()
@@ -163,11 +148,16 @@ func showGrants() throws {
 }
 
 func revokeGrants() throws {
+    if arguments.count == 1 { AgentBridge.endAll(home: home) }
     _ = try askService(KeyService.Request(op: "revoke", key: arguments.count > 1 ? arguments[1] : nil))
     print("Done")
 }
 
 func showAudit() throws {
+    if arguments.contains("--help") || arguments.contains("-h") {
+        print("keyreeve-vault audit [--key <id>] [--verify]\n    Show the usage log, or check that its chain holds together.")
+        return
+    }
     if arguments.contains("--verify") {
         if let line = auditLog.firstBrokenLine() { fail("the usage log was changed at line \(line)") }
         print("The usage log holds together: \(try auditLog.entries().count) lines")
@@ -182,4 +172,40 @@ func showAudit() throws {
             .compactMap { $0 }.joined(separator: " · ")
         print("\(format.string(from: entry.at))  \(entry.event)  \(entry.key)  \(who)  \(what)")
     }
+}
+
+/// Every log as one list in time order, to read or to analyse elsewhere. No value is in any of them.
+func showTimeline() throws {
+    func option(_ name: String) -> String? {
+        guard let at = arguments.firstIndex(of: name), at + 1 < arguments.count else { return nil }
+        return arguments[at + 1]
+    }
+    var since: Date?
+    if let text = option("--since") {
+        guard let start = Timeline.start(from: text) else { fail("--since takes a time like 30m, 24h or 7d", code: 2) }
+        since = start
+    }
+    let index = (try? KeyIndex.load(from: keysFile)) ?? KeyIndex()
+    var rows = Timeline.read(home: home, index: index, since: since)
+    if let key = option("--key") { rows = rows.filter { $0.key == key } }
+    print(arguments.contains("--csv") ? Timeline.csv(rows) : Timeline.jsonl(rows), terminator: "")
+}
+
+/// The real key on stdout, and nothing else: what seisin and other tools expect from a key provider.
+/// A finger every time, named after the program that asked, so a yes is never reused.
+func getKey() throws {
+    guard arguments.count >= 2, !arguments[1].hasPrefix("-") else { fail(help, code: 2) }
+    let id = arguments[1]
+    var reason: String?
+    if let at = arguments.firstIndex(of: "--reason"), at + 1 < arguments.count { reason = arguments[at + 1] }
+    // Who ran this, as the system says, so the prompt reads "to seisin" and not "to keyreeve-vault".
+    let parent = CallerIdentity.observe(pid: getppid()).program
+    let asker = URL(fileURLWithPath: parent.isEmpty ? "a program" : parent).lastPathComponent
+    let answer = try askService(
+        KeyService.Request(
+            op: "use", key: id, program: asker,
+            agent: ProcessInfo.processInfo.environment["KEYREEVE_AGENT"], reason: reason,
+            cwd: FileManager.default.currentDirectoryPath, real: true))
+    guard answer.ok, let value = answer.value, !value.isEmpty else { fail(answer.error ?? "the key could not be read", code: 77) }
+    FileHandle.standardOutput.write(Data(value.utf8))
 }

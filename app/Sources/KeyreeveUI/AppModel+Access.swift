@@ -107,8 +107,38 @@ extension AppModel {
 
     /// Locking the app ends what the key service holds too. If it is not running, nothing is lost.
     func closeServicePermissions() {
+        AgentBridge.endAll(home: files.directory)
         let path = files.keySocket.path
         Task.detached { _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: path, timeout: 2) }
+    }
+
+    /// Writes what the person decided, so the usage log has every side of it.
+    func audit(_ changes: [(key: String, detail: String)], event: String = "policy") {
+        let log = AuditLog(url: files.audit)
+        for change in changes { try? log.append(event: event, key: change.key, detail: change.detail) }
+    }
+
+    /// The emergency stop: ends every permission, pauses every agent and locks the window.
+    public func lockEverything() {
+        audit([("-", "every permission ended and agents paused")], event: "paused")
+        AgentBridge.setPaused(true, home: files.directory)
+        agentsPaused = true
+        closeServicePermissions()
+        lock()
+        message = T("Everything is locked and agents are paused")
+    }
+
+    public func resumeAgents() {
+        audit([("-", "agents may ask again")], event: "resumed")
+        AgentBridge.setPaused(false, home: files.directory)
+        agentsPaused = false
+        message = T("Agents may ask again")
+    }
+
+    /// Quitting ends them. It waits, since the app is gone once this returns.
+    public func closeServicePermissionsBeforeQuitting() {
+        AgentBridge.endAll(home: files.directory)
+        _ = try? KeySocket.send(KeyService.Request(op: "revoke"), path: files.keySocket.path, timeout: 2)
     }
 
     private func provider(of item: CatalogItem) -> ProviderInfo? {
@@ -198,21 +228,80 @@ extension AppModel {
             return
         }
         guard let id = keyIndex.keys(forSource: item.path).first?.id else { return }
-        var policy = agentPolicy
-        if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
-        savePolicy(policy)
+        allow(program: program, keyID: id)
+    }
+
+    /// Lets agents run `program` with the key called `keyID`. Each use still asks for your finger.
+    public func allow(program: String, keyID id: String) {
+        guard !AgentPolicy.isNeverAllowed(program) else {
+            message = T("%@ can print or send whatever it gets, so it cannot be allowed.", URL(fileURLWithPath: program).lastPathComponent)
+            return
+        }
+        guard let hash = AgentPolicy.fingerprint(of: program) else {
+            message = T("That program could not be read")
+            return
+        }
+        updatePolicy { policy in
+            if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
+            // Pinned as it is now: if it changes, agents cannot run it until you allow it again.
+            policy.hashes[program] = hash
+        }
+    }
+
+    /// How agents may use a key: nil keeps it yours alone.
+    public func setAgentLevel(_ level: AgentPolicy.Level?, for id: String) {
+        updatePolicy { policy in
+            policy.levels[id] = level
+            // A level you choose here has no end, even if an agent's request had given it one.
+            policy.until[id] = nil
+            if level == nil { policy.agents[id] = nil }
+        }
+    }
+
+    /// Which agents may use a key. Empty means any.
+    public func setAgents(_ agents: [String], for id: String) {
+        updatePolicy { policy in
+            policy.agents[id] = agents.isEmpty ? nil : agents
+        }
+    }
+
+    /// Ends what agents were approved for a while, and every permission the key service holds.
+    public func endAgentApprovals() {
+        audit([("-", "every agent permission ended")], event: "closed all")
+        closeServicePermissions()
+        message = T("Agents must ask again")
+    }
+
+    public func disallow(program: String, keyID id: String) {
+        updatePolicy { policy in
+            policy.commands[id]?.removeAll { $0 == program }
+            if policy.commands[id]?.isEmpty == true { policy.commands[id] = nil }
+        }
+    }
+
+    /// Keys an agent could be allowed: sealed, with an identifier.
+    public var agentKeys: [KeyIndex.Key] {
+        let sealed = Set(items.filter { $0.vault == .sealed || $0.vault == .outdated || $0.originalMoved }.map(\.path))
+        return keyIndex.keys.filter { sealed.contains($0.source) }.sorted { $0.id < $1.id }
+    }
+
+    /// Sealed keys that still need an identifier before an agent can be allowed.
+    public var sealedWithoutIdentifier: Int {
+        items.filter { ($0.vault == .sealed || $0.vault == .outdated) && keyIndex.keys(forSource: $0.path).isEmpty }.count
     }
 
     public func disallow(program: String, for item: CatalogItem) {
-        var policy = agentPolicy
-        for key in keyIndex.keys(forSource: item.path) { policy.commands[key.id]?.removeAll { $0 == program } }
-        savePolicy(policy)
+        updatePolicy { policy in
+            for key in keyIndex.keys(forSource: item.path) { policy.commands[key.id]?.removeAll { $0 == program } }
+        }
     }
 
-    private func savePolicy(_ policy: AgentPolicy) {
+    /// Changes the permissions under the file's lock, writes what changed in the usage log, and shows it.
+    func updatePolicy(_ change: (inout AgentPolicy) -> Void) {
         do {
-            try files.writePrivate(Data(policy.toml.utf8), to: files.agents)
-            agentPolicy = policy
+            let (before, after) = try AgentPolicy.update(at: files.agents, change)
+            audit(after.changes(from: before))
+            agentPolicy = after
         } catch {
             message = T("The permissions could not be saved")
         }
@@ -224,6 +313,8 @@ extension AppModel {
         panel.canChooseDirectories = false
         panel.showsHiddenFiles = true
         panel.message = T("Choose the program an agent may run with this key")
+        let tools = files.directory.appendingPathComponent("agent-tools")
+        if FileManager.default.fileExists(atPath: tools.path) { panel.directoryURL = tools }
         panel.prompt = T("Choose")
         if panel.runModal() == .OK, let url = panel.url { then(url.path) }
     }
@@ -233,7 +324,7 @@ extension AppModel {
         let tool = (binary?.deletingLastPathComponent().appendingPathComponent("keyreeve-vault").path ?? "keyreeve-vault")
         let board = NSPasteboard.general
         board.clearContents()
-        board.setString("claude mcp add keyreeve -- \"\(tool)\" mcp", forType: .string)
+        board.setString("claude mcp add --scope user keyreeve -- \"\(tool)\" mcp", forType: .string)
         message = T("The command to connect Claude Code is copied. Run it in a terminal.")
     }
 }

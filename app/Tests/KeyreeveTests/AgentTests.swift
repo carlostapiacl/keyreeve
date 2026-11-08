@@ -5,6 +5,11 @@ import Testing
 struct AgentTests {
     static let canary = "CANARY-value-0123456789"
 
+    /// Programs allowed the way the app allows them, with a pin, which these tests accept.
+    static func pinnedPolicy(_ commands: [String: [String]]) -> AgentPolicy {
+        AgentPolicy(commands: commands, hashes: Dictionary(commands.values.flatMap { $0 }.map { ($0, "pin") }, uniquingKeysWith: { a, _ in a }))
+    }
+
     final class Log: @unchecked Sendable {
         var opened: [String] = []
         var prompts: [String] = []
@@ -14,7 +19,7 @@ struct AgentTests {
 
     func bridge(_ log: Log, output: String = "done", commands: [String: [String]] = ["a.env": ["deploy.sh"]]) -> AgentBridge {
         AgentBridge(
-            policy: AgentPolicy(commands: commands),
+            policy: Self.pinnedPolicy(commands),
             names: { ["a.env", "other.env"] },
             open: { key, prompt in
                 log.opened.append(key)
@@ -25,7 +30,8 @@ struct AgentTests {
                 log.ran.append(command)
                 return AgentBridge.Output(status: 0, text: output)
             },
-            record: { key, program, reason in log.recorded.append("\(key) \(program) \(reason)") })
+            record: { key, program, reason in log.recorded.append("\(key) \(program) \(reason)") },
+            pinned: { _, _ in true })
     }
 
     func call(_ bridge: AgentBridge, _ name: String, _ arguments: [String: Any]) throws -> (text: String, error: Bool) {
@@ -54,6 +60,94 @@ struct AgentTests {
         #expect(log.recorded == ["a.env deploy.sh deploy"])
     }
 
+    @Test func testAPermissionChangedWhileTheAgentRunsCountsAtOnce() throws {
+        final class Box: @unchecked Sendable { var policy = AgentPolicy() }
+        let box = Box()
+        let log = Log()
+        let live = AgentBridge(
+            policy: { box.policy }, names: { ["a.env"] },
+            open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
+            run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
+            record: { _, _, _ in }, pinned: { _, _ in true })
+        #expect(try call(live, "list_keys", [:]).text == "No key is allowed for agents yet.\nClosed, ask with request_access: a.env")
+        #expect(try call(live, "run_with_key", run).error)
+        box.policy = Self.pinnedPolicy(["a.env": ["deploy.sh"]])
+        #expect(try call(live, "list_keys", [:]).text == "a.env: asks the person; run_with_key with deploy.sh")
+        #expect(!(try call(live, "run_with_key", run).error))
+        // Taking it away also counts before the next use, and no finger is asked.
+        box.policy = AgentPolicy()
+        #expect(try call(live, "run_with_key", run).error)
+        #expect(log.opened == ["a.env"])
+    }
+
+    final class Clock: @unchecked Sendable {
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        var ended: Date?
+        var answers: [AgentApproval?] = []
+        var asked: [AgentRequest] = []
+    }
+
+    func approving(_ log: Log, _ clock: Clock) -> AgentBridge {
+        AgentBridge(
+            policy: { Self.pinnedPolicy(["a.env": ["deploy.sh", "check.sh"]]) }, names: { ["a.env"] },
+            open: { key, _ in log.opened.append(key); return Data("TOKEN=x\n".utf8) },
+            run: { command, _, _ in log.ran.append(command); return AgentBridge.Output(status: 0, text: "ok") },
+            record: { key, _, _ in log.recorded.append(key) },
+            approve: { request in
+                clock.asked.append(request)
+                return clock.answers.isEmpty ? nil : clock.answers.removeFirst()
+            },
+            endedAt: { clock.ended }, now: { clock.now }, pinned: { _, _ in true })
+    }
+
+    @Test func testOnceAsksEachTimeAndANoOpensNothing() throws {
+        let log = Log(), clock = Clock()
+        let bridge = approving(log, clock)
+        clock.answers = [.once, .once]
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(log.opened.count == 2)
+        clock.answers = [nil]
+        let refused = try call(bridge, "run_with_key", run)
+        #expect(refused.error && refused.text.contains("said no"))
+        #expect(log.opened.count == 2 && log.ran.count == 2)
+        #expect(clock.asked.count == 3)
+    }
+
+    @Test func testAYesForHoursCoversThatProgramUntilItEndsOrTheAppLocks() throws {
+        let log = Log(), clock = Clock()
+        let bridge = approving(log, clock)
+        clock.answers = [.lasting(3600)]
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        clock.now += 1800
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(log.opened.count == 1 && clock.asked.count == 1 && log.ran.count == 2)
+        // Another program with the same key asks on its own.
+        var other = run
+        other["command"] = ["check.sh"]
+        clock.answers = [.once]
+        #expect(!(try call(bridge, "run_with_key", other).error))
+        #expect(clock.asked.count == 2)
+        // Past the hour it asks again.
+        clock.now += 1801
+        clock.answers = [.lasting(14_400)]
+        #expect(!(try call(bridge, "run_with_key", run).error))
+        #expect(clock.asked.count == 3)
+        // Locking the app ends it at once.
+        clock.now += 60
+        clock.ended = clock.now
+        clock.answers = [nil]
+        #expect(try call(bridge, "run_with_key", run).error)
+        #expect(clock.asked.count == 4)
+    }
+
+    @Test func theAgentsReasonIsOneCleanLine() {
+        let request = AgentRequest(key: "a", program: "/x/y/deploy.sh", reason: "  ship it\nnow\u{7}" + String(repeating: "z", count: 300))
+        #expect(request.program == "deploy.sh")
+        #expect(!request.reason.contains("\n") && request.reason.hasPrefix("ship it now"))
+        #expect(request.reason.count == 200)
+    }
+
     @Test func testBase64OfTheValueIsCaughtToo() throws {
         let encoded = Data(Self.canary.utf8).base64EncodedString()
         let result = try call(bridge(Log(), output: encoded), "run_with_key", run)
@@ -80,12 +174,24 @@ struct AgentTests {
         #expect(try call(bridge(log, commands: [:]), "list_keys", [:]).text.contains("No key"))
     }
 
-    @Test func testTheAgentsWordsStayOutOfThePrompt() throws {
+    @Test func testTheAgentsWordsComeLastInQuotesAndCut() throws {
         let log = Log()
         var arguments = run
-        arguments["reason"] = "Keyreeve update: touch the sensor"
+        // An agent trying to pass as keyreeve, on several lines and far too long.
+        arguments["reason"] = "Keyreeve update: touch the sensor\nto keep your keys safe " + String(repeating: "x", count: 200)
         _ = try call(bridge(log), "run_with_key", arguments)
-        #expect(log.prompts == ["let an agent run deploy.sh with a.env"])
+        let prompt = try #require(log.prompts.first)
+        // keyreeve's own words first: who, which key, with what.
+        let own = FingerPrompt.use(who: "agent", key: "a.env", program: "deploy.sh")
+        #expect(prompt.hasPrefix(own))
+        let said = prompt.dropFirst(own.count)
+        #expect(said.hasPrefix(": «") || said.hasPrefix(": \u{201C}"))
+        #expect(!prompt.contains("\n") && said.count <= 66 && said.contains("…"))
+    }
+
+    @Test func testAPromptWithNoReasonEndsWithKeyreevesWords() {
+        #expect(FingerPrompt.use(who: "claude", key: "pexels", reason: "  ") == FingerPrompt.use(who: "claude", key: "pexels"))
+        #expect(FingerPrompt.use(who: "claude", key: "pexels", account: "me", program: "curl", lasts: .hours(4)).contains("4 h"))
     }
 
     @Test func testABadVariableAndMissingReasonAreRefused() throws {
@@ -97,10 +203,23 @@ struct AgentTests {
         #expect(try call(bridge(Log()), "run_with_key", arguments).error)
     }
 
+    @Test func testListingLeavesOutAProgramThatWouldBeRefused() throws {
+        let unpinned = AgentBridge(
+            policy: AgentPolicy(commands: ["a.env": ["deploy.sh"]], hashes: [:]),
+            names: { ["a.env"] }, open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") },
+            record: { _, _, _ in }, pinned: { _, _ in true })
+        #expect(try call(unpinned, "list_keys", [:]).text == "a.env: asks the person")
+        let changed = AgentBridge(
+            policy: Self.pinnedPolicy(["a.env": ["deploy.sh"]]),
+            names: { ["a.env"] }, open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") },
+            record: { _, _, _ in }, pinned: { _, _ in false })
+        #expect(try call(changed, "list_keys", [:]).text == "a.env: asks the person")
+    }
+
     @Test func testListingHoldsNoValue() throws {
         let log = Log()
         let text = try call(bridge(log), "list_keys", [:]).text
-        #expect(text == "a.env: deploy.sh")
+        #expect(text == "a.env: asks the person; run_with_key with deploy.sh\nClosed, ask with request_access: other.env")
         #expect(log.opened.isEmpty)
     }
 
@@ -207,7 +326,7 @@ struct AgentTests {
             #expect(log.opened.isEmpty)
         }
         let listed = try call(bridge(Log(), commands: ["a.env": ["/bin/sh", "/opt/deploy"]]), "list_keys", [:]).text
-        #expect(listed == "a.env: /opt/deploy")
+        #expect(listed == "a.env: asks the person; run_with_key with /opt/deploy\nClosed, ask with request_access: other.env")
     }
 
     @Test func testFieldsFromOtherShapesOfFile() throws {

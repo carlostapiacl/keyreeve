@@ -54,7 +54,7 @@ public struct SettingsView: View {
                 Toggle(T("Weekly check"), isOn: $weekly)
                     .onChange(of: weekly) { WeeklySchedule.set(weekly, binary: model.commandURL) }
             } footer: {
-                Text(T("Check keys set to Agents can use it every Monday, and notify me if one stops working. It needs no fingerprint, so it covers only those."))
+                Text(T("Check keys set to Checked without asking every Monday, and notify me if one stops working. It needs no fingerprint, so it covers only those."))
                     .font(.caption)
             }
             Section(T("Files")) {

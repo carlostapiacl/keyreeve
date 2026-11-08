@@ -1,7 +1,17 @@
-# Keep this at ~/.keyreeve/agents.toml, or edit it in the app, on each key.
-# Which programs an agent may run with each key. Each use asks for your fingerprint. The agent chooses
-# the arguments, so allow programs that do one job and never print what they get.
+# Keep this at ~/.keyreeve/agents.toml, or edit it in the app, under Agents. A key that is not here is yours alone.
+# level = "ask" asks you each time, once or for some hours; "free" asks once, until you quit Keyreeve.
+# agents limits a key to some agents. programs get the real key, each pinned by its SHA-256 in hashes.
 
-[[allow]]
-key = "hosting-token.txt"
+[[key]]
+key = "photos"
+level = "free"
+
+[[key]]
+key = "github"
+level = "ask"
+agents = ["claude"]
+
+[[key]]
+key = "hosting-token"
 programs = ["/usr/local/bin/deploy-site"]
+hashes = ["<sha256 of deploy-site, written by the app>"]

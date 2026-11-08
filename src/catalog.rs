@@ -146,6 +146,23 @@ pub struct Row {
     pub host: String,
 }
 
+/// Adds the files moved out after sealing, from the ledger at `path`. They stay on the list, since
+/// the vault still holds them. A missing ledger means nothing was moved.
+pub fn add_moved(items: &mut Vec<InventoryItem>, path: &std::path::Path) -> Result<(), String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    let moved = parse_inventory(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    for item in moved {
+        if !items.iter().any(|known| known.path == item.path) {
+            items.push(item);
+        }
+    }
+    Ok(())
+}
+
 pub fn parse_inventory(text: &str) -> Result<Vec<InventoryItem>, String> {
     let inventory: Inventory = serde_json::from_str(text).map_err(|e| e.to_string())?;
     if inventory.schema != 1 {

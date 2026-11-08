@@ -125,6 +125,37 @@ public struct VaultStore: Sendable {
             declared: AuditLog.Declared(reason: reason, command: URL(fileURLWithPath: command).lastPathComponent))
     }
 
+    /// Copies the vault file into `folder`, under a dated name that never replaces another file. Every
+    /// value in it is sealed, so the copy opens only with the recovery key, on any Mac with `recover`.
+    /// The chip's part is left out: it works on this Mac alone.
+    public func backup(to folder: URL, now: Date = Date()) throws -> URL {
+        try withLock {
+            _ = try load()
+            let data = try Data(contentsOf: vaultURL)
+            let format = DateFormatter()
+            format.locale = Locale(identifier: "en_US_POSIX")
+            format.dateFormat = "yyyy-MM-dd"
+            let day = format.string(from: now)
+            for number in 1...99 {
+                let name = number == 1 ? "keyreeve-vault-\(day).json" : "keyreeve-vault-\(day)-\(number).json"
+                let target = folder.appendingPathComponent(name)
+                let descriptor = open(target.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+                if descriptor < 0 {
+                    if errno == EEXIST { continue }
+                    throw VaultError("the backup could not be written in that folder")
+                }
+                defer { close(descriptor) }
+                let written = data.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+                guard written == data.count, fsync(descriptor) == 0 else {
+                    unlink(target.path)
+                    throw VaultError("the backup could not be written in that folder")
+                }
+                return target
+            }
+            throw VaultError("that folder already holds too many backups from today")
+        }
+    }
+
     public func loadBlob() throws -> Data {
         try Data(contentsOf: blobURL(for: try load().enclave))
     }

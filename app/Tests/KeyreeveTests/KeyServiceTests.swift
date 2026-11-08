@@ -138,6 +138,9 @@ final class Fixture: @unchecked Sendable {
     let agents = FakeAgents()
     var confirmations: [String] = []
     var confirmAnswer = true
+    var paused = false
+    /// Turns the pause on while the finger is on the sensor.
+    var pauseDuringFinger = false
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -146,6 +149,7 @@ final class Fixture: @unchecked Sendable {
             open: { source, prompt in
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
+                if self.pauseDuringFinger { self.paused = true }
                 if source == "vps-key" { return Data("-----BEGIN OPENSSH PRIVATE KEY-----\nCANARY\n-----END OPENSSH PRIVATE KEY-----\n".utf8) }
                 return Data((source == "m.env" ? "OTHER=x\nAPI=CANARY-mail\n" : "CANARY-netlify\n").utf8)
             },
@@ -154,7 +158,7 @@ final class Fixture: @unchecked Sendable {
                 self.confirmations.append(prompt)
                 return self.confirmAnswer
             },
-            log: log, now: { self.now })
+            log: log, now: { self.now }, paused: { self.paused })
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/bin/zsh", chain: ["zsh", "claude"])
 
@@ -334,7 +338,71 @@ struct KeyServiceTests {
         let f = Fixture()
         _ = f.use("netlify")
         _ = f.use("mail")
-        #expect(f.prompts == ["run netlify with the key netlify (mi-cuenta)", "run netlify with the key mail"])
+        #expect(f.prompts == [
+            FingerPrompt.use(who: "claude", key: "netlify", account: "mi-cuenta", program: "netlify", reason: "deploy"),
+            FingerPrompt.use(who: "claude", key: "mail", program: "netlify", reason: "deploy"),
+        ])
+        #expect(f.prompts[0].contains("(mi-cuenta)"))
+    }
+
+    @Test func testAFreeKeyCoversEveryProgramAndOneGrantEndsAlone() throws {
+        let f = Fixture()
+        let first = f.service.handle(
+            .init(op: "use", key: "netlify", seconds: KeyService.maxSeconds, program: "/usr/bin/curl", agent: "claude", anyProgram: true),
+            caller: f.caller)
+        #expect(first.ok && first.grant != nil)
+        #expect(f.use("netlify", "/usr/local/bin/netlify").grant == first.grant)
+        #expect(f.prompts.count == 1)
+        let mail = f.use("mail")
+        // Ending one permission by its id leaves the others.
+        _ = f.service.handle(.init(op: "revoke", key: "netlify", grant: first.grant), caller: f.caller)
+        let left = f.service.handle(.init(op: "grants"), caller: f.caller).grants ?? []
+        #expect(left.map(\.id) == [mail.grant].compactMap { $0 })
+    }
+
+    @Test func testTheKeysClosingCutsAPermissionAlreadyInForce() throws {
+        let f = Fixture()
+        let first = f.use("netlify", seconds: 3600)
+        #expect(first.ok)
+        let closing = f.now.addingTimeInterval(600)
+        let again = f.service.handle(
+            .init(op: "use", key: "netlify", program: "/usr/local/bin/netlify", agent: "codex", notAfter: closing), caller: f.caller)
+        #expect(again.grant == first.grant && f.prompts.count == 1)
+        #expect(f.service.handle(.init(op: "grants"), caller: f.caller).grants?.first?.expires == closing)
+        // The service's own clock ends it at the closing, and the proxy hears it.
+        f.now = closing.addingTimeInterval(1)
+        #expect(f.service.isIdle)
+        #expect(f.proxy.removed == [first.grant].compactMap { $0 })
+    }
+
+    @Test func aNewPermissionNeverOutlastsTheClosingCountedAfterTheFinger() throws {
+        let f = Fixture()
+        let closing = f.now.addingTimeInterval(60)
+        let answer = f.service.handle(
+            .init(op: "use", key: "netlify", seconds: 3600, program: "/usr/bin/curl", notAfter: closing), caller: f.caller)
+        #expect(answer.ok)
+        #expect(f.service.handle(.init(op: "grants"), caller: f.caller).grants?.first?.expires == closing)
+    }
+
+    @Test func thePauseStopsAUseBeforeAndWhileTheFingerIsAsked() throws {
+        let f = Fixture()
+        f.paused = true
+        #expect(!f.use("netlify").ok)
+        #expect(f.prompts.isEmpty)
+        // Stopped while the person's finger was on its way: nothing is left open.
+        f.paused = false
+        f.pauseDuringFinger = true
+        let answer = f.use("netlify")
+        #expect(!answer.ok && f.prompts.count == 1)
+        #expect(f.service.handle(.init(op: "grants"), caller: f.caller).grants?.isEmpty == true)
+        #expect(f.proxy.added.count == f.proxy.removed.count)
+    }
+
+    @Test func thePauseStopsTheRealKeyToo() throws {
+        let f = Fixture()
+        f.paused = true
+        #expect(!f.use("netlify", real: true).ok)
+        #expect(f.prompts.isEmpty)
     }
 
     @Test func testAPermissionForOneProgramDoesNotCoverAnother() throws {
@@ -361,7 +429,7 @@ struct KeyServiceTests {
         #expect(f.use("netlify", real: true).value == "CANARY-netlify")
         #expect(f.use("netlify", real: true).value == "CANARY-netlify")
         #expect(f.prompts.count == 2)
-        #expect(f.prompts[0].hasPrefix("give the real key netlify"))
+        #expect(f.prompts[0] == FingerPrompt.real(who: "netlify", key: "netlify", account: "mi-cuenta", reason: "deploy"))
         #expect(f.proxy.added.isEmpty)
         #expect(try f.log.entries().map(\.event) == ["handed", "handed"])
         #expect(f.service.isIdle)

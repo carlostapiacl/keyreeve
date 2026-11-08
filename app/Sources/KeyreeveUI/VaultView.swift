@@ -54,6 +54,7 @@ struct VaultView: View {
                 if !sealed.isEmpty { sealedCard }
                 if !openRotations.isEmpty { rotationsCard }
                 agentsCard
+                backupCard
                 if let report = model.vaultComparison { comparison(report) }
                 if !moved.isEmpty { movedCard }
                 addKeys
@@ -202,7 +203,7 @@ struct VaultView: View {
 
     private var agentsCard: some View {
         let count = sealed.filter { item in
-            model.keyIndex.keys(forSource: item.path).contains { !(model.agentPolicy.commands[$0.id] ?? []).isEmpty }
+            model.keyIndex.keys(forSource: item.path).contains { model.agentPolicy.level(of: $0.id) != nil }
         }.count
         return Card {
             VStack(alignment: .leading, spacing: 8) {
@@ -215,6 +216,24 @@ struct VaultView: View {
                     .font(Theme.caption).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(count == 0 ? T("No key is allowed for agents yet.") : count == 1 ? T("1 key allowed for agents") : T("%d keys allowed for agents", count))
+                    .font(Theme.caption).foregroundStyle(Theme.text)
+            }
+            .padding(14)
+        }
+    }
+
+    private var backupCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    SectionTitle(T("Backup"))
+                    Spacer()
+                    Button(T("Copy the vault…")) { model.backupVault() }.buttonStyle(KRButtonStyle())
+                }
+                Text(T("If this Mac is lost, the copy and your recovery key bring every key back on another Mac. The copy is sealed, so keep it anywhere."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(model.lastVaultBackup.map { T("Last copy: %@", $0.formatted(date: .abbreviated, time: .omitted)) } ?? T("No copy yet."))
                     .font(Theme.caption).foregroundStyle(Theme.text)
             }
             .padding(14)

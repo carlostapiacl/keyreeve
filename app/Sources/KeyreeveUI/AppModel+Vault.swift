@@ -56,6 +56,32 @@ extension AppModel {
         load()
     }
 
+    /// When the vault was last copied out, if ever.
+    public var lastVaultBackup: Date? {
+        let seconds = UserDefaults.standard.double(forKey: SettingsKey.lastVaultBackup)
+        return seconds > 0 ? Date(timeIntervalSince1970: seconds) : nil
+    }
+
+    /// Copies the sealed vault into a folder you choose. It needs no fingerprint: the copy opens only
+    /// with the recovery key.
+    public func backupVault() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.message = T("Choose where to keep a copy of the vault, such as a USB drive")
+        panel.prompt = T("Save here")
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        do {
+            let target = try vaultStore.backup(to: folder)
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: SettingsKey.lastVaultBackup)
+            message = T("Saved %@. It opens with your recovery key.", target.lastPathComponent)
+            objectWillChange.send()
+        } catch {
+            message = T("The backup could not be written in that folder")
+        }
+    }
+
     var movedOriginals: MovedOriginals {
         let format = DateFormatter()
         format.locale = Locale(identifier: "en_US_POSIX")

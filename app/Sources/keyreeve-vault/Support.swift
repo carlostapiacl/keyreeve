@@ -26,6 +26,10 @@ let help = """
           With an SSH key (provider = "ssh"), `ssh`, `scp`, `sftp`, `git` and `rsync` sign through an agent and
           never hold it. A permission covers the first server, or those in `servers` in keys.toml. Others ask.
           --real hands the command the real key, for what cannot use a stand-in. It asks every time.
+      keyreeve-vault get <id> [--reason TEXT]
+          Print the real key on stdout, for a tool that takes a key from a command, such as seisin's
+          key providers. It asks for your finger every time and is never remembered, so nothing can
+          ride on an earlier yes. Prefer `use`, where the command holds a stand-in.
       keyreeve-vault list
           Show the identifiers and what each one is. Needs no fingerprint.
       keyreeve-vault grant <id> [--for 1h] [--program NAME]
@@ -35,6 +39,8 @@ let help = """
           End a key's permissions, or all of them.
       keyreeve-vault audit [--key <id>] [--verify]
           Show who used which key, or check that the log was not edited.
+      keyreeve-vault log [--since 7d] [--key <id>] [--csv]
+          Everything keyreeve logged, in time order and with no value: uses, agents, requests, checks.
       keyreeve-vault env <file.env> -- <command> [args...]
           Run a command with an env file whose values can be keyreeve://name or keyreeve://name#FIELD.
           Asks for one fingerprint. The file holds references, so it is safe in a repository.
@@ -47,6 +53,8 @@ let help = """
           Check a recovery key, read from stdin, against this vault.
       keyreeve-vault recover
           Move this vault to this Mac's chip, using a recovery key read from stdin.
+      keyreeve-vault backup <folder>
+          Copy the sealed vault into a folder. It needs no fingerprint and opens with the recovery key.
 
     KEYREEVE_VAULT sets the folder. The default is ~/.keyreeve/vault.
 

@@ -66,14 +66,16 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   for its keys, and a deleted file loses your keys. Keep backups, and watch for prompts you did not expect.
 - **A key in use is in memory,** in the variable `run` sets and in the command that receives it.
 - **The recovery key opens everything.** Whoever holds it does not need the Mac.
+- **A copy of the vault is every key, sealed.** It opens only with the recovery key, so keep the two apart. A copy also keeps keys
+  you later replaced or revoked, as they were on that day.
 - **The app's lock covers the window.** The catalog it shows is a plain file with names and results, and it never holds
   a value.
 - **A program of yours is yours.** A provider file you approved can run a program with your permissions, and it sees the
   key it checks. keyreeve pins the file and the program by hash, gives it a clean environment and filters what it says, and
   that does not make a bad program safe. Read what you approve. The hash lives in a file you own, so another program running
   as you could change it too.
-- **The weekly check runs with no fingerprint.** It covers only keys you set to "Agents can use it", and it reads them from
-  your files. Turn it off in Settings.
+- **The weekly check runs with no fingerprint.** It covers only keys you set to "Checked without asking", and it reads them from
+  your files, so a key whose file left the folder is skipped and not reported. Turn it off in Settings.
 - **A fingerprint lasts a while.** During the period you choose, 5 minutes by default, the app checks "Ask me" keys without
   asking. It applies to buttons in the app alone. Locking ends it, and the vault asks every time.
 - **One fingerprint opens a whole batch.** The prompt states how many keys, and not which. While a batch runs, its opened
@@ -106,7 +108,20 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   trust. Decrypting with the chip was never compared with age's plugin for it.
 - **An agent's program holds the key.** Over MCP an agent runs programs a person allowed, with a fingerprint each time. The output
   hides the plain key and its base64, and a program can hide it another way, so the allowed list is the protection. The agent runs as
-  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it names the program and the key.
+  you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it starts with keyreeve's own words, the agent, the key and its account, the program and for how long, and
+  ends with the agent's reason, cut to one short line and set apart in quotes. Anything in quotes is the agent talking. The reason
+  in the request window is the agent's own text, set apart in quotes, and it can say anything.
+- **A yes for hours keeps the key open.** For a program you allowed, the agent server holds the opened key in memory until the time
+  runs out, the agent session ends, or you quit Keyreeve or press Lock everything. Through the proxy, the key service holds it. Either way, during that time the
+  agent uses it without asking, with whatever command it picks, and a free key works that way until you quit Keyreeve. Locking the window does not end it.
+- **`get` hands out the real key.** It is for tools such as seisin that take a key from a command's output. It asks for your finger
+  every time and never remembers a yes, because any program running as you could run it again. What it prints is in the hands of
+  whoever ran it: seisin keeps it inside one role, masks it in the output and limits where the role can connect.
+- **Naming the agent is a hint.** keyreeve reads which program started its server, so "only Claude" keeps an honest Codex out. A program
+  running as you can start the server under any name.
+- **The agent terminal keeps what came back.** The first 2,000 characters of each command's output stay in a private file, with the key
+  and its stand-in taken out. A provider's answer can hold other private data, and a program that hides the key another way is not caught.
+- **A pinned program is pinned by its file.** A script that calls other programs is checked, and those programs are not.
 - **A copied key is on the clipboard for up to 60 seconds.** Any program running as you can read it in that time. The marks that ask
   history tools to skip it are a convention, and a tool can ignore them.
 - **The list of programs that cannot be allowed is not complete.** It stops the obvious ways to read a key. A program you allow

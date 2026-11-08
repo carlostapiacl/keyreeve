@@ -16,6 +16,8 @@ cp "$BIN/Keyreeve" "$APP/Contents/MacOS/Keyreeve"
 # Not "keyreeve": most Mac disks ignore case, so it would replace the app itself.
 cp ../target/release/keyreeve "$APP/Contents/MacOS/keyreeve-cli"
 cp "$BIN/keyreeve-vault" dist/keyreeve-vault
+# keyreeve-vault looks for the proxy beside itself, here as in the bundle.
+cp ../target/release/keyreeve dist/keyreeve-cli
 # A rotation saves each new key through this, since saving needs no fingerprint.
 cp "$BIN/keyreeve-vault" "$APP/Contents/MacOS/keyreeve-vault"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -35,6 +37,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 codesign --force --sign - dist/keyreeve-vault
+codesign --force --sign - dist/keyreeve-cli
 codesign --force --sign - "$APP/Contents/MacOS/keyreeve-cli"
 codesign --force --sign - "$APP/Contents/MacOS/keyreeve-vault"
 codesign --force --sign - "$APP"

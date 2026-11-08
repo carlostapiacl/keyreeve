@@ -260,6 +260,26 @@ public struct MovedOriginals {
         }
     }
 
+    /// Keeps on the list the sealed keys whose file left the folder some other way, such as by hand.
+    /// `before` is the inventory as it was before the scan that no longer found them. They go in the
+    /// ledger with no place, since nothing here moved them, so there is nothing to put back.
+    public func keepSealed(_ sealed: Set<String>, before: Data?, inventory: URL) throws -> [String] {
+        struct Inventory: Decodable { let items: [Item] }
+        guard let before, let old = try? JSONDecoder().decode(Inventory.self, from: before).items else { return [] }
+        let now = (try? JSONDecoder().decode(Inventory.self, from: Data(contentsOf: inventory)).items) ?? []
+        let found = Set(now.map(\.path))
+        var ledgerValue = read()
+        let listed = Set(ledgerValue.items.map(\.path))
+        var kept: [String] = []
+        for var item in old where sealed.contains(item.path) && !found.contains(item.path) && !listed.contains(item.path) {
+            item.moved_to = nil
+            ledgerValue.items.append(item)
+            kept.append(item.path)
+        }
+        if !kept.isEmpty { try write(ledgerValue) }
+        return kept
+    }
+
     /// Puts files back. One whose old place is taken stays moved, and stays in the ledger.
     public func putBack(_ paths: [String], to folder: URL) throws -> [String] {
         var ledgerValue = read()

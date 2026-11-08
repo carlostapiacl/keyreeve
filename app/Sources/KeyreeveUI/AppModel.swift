@@ -19,6 +19,7 @@ public enum SettingsKey {
     public static let appearance = "appearance"
     public static let fingerprintMinutes = "fingerprintMinutes"
     public static let doneRotations = "doneRotations"
+    public static let lastVaultBackup = "lastVaultBackup"
 }
 
 @MainActor
@@ -41,6 +42,16 @@ public final class AppModel: ObservableObject {
     @Published public var rotations: [RotationStatus] = []
     @Published public var places: [String: KeyPlaces] = [:]
     @Published public var agentPolicy = AgentPolicy()
+    /// Agents' requests for keys not saved yet, with no answer.
+    @Published public var pendingRequests: [AccessRequests.Entry] = []
+    /// The emergency stop is on: every agent is refused.
+    @Published public var agentsPaused = false
+    /// Bumped to bring the window to the requests.
+    @Published public var showRequests = 0
+    /// A key being pasted into the vault, while its sheet is open.
+    @Published public var addingKey: AddKeyDraft?
+    /// The requests file as last read, so an unchanged file is not read again.
+    var requestsStamp = ""
     @Published public var keyIndex = KeyIndex()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
@@ -70,7 +81,11 @@ public final class AppModel: ObservableObject {
 
     /// This lock covers the window. Keys kept in the vault ask for a fingerprint on their own.
     public func unlock() {
-        confirm(reason: T("open your key catalog")) { success in
+        // When an agent's request opened the app, the sensor says so.
+        reloadRequests()
+        let reason = pendingRequests.first.map { T("open Keyreeve: %@ asks for a %@ key", $0.agent, $0.provider) }
+            ?? T("open your key catalog")
+        confirm(reason: reason) { success in
             guard success else {
                 self.lockMessage = T("Not unlocked. Try again.")
                 return
@@ -91,8 +106,11 @@ public final class AppModel: ObservableObject {
         confirmation.close()
         vaultDraft = nil
         vaultComparison = nil
+        // A key pasted and not saved leaves memory and the clipboard with the lock.
+        cancelAddingKey()
         clearClipboardNow()
-        closeServicePermissions()
+        // Locking hides the window's contents. What agents were allowed lasts while Keyreeve runs, and
+        // ends when it quits or with Lock everything.
         agentPolicy = AgentPolicy()
         keyIndex = KeyIndex()
         usage = UsageSnapshot()
@@ -174,6 +192,8 @@ public final class AppModel: ObservableObject {
         usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
+        reloadRequests()
+        publishOffered()
     }
 
     public func chooseFolder() {
@@ -192,11 +212,20 @@ public final class AppModel: ObservableObject {
             if binary == nil { message = T("This app was built without its command") }
             return
         }
+        guard FileManager.default.fileExists(atPath: folder.path) else {
+            message = T("The keys folder is gone. Keys in the vault stay on the list.")
+            return
+        }
         busy = true
         message = T("Scanning…")
         let files = self.files
+        let store = vaultStore
         Task.detached {
-            let result = Result { try CheckRunner.refresh(binary: binary, keysFolder: folder, files: files) }
+            let before = try? Data(contentsOf: files.inventory)
+            let result = Result {
+                try CheckRunner.refresh(binary: binary, keysFolder: folder, files: files)
+                try Self.keepSealed(before: before, folder: folder, files: files, store: store, binary: binary)
+            }
             await MainActor.run {
                 self.busy = false
                 self.load()
@@ -206,6 +235,16 @@ public final class AppModel: ObservableObject {
                     self.message = (error as? CheckError)?.description ?? T("The scan did not finish")
                 }
             }
+        }
+    }
+
+    /// A sealed key whose file left the folder stays on the list, since the vault still holds it.
+    nonisolated static func keepSealed(before: Data?, folder: URL, files: KeyreeveFiles, store: VaultStore, binary: URL) throws {
+        guard let vault = try? store.load() else { return }
+        let sealed = Set(vault.entries.filter { !VaultKeeper.isFromAnotherFolder($0.value, folder: folder) }.keys)
+        let ledger = MovedOriginals(ledger: files.moved, destination: files.originals)
+        if try !ledger.keepSealed(sealed, before: before, inventory: files.inventory).isEmpty {
+            try CheckRunner.rebuildCatalog(binary: binary, files: files)
         }
     }
 
@@ -288,6 +327,15 @@ struct Snapshot: Sendable {
             }
             let changed = source.keysFolder.map { VaultKeeper.isOutdated(entry, path: path, folder: $0) } ?? false
             parsed[index].vault = changed ? .outdated : .sealed
+        }
+        // Keys pasted in the app have no file and no catalog line, and are listed from the vault.
+        let index = (try? KeyIndex.load(from: files.keyIndex)) ?? KeyIndex()
+        let listed = Set(parsed.map(\.path))
+        for name in (vault?.entries.keys).map(Array.init) ?? [] where name.hasPrefix(AppModel.addedFolder) && !listed.contains(name) {
+            var item = CatalogItem(path: name, recipes: index.keys(forSource: name).first?.provider.map { [$0] } ?? [])
+            item.vault = .sealed
+            item.originalMoved = true
+            parsed.append(item)
         }
         items = parsed
         activity = files.activity()

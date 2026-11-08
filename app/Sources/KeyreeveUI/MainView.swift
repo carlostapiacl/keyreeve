@@ -28,6 +28,7 @@ public struct MainView: View {
     @State private var search = ""
     @State private var pressedChip: Sidebar?
     @State private var chosenRows: Set<CatalogItem.ID>
+    @State private var confirmCheck = false
 
     public init(model: AppModel, initial: Sidebar = .home, chosen: CatalogItem.ID? = nil) {
         self.model = model
@@ -54,34 +55,33 @@ public struct MainView: View {
 
     public var body: some View {
         NavigationSplitView {
+            // By task, not by part of the app: what you have, what needs you, how it is kept. The tools follow.
             List(selection: $selection) {
-                Label(T("Overview"), systemImage: "square.grid.2x2").tag(Sidebar.home)
+                Label(T("Home"), systemImage: "house").tag(Sidebar.home)
+                sidebarRow(T("My keys"), "key", .all, active.count)
                 sidebarRow(T("To review"), "exclamationmark.circle", .attention, toReview)
-                sidebarRow(T("All keys"), "key", .all, active.count)
-                sidebarRow(T("Vault"), "lock.shield", .vault, filter(items, by: .vault, search: "").count)
-                // A request waiting shows here and in the menu bar, and never moves you away from what you were doing.
-                if model.pendingRequests.isEmpty {
-                    sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.keys.count)
-                } else {
-                    Label {
-                        HStack {
-                            Text(T("Agents")).lineLimit(1)
-                            Spacer()
-                            Text(T("%d waiting", model.pendingRequests.count))
-                                .font(Theme.caption).foregroundStyle(Theme.onAccent)
-                                .padding(.horizontal, 6).padding(.vertical, 1)
-                                .background(Theme.accent, in: Capsule())
+                Label(T("Security and backup"), systemImage: "lock.shield").tag(Sidebar.vault)
+                Section(T("Tools")) {
+                    // A request waiting shows here and in the menu bar, and never moves you away from what you were doing.
+                    if model.pendingRequests.isEmpty {
+                        sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.keys.count)
+                    } else {
+                        Label {
+                            HStack {
+                                Text(T("Agents")).lineLimit(1)
+                                Spacer()
+                                Text(T("%d waiting", model.pendingRequests.count))
+                                    .font(Theme.caption).foregroundStyle(Theme.onAccent)
+                                    .padding(.horizontal, 6).padding(.vertical, 1)
+                                    .background(Theme.accent, in: Capsule())
+                            }
+                        } icon: {
+                            Image(systemName: "hand.raised.fill")
                         }
-                    } icon: {
-                        Image(systemName: "hand.raised.fill")
+                        .tag(Sidebar.agents)
                     }
-                    .tag(Sidebar.agents)
-                }
-                sidebarRow(T("Archive"), "archivebox", .archive, items.count - active.count)
-                Section(T("Projects")) {
-                    ForEach(projectTags(in: active), id: \.tag) { entry in
-                        sidebarRow(entry.tag, "folder", .tag(entry.tag), entry.count)
-                    }
+                    Label(T("Rotation"), systemImage: "arrow.triangle.2.circlepath").tag(Sidebar.rotation)
+                    Label(T("Log"), systemImage: "list.bullet.rectangle").tag(Sidebar.log)
                 }
             }
             .tint(Theme.accent)
@@ -99,6 +99,14 @@ public struct MainView: View {
                 model.reloadRequests()
             }
             .onChange(of: model.showRequests) { _, _ in selection = .agents }
+            .confirmationDialog(
+                T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
+            ) {
+                Button(T("Check %d keys", checkable.count)) { model.check(checkable) }
+                Button(T("Cancel"), role: .cancel) {}
+            } message: {
+                Text(T("Each key goes to its own provider, and only to read. Keys set to Only me stay out."))
+            }
             .onAppear { if !model.pendingRequests.isEmpty { selection = .agents } }
         }
     }
@@ -111,7 +119,11 @@ public struct MainView: View {
                 chosenRows = path.map { [$0] } ?? []
             }
         } else if selection == .vault {
-            VaultView(model: model)
+            VaultView(model: model, part: .security) { selection = $0 }
+        } else if selection == .rotation {
+            VaultView(model: model, part: .rotation) { selection = $0 }
+        } else if selection == .log {
+            UsageLogSheet(model: model, inline: true)
         } else if selection == .agents {
             AgentsView(model: model)
         } else {
@@ -125,7 +137,8 @@ public struct MainView: View {
                 }
                 if let chosenItem {
                     Rectangle().fill(Theme.border).frame(width: 1)
-                    KeyDetail(item: chosenItem, model: model).frame(width: 300)
+                    // Wide enough to read without truncating, with the technical parts behind a disclosure.
+                    KeyDetail(item: chosenItem, model: model).frame(width: 440)
                 }
                 }
             }
@@ -145,6 +158,7 @@ public struct MainView: View {
                 filterChip(T("No answer"), .result("no_answer"))
                 filterChip(T("Never checked"), .result(""))
                 filterChip(T("Older than suggested"), .stale)
+                filterChip(T("Archive"), .archive)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -171,12 +185,14 @@ public struct MainView: View {
 
     private var title: String {
         switch selection ?? .home {
-        case .home: return T("Overview")
+        case .home: return T("Home")
         case .attention: return T("To review")
-        case .all: return T("All keys")
+        case .all: return T("My keys")
         case .archive: return T("Archive")
-        case .vault: return T("Vault")
+        case .vault: return T("Security and backup")
         case .agents: return T("Agents")
+        case .rotation: return T("Rotation")
+        case .log: return T("Log")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")
@@ -187,13 +203,30 @@ public struct MainView: View {
         }
     }
 
+    /// Says why the list is empty, and the one step that helps.
     @ViewBuilder private var emptyList: some View {
-        if selection == .attention {
-            ContentUnavailableView(
-                T("No alerts found."), systemImage: "checkmark.seal",
-                description: Text(T("Keys asking for attention will show here.")))
+        if !search.trimmingCharacters(in: .whitespaces).isEmpty {
+            EmptyHint(
+                title: T("Nothing matches “%@”", search), text: T("Search looks in names, files, notes and what providers said."),
+                action: T("Clear the search"), run: { search = "" })
+        } else if selection == .attention {
+            EmptyHint(
+                title: T("No alerts found."), text: T("Keys asking for attention will show here."),
+                action: T("See my keys"), run: { selection = .all })
+        } else if items.isEmpty {
+            EmptyHint(
+                title: T("No keys yet"), text: T("Paste a key, or choose the folder that holds your key files."),
+                action: T("Add a key"), run: { model.startAddingKey() })
+        } else if selection == .checkable {
+            EmptyHint(
+                title: T("No key can be checked yet"), text: T("Open a key and choose its provider, under More details and options."),
+                action: T("See my keys"), run: { selection = .all })
+        } else if selection == .archive {
+            EmptyHint(title: T("Nothing archived"), text: T("Archiving hides a key from your lists. It does not stop it."))
         } else {
-            ContentUnavailableView(T("No keys here"), systemImage: "key")
+            EmptyHint(
+                title: T("No keys in this view"), text: T("Another filter may show them."),
+                action: T("See my keys"), run: { selection = .all })
         }
     }
 
@@ -228,6 +261,14 @@ public struct MainView: View {
                     ForEach(["free", "ask", "never", "none"], id: \.self) { level in
                         Button(levelName(level)) { selection = .level(level) }
                     }
+                    Divider()
+                    Button(T("Archive")) { selection = .archive }
+                    // Projects were sidebar rows; they are filters of My keys now.
+                    Menu(T("Projects")) {
+                        ForEach(projectTags(in: active), id: \.tag) { entry in
+                            Button("\(entry.tag) (\(entry.count))") { selection = .tag(entry.tag) }
+                        }
+                    }
                 } label: {
                     Label(T("Show"), systemImage: "line.3.horizontal.decrease.circle")
                 }
@@ -246,7 +287,8 @@ public struct MainView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    model.check(checkable)
+                    // Several keys go out to their providers: the same question the Home screen used to ask.
+                    if checkable.count > 1 { confirmCheck = true } else { model.check(checkable) }
                 } label: {
                     Label(
                         checkable.count == 1 ? T("Check 1 key") : T("Check %d keys", checkable.count),

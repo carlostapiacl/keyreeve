@@ -2,9 +2,15 @@ import KeyreeveCatalog
 import KeyreeveVault
 import SwiftUI
 
-/// Where keys move into the vault. Sealing needs no fingerprint, and opening always does.
+/// Where keys move into the vault. Sealing needs no fingerprint, and opening always does. The same view
+/// shows Security and backup, or the Rotation tool, so each task has one place.
 struct VaultView: View {
+    enum Part { case security, rotation }
+
     @ObservedObject var model: AppModel
+    var part: Part = .security
+    /// Opens another section: Rotation and Agents are linked from here, not repeated.
+    var go: (Sidebar) -> Void = { _ in }
     @State private var chosen: Set<String> = []
 
     private var sealed: [CatalogItem] { filter(model.items, by: .vault, search: "") }
@@ -20,7 +26,7 @@ struct VaultView: View {
             if let draft = model.vaultDraft {
                 RecoveryKeyView(draft: draft, model: model)
             } else if model.hasVault {
-                ready
+                if part == .rotation { rotationTool } else { ready }
             } else {
                 intro
             }
@@ -51,13 +57,12 @@ struct VaultView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 summary
-                if !sealed.isEmpty { sealedCard }
-                if !openRotations.isEmpty { rotationsCard }
-                agentsCard
                 backupCard
                 if let report = model.vaultComparison { comparison(report) }
                 if !moved.isEmpty { movedCard }
                 addKeys
+                if !sealed.isEmpty { sealedCard }
+                links
             }
             .padding(Theme.pagePadding)
             .frame(maxWidth: 720, alignment: .leading)
@@ -147,7 +152,10 @@ struct VaultView: View {
                                         .buttonStyle(KRButtonStyle(primary: true))
                                         .disabled(model.busy)
                                 }
-                                Button(T("I did it")) { model.dismiss(status) }.buttonStyle(KRButtonStyle())
+                                // Hides the reminder and checks nothing, and says so.
+                                Button(T("Hide this reminder")) { model.dismiss(status) }
+                                    .buttonStyle(KRButtonStyle())
+                                    .help(T("Hides it from this list. It does not check that the old key stopped working."))
                             }
                         }
                         if status.phase == "waiting" {
@@ -201,24 +209,36 @@ struct VaultView: View {
         }
     }
 
-    private var agentsCard: some View {
-        let count = sealed.filter { item in
+    /// Rotation and agents have their own sections; here they are a line each, so nothing is said twice.
+    private var links: some View {
+        let open = sealed.filter { item in
             model.keyIndex.keys(forSource: item.path).contains { model.agentPolicy.level(of: $0.id) != nil }
         }.count
-        return Card {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    SectionTitle(T("Connect an agent"))
-                    Spacer()
-                    Button(T("Copy the command")) { model.copyAgentCommand() }.buttonStyle(KRButtonStyle())
+        return HStack(spacing: 8) {
+            Button(openRotations.isEmpty ? T("Rotation") : T("Rotation: %d waiting", openRotations.count)) { go(.rotation) }
+                .buttonStyle(KRButtonStyle())
+            Button(open == 0 ? T("Agents") : T("Agents: %d keys open", open)) { go(.agents) }
+                .buttonStyle(KRButtonStyle())
+        }
+    }
+
+    /// The Rotation tool: what is in progress, and what waits on you.
+    private var rotationTool: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(T("Rotation")).font(Theme.title).foregroundStyle(Theme.text)
+                if openRotations.isEmpty {
+                    EmptyHint(
+                        title: T("No rotation in progress"),
+                        text: T("Rotate a key from its page, under More details and options."),
+                        action: T("See my keys"), run: { go(.all) })
+                } else {
+                    rotationsCard
                 }
-                Text(T("An agent lists the keys you allowed and runs the programs you allowed. You choose them on each key."))
-                    .font(Theme.caption).foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(count == 0 ? T("No key is allowed for agents yet.") : count == 1 ? T("1 key allowed for agents") : T("%d keys allowed for agents", count))
-                    .font(Theme.caption).foregroundStyle(Theme.text)
             }
-            .padding(14)
+            .padding(Theme.pagePadding)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

@@ -130,6 +130,8 @@ struct UsageRow: View {
 /// The whole log, with the broken-chain warning where it can be seen.
 struct UsageLogSheet: View {
     @ObservedObject var model: AppModel
+    /// In the window's own Log section, with no Close button.
+    var inline = false
     @Environment(\.dismiss) private var dismiss
     @State private var filter = ""
 
@@ -143,14 +145,14 @@ struct UsageLogSheet: View {
                 Text(T("Usage log")).font(.headline).foregroundStyle(Theme.text)
                 Spacer()
                 TextField(T("Filter by key"), text: $filter).textFieldStyle(.roundedBorder).frame(maxWidth: 200)
-                Button(T("Close")) { dismiss() }.buttonStyle(KRButtonStyle())
+                if !inline { Button(T("Close")) { dismiss() }.buttonStyle(KRButtonStyle()) }
             }
             if let line = model.usage.brokenLine {
                 Text((line == 0 ? T("The usage log could not be read.") : T("The usage log was changed at line %d.", line))).font(Theme.caption).foregroundStyle(Theme.bad)
             }
             List(shown, id: \.hash) { UsageRow(entry: $0, showsKey: true) }
         }
-        .padding(16)
+        .padding(inline ? Theme.pagePadding : 16)
         .frame(minWidth: 560, minHeight: 420)
         .onAppear { model.reloadUsage() }
     }

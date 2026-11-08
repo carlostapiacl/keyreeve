@@ -15,9 +15,10 @@ let package = Package(
         .target(name: "KeyreeveUI", dependencies: ["KeyreeveCatalog", "KeyreeveVault"]),
         .executableTarget(name: "keyreeve-vault", dependencies: ["KeyreeveVault"]),
         .executableTarget(name: "Keyreeve", dependencies: ["KeyreeveUI"]),
-        .testTarget(
-            name: "KeyreeveTests",
-            dependencies: ["KeyreeveVault", "KeyreeveCatalog", "KeyreeveUI"]
-        ),
+        // One test target per module, so a change to the vault is tested without building the app's
+        // views, and CI can run only what a change touches.
+        .testTarget(name: "VaultTests", dependencies: ["KeyreeveVault"]),
+        .testTarget(name: "CatalogTests", dependencies: ["KeyreeveCatalog"]),
+        .testTarget(name: "AppTests", dependencies: ["KeyreeveVault", "KeyreeveCatalog", "KeyreeveUI"]),
     ]
 )

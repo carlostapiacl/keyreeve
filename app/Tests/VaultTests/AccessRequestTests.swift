@@ -138,6 +138,26 @@ struct AccessRequestTests {
         #expect(world.policy.until["resend"] == closes && world.policy.agents["resend"] == ["claude"])
     }
 
+    @Test func aYesForAKeyChangedWhileTheWindowWasOpenChangesNothing() throws {
+        let world = World()
+        // The person opens the key to codex in the app while claude's window waits.
+        let bridge = AgentBridge(
+            policy: { world.policy }, names: { ["resend"] }, open: { _, _ in Data() },
+            run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            now: { world.now }, agent: "claude",
+            decideAccess: { _ in
+                world.policy = AgentPolicy(levels: ["resend": .ask], agents: ["resend": ["codex"]])
+                return AccessDecision(hours: nil)
+            },
+            updatePolicy: { change in
+                change(&world.policy)
+                world.saved += 1
+            })
+        let result = try request(bridge, ["key": "resend", "reason": "x"])
+        #expect(result.error && result.text.contains("changed while the person was asked"))
+        #expect(world.policy.levels["resend"] == .ask && world.policy.agents["resend"] == ["codex"])
+    }
+
     @Test func writersAtTheSameTimeKeepEveryChange() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("agents-\(UUID().uuidString).toml")
         defer {

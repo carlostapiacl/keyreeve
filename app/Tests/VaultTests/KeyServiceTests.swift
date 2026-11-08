@@ -85,6 +85,18 @@ struct AuditLogTests {
         #expect(log.firstBrokenLine() == nil)
     }
 
+    @Test func aLogThatCannotBeReadIsNotCalledWhole() throws {
+        let (log, url) = log()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try? FileManager.default.removeItem(at: url)
+        }
+        #expect(log.firstBrokenLine() == nil)
+        try log.append(event: "used", key: "k")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+        #expect(log.firstBrokenLine() == 0)
+    }
+
     @Test func testTheFileIsPrivate() throws {
         let (log, url) = log()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -141,6 +153,8 @@ final class Fixture: @unchecked Sendable {
     var paused = false
     /// Turns the pause on while the finger is on the sensor.
     var pauseDuringFinger = false
+    /// How long the person takes at the sensor, on the test's clock.
+    var fingerTakes: TimeInterval = 0
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -150,6 +164,7 @@ final class Fixture: @unchecked Sendable {
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
                 if self.pauseDuringFinger { self.paused = true }
+                self.now.addTimeInterval(self.fingerTakes)
                 if source == "vps-key" { return Data("-----BEGIN OPENSSH PRIVATE KEY-----\nCANARY\n-----END OPENSSH PRIVATE KEY-----\n".utf8) }
                 return Data((source == "m.env" ? "OTHER=x\nAPI=CANARY-mail\n" : "CANARY-netlify\n").utf8)
             },
@@ -282,7 +297,8 @@ struct KeyServiceTests {
         let started = Date()
         #expect(service.handle(.init(op: "revoke"), caller: nil).ok)
         #expect(service.handle(.init(op: "grants"), caller: nil).grants?.isEmpty == true)
-        #expect(Date().timeIntervalSince(started) < 1)
+        // Waiting for the prompt would take until the signal below, so any short bound shows it.
+        #expect(Date().timeIntervalSince(started) < 5)
         touched.signal()
         let answer = await using.value
         #expect(!answer.ok)
@@ -396,6 +412,26 @@ struct KeyServiceTests {
         #expect(!answer.ok && f.prompts.count == 1)
         #expect(f.service.handle(.init(op: "grants"), caller: f.caller).grants?.isEmpty == true)
         #expect(f.proxy.added.count == f.proxy.removed.count)
+    }
+
+    @Test func thePauseWhileTheFingerIsAskedStopsTheRealKey() throws {
+        let f = Fixture()
+        f.pauseDuringFinger = true
+        let answer = f.use("netlify", real: true)
+        #expect(!answer.ok && answer.value == nil)
+        #expect(f.prompts.count == 1)
+        #expect(try !f.log.entries().contains { $0.event == "handed" })
+    }
+
+    @Test func aKeyThatClosesWhileTheFingerIsAskedGivesNothing() throws {
+        let f = Fixture()
+        f.fingerTakes = 120
+        let answer = f.service.handle(
+            .init(op: "use", key: "netlify", seconds: 3600, program: "/usr/bin/curl", notAfter: f.now.addingTimeInterval(60)),
+            caller: f.caller)
+        #expect(!answer.ok)
+        #expect(f.proxy.added.isEmpty)
+        #expect(f.service.handle(.init(op: "grants"), caller: f.caller).grants?.isEmpty == true)
     }
 
     @Test func thePauseStopsTheRealKeyToo() throws {

@@ -38,6 +38,20 @@ struct FingerTests {
         #expect(model.unlocked)
     }
 
+    @Test func aSecondRequestWhileOneIsOpenIsAnsweredAtOnce() async {
+        let sensor = Sensor()
+        let model = model(sensor)
+        model.unlock()
+        var second: Bool?
+        _ = model.askFinger(LAContext(), .deviceOwnerAuthentication, "x") { second = $0 }
+        await settle()
+        #expect(second == false)
+        #expect(model.lockMessage == nil)
+        sensor.waiting[0](true)
+        await settle()
+        #expect(model.unlocked)
+    }
+
     @Test func testAVaultRequestWaitsForTheOpenPrompt() async {
         let sensor = Sensor()
         let model = model(sensor)

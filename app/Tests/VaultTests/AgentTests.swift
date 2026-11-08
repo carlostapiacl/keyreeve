@@ -7,7 +7,7 @@ struct AgentTests {
 
     /// Programs allowed the way the app allows them, with a pin, which these tests accept.
     static func pinnedPolicy(_ commands: [String: [String]]) -> AgentPolicy {
-        AgentPolicy(commands: commands, hashes: Dictionary(commands.values.flatMap { $0 }.map { ($0, "pin") }, uniquingKeysWith: { a, _ in a }))
+        AgentPolicy(commands: commands, hashes: commands.mapValues { Dictionary($0.map { ($0, "pin") }, uniquingKeysWith: { a, _ in a }) })
     }
 
     final class Log: @unchecked Sendable {
@@ -247,6 +247,23 @@ struct AgentTests {
             ["/bin/sh", "-c", "trap '' TERM; sleep 60 & wait"], variable: "X", value: "v", limit: 1)
         #expect(out.status == -1)
         #expect(Date().timeIntervalSince(started) < 10)
+    }
+
+    @Test func aProgramThatClosesItsOutputAndStaysAliveDoesNotHoldTheServer() throws {
+        let started = Date()
+        let out = try AgentRunner.run(
+            ["/bin/sh", "-c", "exec >/dev/null 2>&1; sleep 30"], variable: "X", value: "v", limit: 1)
+        #expect(out.status == -1)
+        #expect(Date().timeIntervalSince(started) < 10)
+    }
+
+    @Test func variablesThatChangeWhatRunsNeedThePersonsWord() {
+        for name in ["PATH", "path", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "NODE_OPTIONS", "BASH_ENV", "GIT_SSH_COMMAND", "HTTPS_PROXY"] {
+            #expect(EnvReferences.changesWhatRuns(name), "\(name)")
+        }
+        for name in ["RESEND_API_KEY", "LOG_LEVEL", "DATABASE_URL", "PATHNAME"] {
+            #expect(!EnvReferences.changesWhatRuns(name), "\(name)")
+        }
     }
 
     @Test func testAKeyAtTheCutIsHiddenWhole() throws {

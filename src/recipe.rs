@@ -112,6 +112,7 @@ fn no_request() -> Step {
         id_from: None,
         reject: Vec::new(),
         alive_if: None,
+        reject_body: Vec::new(),
     }
 }
 
@@ -166,6 +167,10 @@ pub struct Step {
     pub reject: Vec<u16>,
     /// A refusal that still proves the key exists, such as a restricted key. Only in `verify`.
     pub alive_if: Option<AliveIf>,
+    /// Texts that, in the body of an answer that would pass, mean the key was turned down: for a provider that
+    /// answers 200 to a bad key and says so inside. Only in `verify`.
+    #[serde(default)]
+    pub reject_body: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -394,6 +399,16 @@ impl Recipe {
         {
             return fail(format!("verify: reject {status} must be a 4xx status"));
         }
+        // A short text could be in any answer, and a long list is a guess.
+        if self.verify.reject_body.len() > 8
+            || self
+                .verify
+                .reject_body
+                .iter()
+                .any(|text| text.trim().len() < 6 || text.len() > 200)
+        {
+            return fail("verify: reject_body takes up to 8 texts of 6 to 200 characters".into());
+        }
         if !matches!(
             self.rotation.as_deref(),
             None | Some("dual") | Some("single")
@@ -443,7 +458,11 @@ impl Recipe {
             &["id"],
             false,
         )?;
-        if !create.reject.is_empty() || !revoke.reject.is_empty() {
+        if !create.reject.is_empty()
+            || !revoke.reject.is_empty()
+            || !create.reject_body.is_empty()
+            || !revoke.reject_body.is_empty()
+        {
             return fail("reject only belongs in verify".into());
         }
         if create.value_from.as_deref() == create.id_from.as_deref() {

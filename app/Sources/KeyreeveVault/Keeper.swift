@@ -170,7 +170,8 @@ public enum VaultKeeper {
         guard size.intValue <= maxBytes else { return .failure(.tooLarge) }
         guard let data = try? Data(contentsOf: url) else { return .failure(.unreadable) }
         guard !data.isEmpty else { return .failure(.empty) }
-        guard String(data: data, encoding: .utf8) != nil else { return .failure(.notText) }
+        // A certificate or a keystore is sealed as it is, byte for byte: kept and compared like any key. Only a
+        // check with a provider, or handing it to a program as a variable, needs text, and those say so.
         return .success(data)
     }
 }

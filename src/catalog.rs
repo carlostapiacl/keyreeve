@@ -50,6 +50,10 @@ pub struct Rules {
     /// Edits made in the app. They come last, and they replace rather than add.
     #[serde(skip)]
     pub edits: BTreeMap<String, Edit>,
+    /// `keys.toml`. A book of every key (schema 2) says what each key is, over the rules; edits still
+    /// come after it. A book of the first version is not read here.
+    #[serde(skip)]
+    pub book: Option<crate::keybook::KeyBook>,
 }
 
 /// What the app saved for one file. A missing part leaves what the rules decided.
@@ -283,6 +287,38 @@ fn build_row(
     let mut expires = String::new();
     let mut level = level;
     let mut tags: Vec<String> = tags.into_iter().collect();
+    if let Some(key) = rules
+        .book
+        .as_ref()
+        .filter(|book| book.schema >= crate::keybook::SCHEMA)
+        .and_then(|book| book.for_source(&item.path))
+    {
+        reviewed = true;
+        if let Some(said) = &key.tags {
+            tags = said.clone();
+        }
+        if key.archived && !tags.iter().any(|tag| tag == "status:archived") {
+            tags.push("status:archived".into());
+        }
+        level = key.level.unwrap_or(level);
+        if let Some(said) = &key.recipes {
+            recipes = said.clone();
+        } else if let Some(provider) = &key.provider {
+            recipes = vec![provider.clone()];
+        }
+        if let Some(said) = key.field_text() {
+            field = said;
+        }
+        name = key.name.clone().unwrap_or_default();
+        description = key.description.clone().unwrap_or_default();
+        criticality = key.criticality.unwrap_or(criticality);
+        host = key.host.clone().unwrap_or(host);
+        expires = key
+            .expires
+            .clone()
+            .filter(|day| is_day(day))
+            .unwrap_or_default();
+    }
     if let Some(edit) = rules.edits.get(&item.path) {
         reviewed = true;
         if let Some(edited) = &edit.tags {
@@ -296,15 +332,15 @@ fn build_row(
         if let Some(edited) = edit.field.as_ref().filter(|f| !f.is_empty()) {
             field = edited.clone();
         }
-        name = edit.name.clone().unwrap_or_default();
-        description = edit.description.clone().unwrap_or_default();
+        name = edit.name.clone().unwrap_or(name);
+        description = edit.description.clone().unwrap_or(description);
         criticality = edit.criticality.unwrap_or(criticality);
         host = edit.host.clone().unwrap_or(host);
         expires = edit
             .expires
             .clone()
             .filter(|day| is_day(day))
-            .unwrap_or_default();
+            .unwrap_or(expires);
     }
     let (hint, rotate_days) = recipes.first().map_or((None, None), |recipe| {
         *hints

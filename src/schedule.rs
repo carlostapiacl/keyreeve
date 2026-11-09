@@ -34,6 +34,10 @@ pub fn rows(home: &Path) -> Result<Vec<catalog::Row>, String> {
     if !edits.is_empty() {
         rules.edits = catalog::parse_edits(&edits)?;
     }
+    let book = read_or_empty(&home.join("keys.toml"));
+    if !book.is_empty() {
+        rules.book = Some(crate::keybook::KeyBook::parse(&book)?);
+    }
     let history = parse_history(&read_or_empty(&home.join("history.jsonl")));
     Ok(catalog::build(&items, &rules, &history))
 }

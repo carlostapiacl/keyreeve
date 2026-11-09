@@ -10,7 +10,7 @@ use keyreeve::verify;
 use std::collections::HashMap;
 use std::process::ExitCode;
 
-pub use catalog::{run_catalog, run_inventory};
+pub use catalog::{run_catalog, run_inventory, run_migrate};
 pub use checks::{run_check_free, run_custom_action, run_identify, run_verify};
 pub use proxy::run_proxy;
 pub use recipes::{run_recipe_files, run_recipes};
@@ -26,8 +26,12 @@ Usage:
       Run recipes through failures and crashes, offline.
   keyreeve inventory <folder> --out <file.json> [--words <file>]
       Describe a folder of keys, without their values.
-  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>] [--edits <file>] [--moved <file>]
-      Give each file tags and an access level, from your rules.
+  keyreeve catalog <inventory.json> --out <file.csv> [--rules <rules.yaml>] [--history <file>] [--edits <file>] [--moved <file>] [--keys <keys.toml>]
+      Give each file tags and an access level, from your rules, and from keys.toml once it holds every key.
+  keyreeve migrate <folder> [--dry-run]
+      Write in <folder>/keys.toml one entry per key, from the rules, the app's edits and what providers said.
+      Identifiers keep their names; files with none get one, not offered to agents. A copy of each file
+      read goes to <folder>/backups first. Run twice, it changes nothing.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
   keyreeve verify <provider> --key-stdin [--field <name>]
       Check whether a key still works, with one read-only request.

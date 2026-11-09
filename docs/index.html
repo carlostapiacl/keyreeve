@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>keyreeve: keep, check and rotate your API keys</title>
-<meta name="description" content="A local, open source tool to keep your API keys sealed, check that they still work, rotate them with recipes per provider, and let agents use them without seeing them.">
+<title>keyreeve: a key vault for your Mac</title>
+<meta name="description" content="A free, open source key vault for macOS. Your API keys stay sealed on your Mac, and agents use them through a local proxy without seeing them.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="alternate" hreflang="es" href="es/">
 <link rel="alternate" hreflang="en" href="./">
@@ -20,21 +20,20 @@
 </header>
 
 <main>
-<h1>Keep your API keys in one place, and let agents use them without seeing them</h1>
+<h1>A key vault for your Mac that agents can use without seeing the keys</h1>
 
-<p class="lede">keyreeve is a free tool that runs on your own machine. It seals your keys in a vault, checks with each provider that they still work, rotates them with recipes the community writes, and lets an agent run a command with a key it never holds.</p>
+<p class="lede">keyreeve seals your API keys on your own Mac, checks with each provider that they still work, and lets an agent run a command with a key it never holds. It is free and open source.</p>
 
-<p class="status">Early. Checking, sealing and agent access work on a Mac today. Rotation works in the simulator and has not yet been run against a real provider.</p>
+<figure class="shot wide">
+<img src="img/keys.png" width="1600" height="1000" alt="The keyreeve window: a list of keys with their provider, level and last check. Every key in it is a made-up example.">
+<figcaption>My keys. Every name and value in these pictures is made up.</figcaption>
+</figure>
 
-<h2>Why</h2>
-
-<p>Keys pile up in <code>.env</code> files and notes. Nobody remembers which ones still work, which one a script uses, or how to rotate one without breaking a deploy. Each provider does it a little differently. And now agents need keys too, and a key pasted into an agent's context can end up anywhere.</p>
-
-<p>keyreeve puts each provider's differences in a small file, a <em>recipe</em>, so it is written once and works for everyone. Your keys never leave your machine except toward the provider they belong to.</p>
+<p class="status">Early. Sealing, checking and agent access are used every day on one Mac. Rotation passes the simulator and has not run against a real provider yet. There are no prebuilt downloads.</p>
 
 <h2>How an agent uses a key without seeing it</h2>
 
-<p>The agent asks to run a command with a key. The command gets a stand-in of the same shape in its variable, and a local proxy swaps in the real key only on requests to that provider's hosts.</p>
+<p>The agent asks to run a command with a key. The command gets a stand-in of the same shape, and a local proxy puts the real key only on requests to that provider's hosts.</p>
 
 <figure>
 <svg viewBox="0 0 440 470" role="img" aria-labelledby="d1t d1d" style="max-width:560px">
@@ -83,19 +82,62 @@
 <figcaption>The swap happens in headers and Basic passwords, and in the address only for a provider that takes its key there, such as Telegram. A body keeps the stand-in, so a tool that sends its key in a body fails and leaks nothing.</figcaption>
 </figure>
 
-<p>Agents connect over <a href="https://modelcontextprotocol.io">MCP</a> with <code>keyreeve-vault mcp</code>. They get <code>list_keys</code>, <code>use_key</code>, <code>request_access</code> and <code>rotate_key</code>, and with your permission <code>inventory</code> and <code>propose</code> to help sort a folder of loose keys. None of them returns a value.</p>
+<h2>What agents can see</h2>
+
+<p>You choose which keys agents may know about. The rest do not exist for them.</p>
+
+<figure>
+<svg viewBox="0 0 440 280" role="img" aria-labelledby="d2t d2d" style="max-width:560px">
+  <title id="d2t">Offered to agents or not</title>
+  <desc id="d2d">Every key in the vault is either offered to agents or not. A key that is not offered is invisible to agents: list_keys leaves it out, and its name answers as if it were not there. A key that is offered shows its name to agents, who can ask for it; its level decides the rest. Keys given identifiers in bulk start not offered. A key you add yourself, or check on its page, is offered.</desc>
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head"/></marker>
+    <marker id="a2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head-accent"/></marker>
+  </defs>
+  <rect class="box" x="20" y="10" width="400" height="48" rx="6"/>
+  <text class="t" x="220" y="39" text-anchor="middle">A key in the vault</text>
+
+  <line class="line" x1="115" y1="58" x2="115" y2="118" marker-end="url(#a2)"/>
+  <line class="line-accent" x1="325" y1="58" x2="325" y2="118" marker-end="url(#a2b)"/>
+  <text class="t-small" x="125" y="84">identifier</text>
+  <text class="t-small" x="125" y="100">given in bulk</text>
+  <text class="t-small" x="315" y="84" text-anchor="end">added or</text>
+  <text class="t-small" x="315" y="100" text-anchor="end">checked by you</text>
+
+  <rect class="box" x="20" y="120" width="190" height="96" rx="6"/>
+  <text class="t" x="36" y="146">Not offered</text>
+  <text class="t-small" x="36" y="170">Agents do not see it.</text>
+  <text class="t-small" x="36" y="188">Its name answers as one</text>
+  <text class="t-small" x="36" y="206">that is not there.</text>
+
+  <rect class="box-strong" x="230" y="120" width="190" height="96" rx="6"/>
+  <text class="t" x="246" y="146">Offered</text>
+  <text class="t-small" x="246" y="170">Agents see its name</text>
+  <text class="t-small" x="246" y="188">and can ask for it.</text>
+  <text class="t-small" x="246" y="206">Its level says the rest.</text>
+
+  <text class="t-small" x="20" y="250">Unchecking a key closes it: its level, agents and</text>
+  <text class="t-small" x="20" y="268">allowed programs go with it.</text>
+</svg>
+
+</figure>
+
+<figure class="shot">
+<img src="img/key-usage.png" width="1600" height="1000" alt="A key's page on the Usage tab, with the box Offered to agents checked and the level set to Ask.">
+<figcaption>A key's page, Usage tab: offered to agents, at the level Ask.</figcaption>
+</figure>
 
 <h2>Who decides</h2>
 
-<p>Each key has a level, and you set it in the app. A key nobody has opened is yours alone.</p>
+<p>Each offered key has a level, and only you set it, in the app. Your fingerprint is the answer.</p>
 
 <figure>
 <svg viewBox="0 0 440 330" role="img" aria-labelledby="d3t d3d" style="max-width:560px">
   <title id="d3t">The four levels of a key</title>
-  <desc id="d3d">Only me: agents get nothing. Ask: a window shows the key, the command and the agent's reason; you choose once or for 1 to 24 hours, or deny, and confirm with your fingerprint. Free: one fingerprint, then no questions until you quit Keyreeve, a day at most. Always, no fingerprint: one fingerprint to seal a second copy, then agents use it through the proxy with no question, across restarts. The real key always asks.</desc>
+  <desc id="d3d">Only me: agents see the name and can only ask for it. Ask: a window shows the key, the command and the agent's reason; you choose once or for 1 to 24 hours, or deny, and confirm with your fingerprint. Free: one fingerprint, then no questions until you quit Keyreeve, a day at most. Always, no fingerprint: one fingerprint to seal a second copy, then agents use it through the proxy with no question, across restarts. The real key always asks for a fingerprint.</desc>
   <rect class="box-strong" x="20" y="10" width="400" height="62" rx="6"/>
   <text class="t" x="36" y="36">Only me</text>
-  <text class="t-small" x="36" y="58">The default. Agents get nothing.</text>
+  <text class="t-small" x="36" y="58">The default. Agents see the name and can only ask.</text>
 
   <rect class="box" x="20" y="82" width="400" height="62" rx="6"/>
   <text class="t" x="36" y="108">Ask</text>
@@ -114,113 +156,50 @@
 <figcaption>Quitting Keyreeve, or <em>Lock everything</em> in the menu bar, ends every permission at once. Every yes, no and refusal goes in a log with the agent's reason.</figcaption>
 </figure>
 
-<h2>Recipes</h2>
-
-<p>Everything keyreeve knows about a provider lives in one YAML file. The app knows no provider by name.</p>
-
-<pre><code>schema: 1
-provider: github
-name: GitHub
-dashboard: https://github.com/settings/tokens
-prefixes: [ghp_, github_pat_]
-hosts: [api.github.com]
-auth: { header: Authorization, prefix: "Bearer " }
-verify: { method: GET, path: /user }
-identify:
-  request: { method: GET, path: /user }
-  fields: { account: $.login, email: $.email }</code></pre>
-
-<p>A recipe is data and cannot run code. Requests go over HTTPS, only to the hosts it lists, with redirects off, and the key has no placeholder, so a recipe cannot put it in a URL or a body. It can still list a host that stores what it receives, so read <code>hosts</code> before you trust one. A check is a single GET. The repository ships recipes for more than thirty providers, from Anthropic and AWS to Stripe and Telegram.</p>
-
-<h2>How a rotation goes</h2>
-
-<figure>
-<svg viewBox="0 0 470 400" role="img" aria-labelledby="d2t d2d" style="max-width:560px">
-  <title id="d2t">The order of a rotation</title>
-  <desc id="d2d">Step one, create the new key and save it. Step two, check that it works; if it fails, revoke it and stop. Step three, update each place that uses the key; if one fails, restore all of them and revoke the new key. Step four, make the new key current and wait out the overlap. Step five, revoke the old key. Each step is written to a journal first, so a crash can be resumed.</desc>
-  <defs>
-    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head"/></marker>
-  </defs>
-  <rect class="box" x="20" y="10" width="250" height="50" rx="6"/>
-  <text class="t" x="34" y="41">1. Create and save the new key</text>
-  <line class="line" x1="145" y1="60" x2="145" y2="80" marker-end="url(#a2)"/>
-
-  <rect class="box" x="20" y="82" width="250" height="50" rx="6"/>
-  <text class="t" x="34" y="113">2. Check that it works</text>
-  <line class="line-stop" x1="270" y1="107" x2="284" y2="107"/>
-  <text class="t-stop" x="290" y="103">fails: revoke the new</text>
-  <text class="t-stop" x="290" y="119">key and stop</text>
-  <line class="line" x1="145" y1="132" x2="145" y2="152" marker-end="url(#a2)"/>
-
-  <rect class="box" x="20" y="154" width="250" height="50" rx="6"/>
-  <text class="t" x="34" y="185">3. Update every place</text>
-  <line class="line-stop" x1="270" y1="179" x2="284" y2="179"/>
-  <text class="t-stop" x="290" y="175">one fails: restore them</text>
-  <text class="t-stop" x="290" y="191">all, revoke the new key</text>
-  <line class="line" x1="145" y1="204" x2="145" y2="224" marker-end="url(#a2)"/>
-
-  <rect class="box" x="20" y="226" width="250" height="50" rx="6"/>
-  <text class="t" x="34" y="257">4. Make it current, overlap</text>
-  <line class="line" x1="145" y1="276" x2="145" y2="296" marker-end="url(#a2)"/>
-
-  <rect class="box-strong" x="20" y="298" width="250" height="50" rx="6"/>
-  <text class="t" x="34" y="329">5. Revoke the old key</text>
-
-  <text class="t-small" x="20" y="380">Each step goes to a journal first: ids and step names, never values.</text>
-</svg>
-<figcaption>The old key is revoked last, and a new key is not revoked while a service may still hold it. <code>keyreeve simulate</code> stops the process at every operation, and again at every operation of the recovery, and checks that every place still holds a working key.</figcaption>
+<figure class="shot">
+<img src="img/agents.png" width="1600" height="1000" alt="The Agents section: whether Claude Code is connected, and each offered key with its level and the agents it is open to.">
+<figcaption>Agents: what each agent may use, and how.</figcaption>
 </figure>
 
-<p>A pass in the simulator shows the recipe and the engine hold up. It does not prove a real provider behaves as its recipe says, and no rotation has run against a real service yet.</p>
+<p>Agents connect over <a href="https://modelcontextprotocol.io">MCP</a> with <code>keyreeve-vault mcp</code>. They get <code>list_keys</code>, <code>use_key</code>, <code>request_access</code>, <code>run_with_key</code> and <code>rotate_key</code>, and while you allow it, <code>inventory</code> and <code>propose</code> to help sort a folder of loose keys. None of them returns a value.</p>
 
-<h2>Try it</h2>
+<figure class="shot">
+<img src="img/vault.png" width="1600" height="1000" alt="Security and backup: the vault, the sealed keys and the backup.">
+<figcaption>Security and backup. Each sealed key is a standard <a href="https://age-encryption.org">age</a> file, so you can open it without keyreeve.</figcaption>
+</figure>
 
-<p>You need <a href="https://rustup.rs">Rust</a>. There are no prebuilt binaries yet. This runs offline and uses no real keys:</p>
+<h2>Install</h2>
 
-<pre><code>cargo install --git https://github.com/carlostapiacl/keyreeve
-git clone https://github.com/carlostapiacl/keyreeve
+<p>You need macOS 14 or later, the Command Line Tools and <a href="https://rustup.rs">Rust</a>. The build is not notarized, so macOS warns you the first time.</p>
+
+<pre><code>git clone https://github.com/carlostapiacl/keyreeve
 cd keyreeve
-keyreeve check examples/recipe.yaml
-keyreeve simulate examples/recipe.yaml</code></pre>
+app/build-app.sh
+ditto app/dist/Keyreeve.app /Applications/Keyreeve.app
+open /Applications/Keyreeve.app</code></pre>
 
-<p>To see what you already have, point it at a folder of key files. Neither command changes a file, and neither writes a value:</p>
+<p>After the first copy, each run of <code>build-app.sh</code> updates the one in /Applications, and reopens Keyreeve if it was open.</p>
 
-<pre><code>keyreeve inventory ~/my-keys --out ~/.keyreeve/inventory.json
-keyreeve verify github --key-file ~/my-keys/app.env --field GITHUB_TOKEN</code></pre>
+<h2>Recipes</h2>
 
-<h3>The Mac app</h3>
-
-<p>A native window over your keys, in English and Spanish, with the vault inside. It is built from source and is not notarized yet, so macOS warns you the first time.</p>
-
-<pre><code>app/build-app.sh
-open app/dist/Keyreeve.app</code></pre>
-
-<p>Each sealed key is a standard <a href="https://age-encryption.org">age</a> file, sealed for a key in your Mac's Secure Enclave and for a recovery key you keep elsewhere. With only the vault and the <code>age</code> command you can open your keys on any computer, so they do not depend on this tool.</p>
-
-<h2>What is not done</h2>
-
-<ul>
-  <li>A rotation run against a real provider.</li>
-  <li>The vault on Linux and Windows. The command line runs on Linux, Windows has not been tried, and the vault's file format already works on both.</li>
-  <li>An Apple signature, so the app can be downloaded and not only built.</li>
-  <li>Other vaults as storage, such as 1Password or the system keychain.</li>
-  <li>Recipes that can rotate for more providers.</li>
-</ul>
+<p>Everything keyreeve knows about a provider lives in one YAML file, and the app knows no provider by name. A recipe is data and cannot run code. It talks HTTPS only to the hosts it lists. keyreeve ships 33 recipes, and the most useful contribution is one for a provider you use.</p>
 
 <h2>Security</h2>
 
-<p>keyreeve holds credentials that can create and revoke keys, so a mistake costs more than in most tools. It guards against a careless or malicious recipe, a crash halfway through a rotation, a value reaching a log, and a provider answer that holds too much. It does not protect against anything else running as your user, a compromised provider or dependency, or a recipe whose listed host stores what it receives. The vault's code has had no outside review.</p>
+<p>keyreeve guards keys. It is not a sandbox, and a program running as you can do what you can. The vault's code has had no outside review. <a href="https://github.com/carlostapiacl/keyreeve/blob/main/THREAT_MODEL.md">The threat model</a> lists what it protects against and what it does not. To report a vulnerability, use <a href="https://github.com/carlostapiacl/keyreeve/security/advisories/new">private reporting</a>.</p>
 
-<p>The full list is in <a href="https://github.com/carlostapiacl/keyreeve/blob/main/THREAT_MODEL.md">THREAT_MODEL.md</a>. To report a vulnerability, use <a href="https://github.com/carlostapiacl/keyreeve/security/advisories/new">private reporting</a>.</p>
+<h2>Read more</h2>
 
-<h2>Contributing</h2>
-
-<p>The most useful contribution is a recipe for a provider you use. A recipe that only checks a key needs <code>verify</code>; one that rotates also needs <code>create</code> and <code>revoke</code>. Run <code>keyreeve check</code> and <code>keyreeve simulate</code> on it, link the provider's documentation for each step, and never paste a real key or response. <a href="https://github.com/carlostapiacl/keyreeve/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> has the fields and the checklist.</p>
+<ul>
+  <li><a href="https://github.com/carlostapiacl/keyreeve#readme">README</a>: the first five minutes, levels and agent tools.</li>
+  <li><a href="https://github.com/carlostapiacl/keyreeve/blob/main/docs/reference.md">Reference</a>: the vault from a terminal, keys.toml, SSH keys, recipes and rotation.</li>
+  <li><a href="https://github.com/carlostapiacl/keyreeve/blob/main/CONTRIBUTING.md">Contributing</a>: how to write a recipe.</li>
+</ul>
 
 </main>
 
 <footer>
-  <p>keyreeve is open source under the <a href="https://github.com/carlostapiacl/keyreeve/blob/main/LICENSE">MIT license</a>. Code, issues and recipes on <a href="https://github.com/carlostapiacl/keyreeve">GitHub</a>.</p>
+  <p>keyreeve is open source under the <a href="https://github.com/carlostapiacl/keyreeve/blob/main/LICENSE">MIT license</a>.</p>
 </footer>
 </body>
 </html>

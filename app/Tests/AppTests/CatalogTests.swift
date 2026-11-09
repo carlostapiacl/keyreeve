@@ -162,6 +162,26 @@ struct ActionTests {
         XCTAssertEqual(hosted.canIdentify(set), true)
     }
 
+    @Test func testASuggestedServerWaitsForApprovalBeforeAnyCheck() {
+        let info = { (approved: [String]?) in
+            ProviderDirectory([ProviderInfo(id: "panel", name: "Panel", self_hosted: true, approved_hosts: approved)])
+        }
+        let suggested = CatalogItem(path: "a", recipes: ["panel"], host: "panel.example.com")
+        let none = info([])
+        XCTAssertEqual(none.unapprovedHost(of: suggested)?.host, "panel.example.com")
+        XCTAssertEqual(none.unapprovedHost(of: suggested)?.provider, "panel")
+        XCTAssertFalse(none.canCheck(suggested))
+        let other = info(["other.example.com"])
+        XCTAssertFalse(other.canCheck(suggested))
+        let approved = info(["panel.example.com"])
+        XCTAssertNil(approved.unapprovedHost(of: suggested))
+        XCTAssertEqual(approved.canCheck(suggested), true)
+        let fixed = ProviderDirectory([ProviderInfo(id: "panel", name: "Panel", approved_hosts: [])])
+        XCTAssertNil(fixed.unapprovedHost(of: suggested))
+        let decoded = ProviderDirectory.parse(Data(#"[{"id":"panel","name":"Panel","hosts":[],"source":"builtin","approved":true,"can_check":true,"can_identify":false,"can_rotate":false,"can_rotate_by_hand":false,"single_rotation":false,"tested":{},"self_hosted":true,"approved_hosts":[]}]"#.utf8))
+        XCTAssertEqual(decoded.unapprovedHost(of: suggested)?.host, "panel.example.com")
+    }
+
     @Test func testAgeComparesAgainstTheProvidersSuggestion() {
         let old = CatalogItem(path: "a", modified: "2020-01-01", rotateDays: 90)
         let fresh = CatalogItem(path: "b", modified: "2026-12-30", rotateDays: 90)

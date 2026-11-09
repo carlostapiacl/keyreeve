@@ -197,7 +197,9 @@ pub(crate) fn resolve(name: &str, host: Option<&str>) -> Result<Recipe, String> 
     }
     let host = host.ok_or_else(|| format!("{name} needs the address of your server"))?;
     if !providers::host_approved(name, host) {
-        return Err(format!("{host} is not approved for {name}"));
+        return Err(format!(
+            "{host} is not approved for {name}. Approve it in Keyreeve, or with `keyreeve recipes approve-host {name} {host}`"
+        ));
     }
     Ok(recipe.at_host(host))
 }
@@ -680,9 +682,12 @@ mod tests {
     #[test]
     fn a_self_hosted_provider_needs_an_approved_address() {
         assert!(resolve("coolify", None).unwrap_err().contains("address"));
-        assert!(resolve("coolify", Some("not-approved.example.com"))
-            .unwrap_err()
-            .contains("not approved"));
+        let refused = resolve("coolify", Some("not-approved.example.com")).unwrap_err();
+        assert!(refused.contains("not approved"), "{refused}");
+        assert!(
+            refused.contains("recipes approve-host coolify not-approved.example.com"),
+            "it says how to approve it: {refused}"
+        );
     }
 
     #[test]

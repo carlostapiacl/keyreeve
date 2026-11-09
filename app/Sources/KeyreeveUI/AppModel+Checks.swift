@@ -148,6 +148,23 @@ extension AppModel {
         }
     }
 
+    /// A server that came as a suggestion, approved by your click, and the key checked there right after.
+    /// Approving is what lets the key travel to that server, so it never happens on its own.
+    public func approveHostAndCheck(_ item: CatalogItem) {
+        guard let binary, let waiting = providers.unapprovedHost(of: item) else { return }
+        do {
+            try CheckRunner.approveHost(waiting.host, for: waiting.provider, binary: binary)
+        } catch {
+            message = (error as? CheckError)?.description
+            return
+        }
+        note("allowed", path: item.path, detail: "server \(waiting.host) approved for \(waiting.provider)")
+        load {
+            guard let current = self.items.first(where: { $0.path == item.path }) else { return }
+            self.check([current])
+        }
+    }
+
     public func run(_ custom: CustomAction, provider: String, on item: CatalogItem) {
         if let page = custom.open.flatMap(URL.init(string:)) {
             NSWorkspace.shared.open(page)

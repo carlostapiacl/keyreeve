@@ -10,7 +10,8 @@ struct KeyAccessPanel: View {
     @State private var newID = ""
     @State private var newField = ""
 
-    private var identifiers: [KeyIndex.Key] { model.keyIndex.keys(forSource: item.path) }
+    /// Every identifier of the file, offered to agents or not: the person sees them all.
+    private var identifiers: [KeyIndex.Key] { model.keyIndex.allKeys(forSource: item.path) }
     private var allowed: [String] { identifiers.flatMap { model.agentPolicy.commands[$0.id] ?? [] } }
 
     /// How agents reach this key through the proxy, as the permissions say now, one line per identifier.
@@ -85,6 +86,14 @@ struct KeyAccessPanel: View {
                     .foregroundStyle(Theme.muted)
                     .accessibilityLabel(T("Remove"))
                 }
+                Toggle(T("Offered to agents"), isOn: Binding(
+                    get: { model.keyIndex.isOffered(key.id) },
+                    set: { model.setOffered($0, id: key.id) }))
+                    .toggleStyle(.checkbox)
+                    .font(Theme.caption)
+                    .help(model.keyIndex.isOffered(key.id)
+                        ? T("Agents see its name and can ask for it. Unchecked, they do not see it, and it closes.")
+                        : T("Agents do not see this key. Checked, they see its name and can ask for it."))
             }
             if identifiers.isEmpty {
                 Text(T("What you and your agents call this key."))

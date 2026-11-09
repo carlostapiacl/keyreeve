@@ -68,6 +68,21 @@ public struct KeyIndex: Equatable, Sendable {
     /// Whether an identifier is in use, by a key offered to agents or not.
     public func isTaken(_ id: String) -> Bool { key(id) != nil || unoffered.contains { $0.id == id } }
     public func keys(forSource source: String) -> [Key] { keys.filter { $0.source == source } }
+    /// The keys of a file, offered to agents or not: what the person sees in the app.
+    public func allKeys(forSource source: String) -> [Key] { (keys + unoffered).filter { $0.source == source } }
+    /// Whether agents may see the key by this identifier. A key not offered is one they cannot name.
+    public func isOffered(_ id: String) -> Bool { key(id) != nil }
+
+    /// The identifiers an agent may name: keys offered to agents whose file is sealed. A key not offered is left
+    /// out here, so no agent learns that it exists.
+    public func agentNames(sealed: Set<String>) -> [String] {
+        keys.filter { sealed.contains($0.source) }.map(\.id)
+    }
+
+    /// What agents may read of each key offered to them, by identifier.
+    public var agentDescriptions: [String: Key] {
+        Dictionary(keys.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
 
     /// Lower case with dashes: it ends up in scripts, so it has to be easy to type and safe to pass around.
     public static func isValid(id: String) -> Bool {
@@ -105,7 +120,37 @@ public struct KeyIndex: Equatable, Sendable {
         guard !key.source.isEmpty else { throw VaultError("\(key.id) needs a source") }
     }
 
-    public mutating func remove(id: String) { keys.removeAll { $0.id == id } }
+    /// Adds a key no agent sees until a person offers it: what an identifier given in bulk, not chosen by a
+    /// person for this key, starts as.
+    public mutating func addUnoffered(_ key: Key) throws {
+        try Self.check(key, taken: isTaken(key.id))
+        unoffered.insert(key, at: unoffered.firstIndex { $0.id > key.id } ?? unoffered.endIndex)
+    }
+
+    /// Lets agents see the key: list it, ask for it, and use it once a person opens it to them.
+    public mutating func offer(id: String) {
+        guard let at = unoffered.firstIndex(where: { $0.id == id }) else { return }
+        let key = unoffered.remove(at: at)
+        keys.insert(key, at: keys.firstIndex { $0.id > key.id } ?? keys.endIndex)
+    }
+
+    /// Takes the key out of agents' sight, keeping its identifier and all it says.
+    public mutating func withdraw(id: String) {
+        guard let at = keys.firstIndex(where: { $0.id == id }) else { return }
+        let key = keys.remove(at: at)
+        unoffered.insert(key, at: unoffered.firstIndex { $0.id > key.id } ?? unoffered.endIndex)
+    }
+
+    /// Changes a key wherever it is, offered or not.
+    public mutating func update(id: String, _ change: (inout Key) -> Void) {
+        if let at = keys.firstIndex(where: { $0.id == id }) { change(&keys[at]) }
+        if let at = unoffered.firstIndex(where: { $0.id == id }) { change(&unoffered[at]) }
+    }
+
+    public mutating func remove(id: String) {
+        keys.removeAll { $0.id == id }
+        unoffered.removeAll { $0.id == id }
+    }
 
     /// Lowercase ASCII letters, digits and single hyphens: "Mi clave de correo" is "mi-clave-de-correo".
     public static func slug(_ text: String) -> String {

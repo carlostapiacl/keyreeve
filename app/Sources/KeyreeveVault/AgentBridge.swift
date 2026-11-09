@@ -442,7 +442,9 @@ public struct AgentBridge {
 
     /// Refuses, and writes down, a key that is not open to agents or not to this one.
     private func admit(_ key: String, policy: AgentPolicy, reason: String) throws {
-        guard policy.level(of: key, at: now()) != nil else {
+        // A key not offered to agents answers as one that is not open, even with a level left from before:
+        // an agent cannot tell it from a name that is not there.
+        guard policy.level(of: key, at: now()) != nil, (try? names().contains(key)) == true else {
             log("refused", key, policy.until[key] == nil ? "not open to agents" : "closed again", reason)
             throw VaultError("\(key) is not open to agents. Ask the person with request_access")
         }

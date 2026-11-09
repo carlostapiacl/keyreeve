@@ -429,7 +429,7 @@ struct Snapshot: Sendable {
         let checked = pasted.isEmpty ? [:] : files.lastResults(for: Set(pasted))
         let edits = pasted.isEmpty ? [:] : ((try? JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: files.edits))) ?? [:])
         for name in pasted {
-            let indexed = index.keys(forSource: name).first
+            let indexed = index.allKeys(forSource: name).first
             var item = CatalogItem(
                 path: name, recipes: indexed?.provider.map { [$0] } ?? [], name: indexed?.description ?? indexed?.id ?? "")
             if let edit = edits[name] { item = item.applying(edit) }

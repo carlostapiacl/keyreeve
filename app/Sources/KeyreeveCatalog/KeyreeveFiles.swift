@@ -5,8 +5,14 @@ public struct KeyreeveFiles: Sendable {
     public let directory: URL
 
     public init(directory: URL? = nil) {
-        self.directory = directory
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".keyreeve")
+        self.directory = directory ?? Self.defaultDirectory()
+    }
+
+    /// `KEYREEVE_HOME` when it is set, as the command line reads it, and `~/.keyreeve` otherwise. It lets a second
+    /// Keyreeve run over a folder of its own, such as one with made-up keys for a demo.
+    public static func defaultDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        if let home = environment["KEYREEVE_HOME"], !home.isEmpty { return URL(fileURLWithPath: home, isDirectory: true) }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".keyreeve")
     }
 
     public var catalog: URL { directory.appendingPathComponent("catalog.csv") }

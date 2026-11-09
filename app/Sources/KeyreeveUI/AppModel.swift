@@ -89,6 +89,8 @@ public final class AppModel: ObservableObject {
     var fingerGate = FingerGate()
     var confirmation = ConfirmationWindow()
     private var generation = 0
+    /// The read whose list is on screen. Work from an older read that ends after it runs at once.
+    private var shownGeneration = 0
     /// Changes on each lock, so a confirmation that arrives afterwards counts for nothing.
     var lockEpoch = 0
     var clipboard = KeyClipboard()
@@ -226,9 +228,16 @@ public final class AppModel: ObservableObject {
             await MainActor.run {
                 self.loadsInFlight -= 1
                 guard current == self.generation else {
-                    if let done { self.afterLoad.append(done) }
+                    // A newer read is still on its way: its list runs this. If it already showed its list,
+                    // the list on screen is newer than this one, so this runs now and is not left waiting.
+                    if self.shownGeneration == self.generation {
+                        done?()
+                    } else if let done {
+                        self.afterLoad.append(done)
+                    }
                     return
                 }
+                self.shownGeneration = current
                 self.apply(snapshot)
                 let waiting = self.afterLoad
                 self.afterLoad = []

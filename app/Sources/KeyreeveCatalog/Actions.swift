@@ -85,13 +85,16 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let actions: [CustomAction]?
     /// How this provider's keys start, from its recipe.
     public let prefixes: [String]?
+    /// For a provider each person runs, the servers you approved. Nil from an engine that does not say.
+    public let approved_hosts: [String]?
 
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
         approved: Bool = true, can_check: Bool = true, can_identify: Bool = false, can_rotate: Bool = false,
         can_rotate_by_hand: Bool = false, single_rotation: Bool = false, tested: Tested = Tested(), env_var: String? = nil,
         self_hosted: Bool = false,
-        problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil, prefixes: [String]? = nil
+        problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil, prefixes: [String]? = nil,
+        approved_hosts: [String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -111,6 +114,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         self.programs = programs
         self.actions = actions
         self.prefixes = prefixes
+        self.approved_hosts = approved_hosts
     }
 
     public var needsApproval: Bool { source == "local" && !approved && problem == nil }
@@ -171,7 +175,22 @@ public struct ProviderDirectory: Sendable {
         item.host.isEmpty && item.recipes.contains { id in all.contains { $0.id == id && $0.self_hosted } }
     }
 
-    public func canCheck(_ item: CatalogItem) -> Bool { item.canCheck && !needsHost(item) }
+    /// A server this key is set to that you have not approved, as an agent's suggestion leaves it. A check
+    /// would be refused, so the app offers to approve it, and only a person's click does. Nil when the
+    /// engine does not say which servers are approved.
+    public func unapprovedHost(of item: CatalogItem) -> (provider: String, host: String)? {
+        guard !item.host.isEmpty else { return nil }
+        for id in item.recipes {
+            guard let info = all.first(where: { $0.id == id && $0.self_hosted }) else { continue }
+            guard let approved = info.approved_hosts else { return nil }
+            return approved.contains(item.host) ? nil : (id, item.host)
+        }
+        return nil
+    }
+
+    public func canCheck(_ item: CatalogItem) -> Bool {
+        item.canCheck && !needsHost(item) && unapprovedHost(of: item) == nil
+    }
 
     /// The provider a key with none probably belongs to: what its prefix proved first, then what your
     /// tags say, if they name just one. It is only an offer, since a wrong one would send the key to

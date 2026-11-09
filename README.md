@@ -226,7 +226,9 @@ A secret with no provider, such as a signing key, is marked as internal, and no 
 products go the same way: a file of yours, in that folder, never in a repository.
 
 These recipes have been shown to reject a fake key at the real address. A file's `tested` line says when it was last tried with a
-real key, and a pass with a real key is what proves a recipe. `self_hosted` recipes need your server first.
+real key, and a pass with a real key is what proves a recipe. `self_hosted` recipes need your server first. Typing it in
+the app approves it. A server an agent suggested is saved but not approved: the key's page says so, and its button approves
+the server, after you confirm, and checks the key there.
 
 ## The vault (Mac)
 

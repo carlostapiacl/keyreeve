@@ -14,6 +14,7 @@ struct KeyDetail: View {
     @State private var name = ""
     @State private var note = ""
     @State private var confirmArchive = false
+    @State private var confirmHost = false
     @State private var host = ""
     @State private var expires = ""
     @State private var tab: Tab = .summary
@@ -63,6 +64,30 @@ struct KeyDetail: View {
         } message: {
             Text(T("Archiving hides it from your lists. It does not stop it: this key still works."))
         }
+        .confirmationDialog(
+            T("Approve %@?", model.providers.unapprovedHost(of: item)?.host ?? ""), isPresented: $confirmHost,
+            titleVisibility: .visible
+        ) {
+            Button(T("Approve and check")) { model.approveHostAndCheck(item) }
+            Button(T("Cancel"), role: .cancel) {}
+        } message: {
+            Text(T("The key will be sent to %@ to check it, now and every time after. Approve it only if it is your server.",
+                   model.providers.unapprovedHost(of: item)?.host ?? ""))
+        }
+    }
+
+    /// A server that came as a suggestion waits for you: the key goes nowhere until you approve it.
+    @ViewBuilder private var hostWaiting: some View {
+        if let waiting = model.providers.unapprovedHost(of: item) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(T("%@ is not approved yet, so this key is not checked there.", waiting.host), systemImage: "server.rack")
+                    .font(Theme.body).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(T("Approve %@ and check", waiting.host)) { confirmHost = true }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .disabled(model.busy)
+            }
+        }
     }
 
     // MARK: Tabs
@@ -72,6 +97,7 @@ struct KeyDetail: View {
             Text(item.description).font(Theme.body).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
         }
         if item.needsField { fieldChoice }
+        hostWaiting
         if item.holdsSeveralKeys {
             VStack(alignment: .leading, spacing: 8) {
                 Text(T("Several keys of this provider share this file, so keyreeve cannot tell which to check."))

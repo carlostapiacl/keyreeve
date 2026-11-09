@@ -351,6 +351,9 @@ pub struct Entry {
     pub actions: Vec<CustomAction>,
     /// How this provider's keys start, so a pasted key can be recognised.
     pub prefixes: Vec<String>,
+    /// The servers you approved, for a provider each person runs, so the app can tell a server that
+    /// was only suggested from one you approved.
+    pub approved_hosts: Vec<String>,
 }
 
 impl Entry {
@@ -375,6 +378,11 @@ impl Entry {
             programs: runs_of(recipe),
             actions: recipe.actions.clone(),
             prefixes: recipe.prefixes.clone(),
+            approved_hosts: if recipe.self_hosted {
+                approved_hosts().remove(id).unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -478,6 +486,7 @@ pub fn list() -> Vec<Entry> {
                 programs: Vec::new(),
                 actions: Vec::new(),
                 prefixes: Vec::new(),
+                approved_hosts: Vec::new(),
             }),
         }
     }
@@ -621,6 +630,19 @@ mod tests {
             assert!(approve_host("coolify", "https://x.example.com").is_err());
             assert!(approve_host("coolify", "x.example.com/path").is_err());
             approve_host("coolify", "panel.example.com:8443").unwrap();
+        });
+    }
+
+    #[test]
+    fn the_list_says_which_servers_you_approved() {
+        with_home("hosts-list", |_| {
+            approve_host("coolify", "panel.example.com").unwrap();
+            let entries = list();
+            let coolify = entries.iter().find(|e| e.id == "coolify").unwrap();
+            assert_eq!(coolify.approved_hosts, vec!["panel.example.com".to_owned()]);
+            let github = entries.iter().find(|e| e.id == "github").unwrap();
+            assert!(github.approved_hosts.is_empty());
+            assert!(list_json().contains("\"approved_hosts\":[\"panel.example.com\"]"));
         });
     }
 

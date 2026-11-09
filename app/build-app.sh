@@ -17,6 +17,15 @@ if pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
     RUNNING=yes
     osascript -e 'tell application id "io.github.carlostapiacl.keyreeve" to quit' >/dev/null 2>&1 || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1 || break; sleep 1; done
+    # Asking to quit needs this terminal to be allowed to control Keyreeve, and is refused quietly when it is not.
+    if pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
+        pkill -TERM -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1 || break; sleep 1; done
+    fi
+    if pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
+        echo "Keyreeve is still running and did not quit. Quit it from the menu bar and run this again." >&2
+        exit 1
+    fi
 fi
 rm -f "$APP/Contents/MacOS/Keyreeve" "$APP/Contents/MacOS/keyreeve-cli" "$APP/Contents/MacOS/keyreeve-vault"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -56,7 +65,17 @@ if [ -d "$INSTALLED" ]; then
     ditto "$APP" "$INSTALLED.new" && rm -rf "$INSTALLED.old" && mv "$INSTALLED" "$INSTALLED.old" && mv "$INSTALLED.new" "$INSTALLED" && rm -rf "$INSTALLED.old"
     echo "Updated $INSTALLED"
 fi
+if [ -d "$INSTALLED" ]; then
+    # The build has the same bundle id as the installed copy, so Spotlight and Launchpad would show two Keyreeves
+    # and opening one by its id could start the build. Only the installed copy stays known to the Mac.
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$APP" >/dev/null 2>&1 || true
+fi
 if [ -n "$RUNNING" ]; then
     if [ -d "$INSTALLED" ]; then open "$INSTALLED"; else open "$APP"; fi
-    echo "Keyreeve was open, so it was opened again with this build"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1 && break; sleep 1; done
+    if pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
+        echo "Keyreeve was open, so it was opened again with this build"
+    else
+        echo "Keyreeve was open and did not start again: open it from Applications." >&2
+    fi
 fi

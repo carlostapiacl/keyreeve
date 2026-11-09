@@ -56,8 +56,14 @@ public enum CheckRunner {
         defer { try? FileManager.default.removeItem(at: planFile) }
         var arguments = ["identify", "--plan", planFile.path, "--keys", keysFolder.path, "--details", files.details.path]
         if !sealed.isEmpty { arguments.append("--sealed-stdin") }
-        let code = try execute(binary, arguments, stdin: try payload(sealed))
-        guard code == 0 else { throw CheckError(T("The check could not start")) }
+        let process = try launch(binary, arguments, stdin: try payload(sealed))
+        guard process.terminationStatus == 0 else {
+            // What the command printed is left out, since it is not this app's to show. Only how it ended is said.
+            throw CheckError(
+                process.terminationReason == .uncaughtSignal
+                    ? T("Identifying took too long and was stopped")
+                    : T("The identify command ended with code %d", Int(process.terminationStatus)))
+        }
     }
 
     /// Ends a command that runs past its time, so nothing in the app waits on it for good. A rotation
@@ -392,6 +398,11 @@ public enum CheckRunner {
     }
 
     private static func execute(_ binary: URL, _ arguments: [String], stdin: Data? = nil) throws -> Int32 {
+        try launch(binary, arguments, stdin: stdin).terminationStatus
+    }
+
+    /// Runs a command to its end, its output dropped, and returns it so the caller can see how it ended.
+    private static func launch(_ binary: URL, _ arguments: [String], stdin: Data? = nil) throws -> Process {
         let process = Process()
         process.executableURL = binary
         process.arguments = arguments
@@ -403,6 +414,6 @@ public enum CheckRunner {
         watch(process, seconds: 20 * 60)
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }
         process.waitUntilExit()
-        return process.terminationStatus
+        return process
     }
 }

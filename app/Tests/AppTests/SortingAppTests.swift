@@ -121,4 +121,20 @@ struct WhenIdleTests {
         #expect(!ran && skipped)
         #expect(model.message?.isEmpty == false)
     }
+
+    /// A step after an edit reads the list as the edit left it: a reload still on its way counts as busy, so a
+    /// check made after applying a proposal never runs with the fields from before.
+    @Test func aStepWaitsForTheListBeingReadAgain() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("idle-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(files: KeyreeveFiles(directory: root), binary: nil)
+        model.unlocked = true
+        model.items = [CatalogItem(path: "stale.env")]
+        model.load()
+        var seen: [String]?
+        model.whenIdle { seen = model.items.map(\.path) }
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(seen == [])
+    }
 }

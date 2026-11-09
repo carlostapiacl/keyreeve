@@ -95,6 +95,11 @@ public final class AppModel: ObservableObject {
     private var rebuilding: Task<Void, Never>?
     /// True while the list is being rebuilt from the folder, so work that reads it waits.
     var rebuildingNow = false
+    /// Reads of the private files not yet shown. A rebuild ends with one, so work that reads the list waits for
+    /// it too, or it would run with the list from before an edit.
+    var loadsInFlight = 0
+    /// Something is still changing what the list says: work that reads it waits.
+    var settling: Bool { busy || rebuildingNow || loadsInFlight > 0 }
 
     public init(files: KeyreeveFiles = KeyreeveFiles(), binary: URL? = Bundle.main.url(forAuxiliaryExecutable: "keyreeve-cli")) {
         self.files = files
@@ -212,9 +217,11 @@ public final class AppModel: ObservableObject {
         generation += 1
         let current = generation
         let source = Snapshot.Source(files: files, store: vaultStore, binary: binary, keysFolder: keysFolder)
+        loadsInFlight += 1
         Task.detached {
             let snapshot = Snapshot(reading: source)
             await MainActor.run {
+                self.loadsInFlight -= 1
                 guard current == self.generation else { return }
                 self.apply(snapshot)
                 done?()

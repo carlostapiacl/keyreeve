@@ -25,7 +25,7 @@
 <p class="lede">keyreeve seals your API keys on your own Mac, checks with each provider that they still work, and lets an agent run a command with a key it never holds. It is free and open source.</p>
 
 <figure class="shot wide">
-<img src="img/keys.png" width="1600" height="1000" alt="The keyreeve window: a list of keys with their provider, level and last check. Every key in it is a made-up example.">
+<img src="img/keys.png" width="1600" height="927" alt="The keyreeve window: a list of keys, each with a short description, how bad a leak would be and its last check. Every key in it is a made-up example.">
 <figcaption>My keys. Every name and value in these pictures is made up.</figcaption>
 </figure>
 
@@ -123,7 +123,7 @@
 </figure>
 
 <figure class="shot">
-<img src="img/key-usage.png" width="1600" height="1000" alt="A key's page on the Usage tab, with the box Offered to agents checked and the level set to Ask.">
+<img src="img/key-usage.png" width="1600" height="927" alt="A key's page on the Usage tab, with the box Offered to agents checked and the level Ask for claude.">
 <figcaption>A key's page, Usage tab: offered to agents, at the level Ask.</figcaption>
 </figure>
 
@@ -157,14 +157,14 @@
 </figure>
 
 <figure class="shot">
-<img src="img/agents.png" width="1600" height="1000" alt="The Agents section: whether Claude Code is connected, and each offered key with its level and the agents it is open to.">
+<img src="img/agents.png" width="1600" height="927" alt="The Agents section: whether Claude Code is connected, and each offered key with its level and the agents it is open to.">
 <figcaption>Agents: what each agent may use, and how.</figcaption>
 </figure>
 
 <p>Agents connect over <a href="https://modelcontextprotocol.io">MCP</a> with <code>keyreeve-vault mcp</code>. They get <code>list_keys</code>, <code>use_key</code>, <code>request_access</code>, <code>run_with_key</code> and <code>rotate_key</code>, and while you allow it, <code>inventory</code> and <code>propose</code> to help sort a folder of loose keys. None of them returns a value.</p>
 
 <figure class="shot">
-<img src="img/vault.png" width="1600" height="1000" alt="Security and backup: the vault, the sealed keys and the backup.">
+<img src="img/vault.png" width="1600" height="927" alt="Security and backup: the vault, the sealed keys and the backup.">
 <figcaption>Security and backup. Each sealed key is a standard <a href="https://age-encryption.org">age</a> file, so you can open it without keyreeve.</figcaption>
 </figure>
 

@@ -124,6 +124,45 @@ pub struct Identify {
     pub format: Option<String>,
     /// What to keep from the answer. Nothing else in it is stored.
     pub fields: BTreeMap<String, String>,
+    /// More read-only requests, tried in order after the first. Each adds only fields not read
+    /// yet, a path may name a field read before as `{name}`, and one that fails is skipped.
+    #[serde(default)]
+    pub also: Vec<Lookup>,
+}
+
+/// A further request of `identify`, such as one that says when the key expires.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lookup {
+    pub request: Step,
+    pub fields: BTreeMap<String, String>,
+}
+
+/// At most this many further requests, so identifying a key stays a handful of calls.
+pub const MAX_LOOKUPS: usize = 3;
+
+impl Identify {
+    /// Every field this can keep, from the first request and the further ones.
+    pub fn field_names(&self) -> impl Iterator<Item = &str> {
+        self.fields
+            .keys()
+            .chain(self.also.iter().flat_map(|lookup| lookup.fields.keys()))
+            .map(String::as_str)
+    }
+}
+
+/// The names a path asks for as `{name}`.
+pub fn placeholders(path: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    let mut rest = path;
+    while let Some(start) = rest.find('{') {
+        let Some(end) = rest[start..].find('}') else {
+            break;
+        };
+        found.push(&rest[start + 1..start + end]);
+        rest = &rest[start + end + 1..];
+    }
+    found
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -359,12 +398,38 @@ impl Recipe {
             if identify.fields.is_empty() {
                 return fail("identify needs at least one field".into());
             }
+            if identify.also.len() > MAX_LOOKUPS {
+                return fail(format!(
+                    "identify takes up to {MAX_LOOKUPS} further requests"
+                ));
+            }
+            if !identify.also.is_empty() && identify.format.as_deref() == Some("xml") {
+                return fail("identify.also needs a json answer".into());
+            }
+            let mut known: Vec<&str> = identify.fields.keys().map(String::as_str).collect();
+            for (n, lookup) in identify.also.iter().enumerate() {
+                let mut available = known.clone();
+                if url_key {
+                    available.push("key");
+                }
+                let name = format!("identify.also.{n}");
+                self.validate_step(&name, &lookup.request, &["GET"], &available, false)?;
+                if lookup.fields.is_empty() {
+                    return fail(format!("{name} needs at least one field"));
+                }
+                if let Some(path) = lookup.fields.values().find(|path| {
+                    path.starts_with("token:") || path == &"reply:" || !valid_identify_source(path)
+                }) {
+                    return fail(format!("{name}: field {path:?} must look like $.a.b"));
+                }
+                known.extend(lookup.fields.keys().map(String::as_str));
+            }
         }
         if let Some(template) = &self.suggested_name {
             let available: Vec<&str> = self
                 .identify
                 .iter()
-                .flat_map(|identify| identify.fields.keys().map(String::as_str))
+                .flat_map(|identify| identify.field_names())
                 .collect();
             check_placeholders(template, &available).map_err(RecipeError)?;
         }
@@ -960,6 +1025,32 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
         assert_eq!(good.display_name(), "X");
         assert!(Recipe::parse(&base.replace("{ header: A }", "{ type: magic }")).is_err());
         assert!(Recipe::parse(&base.replace("{ header: A }", "{ type: aws_sigv4 }")).is_err());
+    }
+
+    #[test]
+    fn further_identify_requests_are_checked() {
+        let base = "schema: 1\nprovider: x\nhosts: [api.x.com]\nauth: { header: A }\nverify: { method: GET, path: /me }\nidentify:\n  request: { method: GET, path: /me }\n  fields: { id: $.id }\n  also:\n";
+        let with = |also: &str| Recipe::parse(&format!("{base}{also}"));
+        let good = with("    - request: { method: GET, path: \"/a/{id}/t\" }\n      fields: { expires: $.r.e }\nsuggested_name: \"X {expires}\"\n");
+        assert!(good.is_ok(), "{good:?}");
+        // Only a GET, only a field read before, only a json path, and only a few.
+        assert!(
+            with("    - request: { method: POST, path: /t }\n      fields: { e: $.e }\n").is_err()
+        );
+        assert!(with(
+            "    - request: { method: GET, path: \"/a/{nope}\" }\n      fields: { e: $.e }\n"
+        )
+        .is_err());
+        assert!(with(
+            "    - request: { method: GET, path: /t }\n      fields: { e: \"token:x\" }\n"
+        )
+        .is_err());
+        assert!(with("    - request: { method: GET, path: /t }\n      fields: {}\n").is_err());
+        let four = "    - request: { method: GET, path: /t }\n      fields: { e: $.e }\n".repeat(4);
+        assert!(with(&four).unwrap_err().0.contains("up to 3"));
+        // A field read by an earlier further request is there for a later one.
+        let chained = "    - request: { method: GET, path: /t }\n      fields: { org: $.o }\n    - request: { method: GET, path: \"/o/{org}\" }\n      fields: { e: $.e }\n";
+        assert!(with(chained).is_ok());
     }
 
     #[test]

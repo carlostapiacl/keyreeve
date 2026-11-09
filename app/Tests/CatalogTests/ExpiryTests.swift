@@ -24,6 +24,14 @@ struct ExpiryTests {
         #expect(CatalogItem(path: "x", details: KeyDetails(provider: "p", fields: ["expires": "never"])).expiryDay == nil)
     }
 
+    @Test func aCloudflareTokenIsFlaggedFromTheDayItsProviderGave() {
+        let ending = CatalogItem(path: "cf", details: KeyDetails(provider: "cloudflare", fields: ["expires": "2026-11-18T00:00:00Z", "token_status": "active"]))
+        #expect(ending.expiryDay == "2026-11-18")
+        #expect(ending.attentionRanked(at: now)?.text == T("Expires in %d days", 10))
+        let forever = CatalogItem(path: "cf", details: KeyDetails(provider: "cloudflare", fields: ["token_status": "active"]))
+        #expect(forever.expiryDay == nil && forever.attentionRanked(at: now) == nil)
+    }
+
     @Test func theCatalogCarriesTheDayAndAFilterShowsThoseEndingSoon() throws {
         let text = "path,level,tags,format,modified,mode,reviewed,expires\na,ask,,text,2026-01-01,600,true,2026-11-20\nb,ask,,text,2026-01-01,600,true,\n"
         let items = try CatalogParser.parse(text)

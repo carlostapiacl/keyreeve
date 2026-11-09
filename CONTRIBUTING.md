@@ -24,7 +24,11 @@ To rotate too, copy `examples/recipe.yaml` to `recipes/<provider>.yaml`.
 | `revoke` | optional, goes with `create`. Revokes a key by `{id}`. A 404 counts as already revoked |
 
 `identify` takes a `request`, `fields` to keep, and `format: xml` when the answer is not JSON. Nothing else in the answer is
-stored, so declare only what helps a person recognize the account. Each step takes `method`, `path` and, when needed, `host`, `body` and `expect` (a 2xx status).
+stored, so declare only what helps a person recognize the account. A field named `expires`, a day or a time that starts
+with `yyyy-mm-dd`, is the day the key stops working: the app flags it two weeks before. When the provider says that in
+another request, add it under `identify.also`, a list of up to three more GET requests with their own `fields`. They run
+in order, each adds only fields not read yet, a path can use a field read before as `{name}`, and one that fails is
+skipped. See `recipes/cloudflare.yaml`. Each step takes `method`, `path` and, when needed, `host`, `body` and `expect` (a 2xx status).
 
 `{key_name}` is available in `create`, and `{id}` in `verify` and `revoke`. Paths look like `$.a.b`
 or `$.data.0.id`.

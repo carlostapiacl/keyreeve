@@ -442,6 +442,17 @@ struct KeyDetail: View {
                         .buttonStyle(KRButtonStyle())
                         .padding(.top, 4)
                     }
+                    // What a provider said can change, such as the day a key stops working: it can be asked again.
+                    if model.providers.canIdentify(item) {
+                        Button {
+                            model.identify([item])
+                        } label: {
+                            Label(T("Identify again"), systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(KRButtonStyle())
+                        .disabled(model.busy)
+                        .padding(.top, 4)
+                    }
                 }
             }
         } else if model.providers.canIdentify(item) {

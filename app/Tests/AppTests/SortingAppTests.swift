@@ -138,3 +138,36 @@ struct WhenIdleTests {
         #expect(seen == [])
     }
 }
+
+/// Identifying never ends in silence, and checking many keys also asks whose they are.
+@MainActor
+struct IdentifyTests {
+    @Test func identifyingSaysWhyWhenItCannotStart() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("identify-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(files: KeyreeveFiles(directory: root), binary: URL(fileURLWithPath: "/usr/bin/true"))
+        try model.files.saveKeysFolder(root.appendingPathComponent("keys"))
+        model.message = nil
+        model.identify([CatalogItem(path: "a.txt", level: "ask", recipes: ["nobody"])])
+        #expect(model.message == T("None of these keys can be identified: their provider cannot say whose they are, or they cannot be checked from here"))
+        model.message = nil
+        model.busy = true
+        model.identify([CatalogItem(path: "a.txt", level: "ask", recipes: ["nobody"])])
+        #expect(model.message == T("Keyreeve is busy. Try again when it finishes."))
+        let bare = AppModel(files: KeyreeveFiles(directory: root), binary: nil)
+        bare.identify([])
+        #expect(bare.message == T("This app was built without its command"))
+    }
+
+    @Test func checkingSeveralKeysAlsoAsksWhoseTheyAre() {
+        let providers = ProviderDirectory([
+            ProviderInfo(id: "cloudflare", name: "Cloudflare", can_identify: true),
+            ProviderInfo(id: "pexels", name: "Pexels"),
+        ])
+        let cf = CatalogItem(path: "cf.txt", level: "ask", recipes: ["cloudflare"])
+        let px = CatalogItem(path: "px.txt", level: "ask", recipes: ["pexels"])
+        #expect(AppModel.alsoIdentify([cf, px], providers: providers).map(\.path) == ["cf.txt"])
+        #expect(AppModel.alsoIdentify([cf], providers: providers).isEmpty)
+    }
+}

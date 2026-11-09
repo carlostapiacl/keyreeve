@@ -88,13 +88,22 @@ extension AppModel {
                     try CheckRunner.run(list, binary: binary, keysFolder: folder, files: files, sealed: sealed) { finished, total in
                         Task { @MainActor in self.progress = (finished, total) }
                     }
-                    // Checking many keys at once also asks their providers whose they are, with the copies already
-                    // opened: that is how a key's account and the day it stops working stay current.
-                    if !alsoIdentify.isEmpty {
+                }
+                // Checking many keys at once also asks their providers whose they are, with the copies already
+                // opened: that is how a key's account and the day it stops working stay current. It runs even when
+                // the list could not be rebuilt after the check, and how it went is said apart.
+                var identified: Result<Void, Error>?
+                if !alsoIdentify.isEmpty {
+                    await MainActor.run {
+                        self.progress = nil
+                        self.message = T("Identifying…")
+                    }
+                    identified = Result {
                         try CheckRunner.identify(
                             alsoIdentify, providers: providers, binary: binary, keysFolder: folder, files: files, sealed: sealed)
                     }
                 }
+                let identifiedNote = identified.map { Self.identifyNote($0, count: alsoIdentify.count) }
                 await MainActor.run {
                     self.busy = false
                     self.progress = nil
@@ -104,14 +113,25 @@ extension AppModel {
                             let paths = Set(list.map(\.path))
                             let summary = RunSummary(items: self.items, checked: paths)
                             if list.count > 1 { self.lastRun = summary }
-                            self.message = T("%d checked: %d work", list.count, summary.works)
+                            self.message = [T("%d checked: %d work", list.count, summary.works), identifiedNote]
+                                .compactMap { $0 }.joined(separator: ". ")
                             done?()
                         case .failure(let error):
-                            self.message = (error as? CheckError)?.description ?? T("The check did not finish")
+                            self.message = [(error as? CheckError)?.description ?? T("The check did not finish"), identifiedNote]
+                                .compactMap { $0 }.joined(separator: ". ")
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// How the identifying after a check went, in words for the message.
+    nonisolated static func identifyNote(_ result: Result<Void, Error>, count: Int) -> String {
+        switch result {
+        case .success: return T("%d identified with their providers", count)
+        case .failure(let error):
+            return T("Identifying did not finish: %@", (error as? CheckError)?.description ?? error.localizedDescription)
         }
     }
 

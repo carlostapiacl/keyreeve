@@ -142,6 +142,73 @@ struct WhenIdleTests {
 /// Identifying never ends in silence, and checking many keys also asks whose they are.
 @MainActor
 struct IdentifyTests {
+    /// Checking several keys runs the command to identify them too, after the check, with the same plan's keys.
+    @Test func checkingSeveralKeysRunsTheIdentifyCommand() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("identify-run-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let binary = root.appendingPathComponent("stand-in.sh")
+        try """
+            #!/bin/sh
+            printf '%s\\n' "$1" >> '\(root.path)/calls'
+            cat > /dev/null
+            exit 0
+            """.write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: binary.path)
+        let files = KeyreeveFiles(directory: root)
+        try files.saveKeysFolder(root.appendingPathComponent("keys"))
+        try "{}".write(to: files.inventory, atomically: true, encoding: .utf8)
+        let model = AppModel(files: files, binary: binary)
+        model.unlocked = true
+        model.providers = ProviderDirectory([ProviderInfo(id: "cloudflare", name: "Cloudflare", can_identify: true)])
+        let keys = [
+            CatalogItem(path: "a.txt", level: "free", recipes: ["cloudflare"]),
+            CatalogItem(path: "b.txt", level: "free", recipes: ["cloudflare"]),
+        ]
+        model.check(keys)
+        for _ in 0..<50 where !((try? String(contentsOf: root.appendingPathComponent("calls"), encoding: .utf8)) ?? "").contains("identify") {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let calls = (try? String(contentsOf: root.appendingPathComponent("calls"), encoding: .utf8)) ?? ""
+        #expect(calls.contains("verify"))
+        #expect(calls.contains("identify"), "calls: \(calls) message: \(model.message ?? "-")")
+    }
+
+    /// When the list cannot be rebuilt after a check, identifying still runs, and when identifying fails the
+    /// message says so apart from the check, instead of one word for both.
+    @Test func identifyingRunsAndIsReportedApartFromTheCheck() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("identify-apart-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let binary = root.appendingPathComponent("stand-in.sh")
+        // The list cannot be rebuilt, and identify ends with code 2.
+        try """
+            #!/bin/sh
+            printf '%s\\n' "$1" >> '\(root.path)/calls'
+            cat > /dev/null
+            case "$1" in catalog) exit 3 ;; identify) exit 2 ;; esac
+            exit 0
+            """.write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: binary.path)
+        let files = KeyreeveFiles(directory: root)
+        try files.saveKeysFolder(root.appendingPathComponent("keys"))
+        try "{}".write(to: files.inventory, atomically: true, encoding: .utf8)
+        let model = AppModel(files: files, binary: binary)
+        model.unlocked = true
+        model.providers = ProviderDirectory([ProviderInfo(id: "cloudflare", name: "Cloudflare", can_identify: true)])
+        model.check([
+            CatalogItem(path: "a.txt", level: "free", recipes: ["cloudflare"]),
+            CatalogItem(path: "b.txt", level: "free", recipes: ["cloudflare"]),
+        ])
+        for _ in 0..<50 where model.message?.contains(T("Identifying did not finish: %@", "")) != true {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let calls = (try? String(contentsOf: root.appendingPathComponent("calls"), encoding: .utf8)) ?? ""
+        #expect(calls.contains("identify"), "calls: \(calls)")
+        #expect(model.message?.contains(T("The list could not be updated")) == true, "\(model.message ?? "-")")
+        #expect(model.message?.contains(T("The identify command ended with code %d", 2)) == true, "\(model.message ?? "-")")
+    }
+
     @Test func identifyingSaysWhyWhenItCannotStart() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("identify-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -103,6 +103,7 @@ func askPassphrase(for name: String) -> Never {
         "-e", "end run", text,
     ]
     dialog.standardError = FileHandle.nullDevice
+    dialog.standardInput = FileHandle.nullDevice
     do { try dialog.run() } catch { exit(1) }
     dialog.waitUntilExit()
     exit(dialog.terminationStatus)

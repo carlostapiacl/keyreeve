@@ -38,6 +38,7 @@ public final class SystemSSHAgents: SSHKeyAgents, @unchecked Sendable {
         sweep.arguments = ["-f", "^/usr/bin/ssh-agent -D -a \(NSRegularExpression.escapedPattern(for: folder.path))/a-"]
         sweep.standardOutput = FileHandle.nullDevice
         sweep.standardError = FileHandle.nullDevice
+        sweep.standardInput = FileHandle.nullDevice
         try? sweep.run()
         sweep.waitUntilExit()
         let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []

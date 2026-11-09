@@ -96,7 +96,7 @@ struct SortSheet: View {
                 }
                 .buttonStyle(KRButtonStyle()).keyboardShortcut(.cancelAction)
                 Button(T("Apply %d", chosen.count)) {
-                    model.apply(suggestions.filter { chosen.contains($0.path) })
+                    model.apply(suggestions.filter { chosen.contains($0.path) }, fillingOnly: true)
                     dismiss()
                 }
                 .buttonStyle(KRButtonStyle(primary: true))

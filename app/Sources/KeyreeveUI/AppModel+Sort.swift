@@ -13,13 +13,15 @@ extension AppModel {
         return items.filter { $0.recipes.isEmpty && !$0.isArchived && !$0.isInternal && !$0.isUntestable && $0.isSecret && !proposed.contains($0.path) }
     }
 
-    /// Saves the chosen suggestions in one write, then rebuilds the list once.
-    public func apply(_ suggestions: [Suggestion]) {
+    /// Saves the chosen suggestions in one write, then rebuilds the list once. `fillingOnly` is for suggestions
+    /// the person did not write, an assistant's or keyreeve's own: they only fill what a key lacks.
+    public func apply(_ suggestions: [Suggestion], fillingOnly: Bool = false) {
         let byPath = Dictionary(items.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         var edits: [String: KeyEdit] = [:]
         for suggestion in suggestions {
             guard let item = byPath[suggestion.path] else { continue }
-            edits[suggestion.path] = suggestion.edit(for: item)
+            let edit = suggestion.edit(for: item, fillingOnly: fillingOnly)
+            if edit != KeyEdit() { edits[suggestion.path] = edit }
         }
         guard !edits.isEmpty else { return }
         do {
@@ -64,6 +66,11 @@ extension AppModel {
             return nil
         }
         let source = folder.appendingPathComponent(item.path)
+        // Splitting writes one file per key from the file itself; a key kept only in the vault has none here.
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            message = T("%@ is not in the keys folder, so it cannot be split", item.path)
+            return nil
+        }
         guard let size = (try? FileManager.default.attributesOfItem(atPath: source.path))?[.size] as? Int, size < 1_048_576,
             let text = try? String(contentsOf: source, encoding: .utf8)
         else {

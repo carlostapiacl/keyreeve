@@ -108,6 +108,7 @@ public enum CheckRunner {
             process.arguments = [command, file.path]
             process.standardOutput = output
             process.standardError = output
+            process.standardInput = FileHandle.nullDevice
             try process.run()
             watch(process, seconds: 60)
             let said = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -127,6 +128,7 @@ public enum CheckRunner {
         process.arguments = ["recipes", "show", id]
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return nil }
         watch(process, seconds: 30)
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -182,6 +184,7 @@ public enum CheckRunner {
         process.arguments = ["recipes", "--json"]
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return ProviderDirectory() }
         watch(process, seconds: 30)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -301,6 +304,7 @@ public enum CheckRunner {
         process.arguments = ["rotations", "--journal", files.rotations.path]
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return [] }
         watch(process, seconds: 30)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -330,7 +334,9 @@ public enum CheckRunner {
         process.standardError = FileHandle.nullDevice
         let input = sealed.map { Data($0.utf8) }
         let inputPipe = input.map { _ in privatePipe() }
-        if let inputPipe { process.standardInput = inputPipe }
+        // With nothing to send, the program reads an empty input, never the app's own: one that waits on it would
+        // otherwise hang until the app quits.
+        process.standardInput = inputPipe.map { $0 as Any } ?? FileHandle.nullDevice
         try process.run()
         watch(process, seconds: 20 * 60)
         if let input, let inputPipe { send(input, to: inputPipe) }
@@ -375,7 +381,9 @@ public enum CheckRunner {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         let inputPipe = stdin.map { _ in privatePipe() }
-        if let inputPipe { process.standardInput = inputPipe }
+        // With nothing to send, the program reads an empty input, never the app's own: one that waits on it would
+        // otherwise hang until the app quits.
+        process.standardInput = inputPipe.map { $0 as Any } ?? FileHandle.nullDevice
         try process.run()
         watch(process, seconds: 20 * 60)
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }
@@ -409,7 +417,9 @@ public enum CheckRunner {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         let inputPipe = stdin.map { _ in privatePipe() }
-        if let inputPipe { process.standardInput = inputPipe }
+        // With nothing to send, the program reads an empty input, never the app's own: one that waits on it would
+        // otherwise hang until the app quits.
+        process.standardInput = inputPipe.map { $0 as Any } ?? FileHandle.nullDevice
         try process.run()
         watch(process, seconds: 20 * 60)
         if let stdin, let inputPipe { send(stdin, to: inputPipe) }

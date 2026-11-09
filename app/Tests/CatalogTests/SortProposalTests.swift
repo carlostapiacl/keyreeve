@@ -43,3 +43,50 @@ struct SortProposalTests {
     }
 }
 
+
+/// What a key already has stays: an empty field never takes away a field, and an assistant only fills gaps.
+struct KeepWhatAKeyHasTests {
+    let combined = "client_id+client_secret+refresh_token"
+    var gsc: CatalogItem {
+        CatalogItem(
+            path: "gsc-token.json", level: "ask", tags: ["provider:google"], recipes: ["google"], field: combined,
+            labels: ["client_id", "client_secret", "refresh_token", "token"], description: "Search Console")
+    }
+
+    @Test func anEmptyFieldNeverTakesAwayTheFieldAKeyHas() {
+        let base = KeyEdit(recipes: ["google"], field: combined)
+        #expect(KeyEdit.merging(KeyEdit(field: ""), into: base).field == combined)
+        #expect(KeyEdit.merging(KeyEdit(field: "token"), into: base).field == "token")
+        #expect(gsc.applying(KeyEdit(field: "")).field == combined)
+    }
+
+    @Test func anApprovedProposalWithAFieldInPartsSetsIt() {
+        let bare = CatalogItem(path: "gsc-token.json", recipes: ["google"], labels: ["client_id", "client_secret", "refresh_token", "token"])
+        let providers = ProviderDirectory([ProviderInfo(id: "google", name: "Google", hosts: ["oauth2.googleapis.com"])])
+        let json = #"[{"path":"gsc-token.json","kind":"provider","provider":"google","field":"client_id+client_secret+refresh_token"}]"#
+        let edit = SortProposal.read(Data(json.utf8), items: [bare], providers: providers).suggestion(for: bare.path)?.edit(for: bare)
+        #expect(edit?.field == combined)
+        // Over an empty field an older edit left behind, the proposal's field is what stays.
+        #expect(KeyEdit.merging(edit ?? KeyEdit(), into: KeyEdit(field: "")).field == combined)
+    }
+
+    @Test func anAssistantNeverChangesWhatAKeyAlreadyHas() {
+        let item = gsc
+        for kind: Suggestion.Kind in [
+            .provider("google", field: "refresh_token"), .provider("youtube", field: nil), .untestable, .internalSecret, .notSecret,
+            .described,
+        ] {
+            let edit = Suggestion(path: item.path, kind: kind, why: "assistant", what: "Something else").edit(for: item, fillingOnly: true)
+            #expect(edit == KeyEdit(), "\(kind) changed \(edit)")
+        }
+    }
+
+    @Test func anAssistantFillsOnlyWhatIsMissing() {
+        let bare = CatalogItem(path: "x.env", level: "ask", tags: ["infra"], labels: ["A", "B"])
+        let edit = Suggestion(path: bare.path, kind: .provider("github", field: "A"), why: "assistant", what: "GitHub").edit(for: bare, fillingOnly: true)
+        #expect(edit.recipes == ["github"] && edit.field == "A" && edit.description == "GitHub" && edit.level == nil)
+        let named = CatalogItem(path: "y.env", level: "ask", recipes: ["github"], labels: ["A", "B"])
+        let fieldOnly = Suggestion(path: named.path, kind: .provider("github", field: "B"), why: "assistant").edit(for: named, fillingOnly: true)
+        #expect(fieldOnly == KeyEdit(field: "B"))
+    }
+}

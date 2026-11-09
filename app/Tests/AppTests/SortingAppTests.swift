@@ -196,13 +196,16 @@ struct IdentifyTests {
         let model = AppModel(files: files, binary: binary)
         model.unlocked = true
         model.providers = ProviderDirectory([ProviderInfo(id: "cloudflare", name: "Cloudflare", can_identify: true)])
+        // Waits for the check to say it is done, not for a time: the message is final by then.
+        final class Finished { var yes = false }
+        let finished = Finished()
         model.check([
             CatalogItem(path: "a.txt", level: "free", recipes: ["cloudflare"]),
             CatalogItem(path: "b.txt", level: "free", recipes: ["cloudflare"]),
-        ])
-        for _ in 0..<50 where model.message?.contains(T("Identifying did not finish: %@", "")) != true {
-            try await Task.sleep(for: .milliseconds(100))
-        }
+        ]) { finished.yes = true }
+        let limit = Date().addingTimeInterval(120)
+        while !finished.yes && Date() < limit { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(finished.yes, "the check never said it was done")
         let calls = (try? String(contentsOf: root.appendingPathComponent("calls"), encoding: .utf8)) ?? ""
         #expect(calls.contains("identify"), "calls: \(calls)")
         #expect(model.message?.contains(T("The list could not be updated")) == true, "\(model.message ?? "-")")
@@ -236,5 +239,62 @@ struct IdentifyTests {
         let px = CatalogItem(path: "px.txt", level: "ask", recipes: ["pexels"])
         #expect(AppModel.alsoIdentify([cf, px], providers: providers).map(\.path) == ["cf.txt"])
         #expect(AppModel.alsoIdentify([cf], providers: providers).isEmpty)
+    }
+}
+
+/// Asking an assistant what keys are leaves what they already have, on disk too, and a split that cannot
+/// happen says why.
+@MainActor
+struct AssistantKeepsTests {
+    @Test func askingWhatAKeyIsLeavesItsFieldAndDescription() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(files: KeyreeveFiles(directory: root), binary: nil)
+        let combined = "client_id+client_secret+refresh_token"
+        try model.files.saveEdits(["gsc-token.json": KeyEdit(recipes: ["google"], field: combined, description: "Search Console")])
+        let before = try Data(contentsOf: model.files.edits)
+        model.items = [
+            CatalogItem(
+                path: "gsc-token.json", recipes: ["google"], field: combined, labels: ["client_id", "client_secret", "refresh_token"],
+                description: "Search Console")
+        ]
+        model.apply(
+            [
+                Suggestion(path: "gsc-token.json", kind: .provider("google", field: "refresh_token"), why: "assistant", what: "Another"),
+                Suggestion(path: "gsc-token.json", kind: .untestable, why: "assistant"),
+            ], fillingOnly: true)
+        #expect(try Data(contentsOf: model.files.edits) == before)
+    }
+
+    @Test func aKeyKeptOnlyInTheVaultSaysWhyItCannotBeSplit() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("split-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("keys"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(files: KeyreeveFiles(directory: root), binary: nil)
+        try model.files.saveKeysFolder(root.appendingPathComponent("keys"))
+        model.providers = ProviderDirectory([ProviderInfo(id: "resend", name: "Resend", prefixes: ["re_"])])
+        let names = model.split(CatalogItem(path: "two.txt", recipes: ["resend"]))
+        #expect(names == nil)
+        #expect(model.message == T("%@ is not in the keys folder, so it cannot be split", "two.txt"))
+    }
+}
+
+/// A reload that a newer one replaces still gets what it was to do once the list is shown.
+@MainActor
+struct LoadKeepsItsWorkTests {
+    @Test func aReplacedLoadsWorkRunsWhenTheNewerOneShowsTheList() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("loads-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(files: KeyreeveFiles(directory: root), binary: nil)
+        model.unlocked = true
+        final class Ran { var first = false, second = false }
+        let ran = Ran()
+        model.load { ran.first = true }
+        model.load { ran.second = true }
+        let limit = Date().addingTimeInterval(30)
+        while !(ran.first && ran.second) && Date() < limit { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(ran.first && ran.second)
     }
 }

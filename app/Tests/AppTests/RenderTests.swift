@@ -87,9 +87,15 @@ struct RenderTests {
     }
 
     @Test func testTheViewsDrawInEachLanguageAndAppearance() throws {
-        defer { UserDefaults.standard.removeObject(forKey: Language.settingsKey) }
+        // Each language only for the drawing, never the setting other tests read at the same time.
         for language in [Language.english, Language.spanish] {
-            UserDefaults.standard.set(language.rawValue, forKey: Language.settingsKey)
+            try Language.$override.withValue(language) {
+                try draw(in: language)
+            }
+        }
+    }
+
+    private func draw(in language: Language) throws {
             let code = language == .spanish ? "es" : "en"
             let model = self.model()
             try render(MainView(model: model), named: "home-\(code)-light", appearance: .aqua)
@@ -178,6 +184,5 @@ struct RenderTests {
                 VStack(alignment: .leading, spacing: 10) { ForEach(Array(runs.entries().enumerated()), id: \.offset) { TerminalRow(run: $0.element) } }
                     .padding(24).frame(width: 700).background(Theme.background),
                 named: "agents-terminal-\(code)", appearance: .darkAqua)
-        }
     }
 }

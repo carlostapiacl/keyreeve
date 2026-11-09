@@ -69,6 +69,7 @@ extension AppModel {
         }
     }
 
+    /// `done` follows once the message says how the check, and the identifying after it, went, whatever the result.
     public func check(_ chosen: [CatalogItem], then done: (@MainActor () -> Void)? = nil) {
         let list = chosen.filter(providers.canCheck)
         guard let (folder, binary) = readyToRun(list, none: T("None of these keys can be checked from here")) else { return }
@@ -115,11 +116,11 @@ extension AppModel {
                             if list.count > 1 { self.lastRun = summary }
                             self.message = [T("%d checked: %d work", list.count, summary.works), identifiedNote]
                                 .compactMap { $0 }.joined(separator: ". ")
-                            done?()
                         case .failure(let error):
                             self.message = [(error as? CheckError)?.description ?? T("The check did not finish"), identifiedNote]
                                 .compactMap { $0 }.joined(separator: ". ")
                         }
+                        done?()
                     }
                 }
             }

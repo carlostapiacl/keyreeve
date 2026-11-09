@@ -6,8 +6,12 @@ public enum Language: String, CaseIterable, Sendable {
 
     public static let settingsKey = "language"
 
+    /// A language for the work inside `Language.$override.withValue`, and only that work: drawing a view in
+    /// one language never changes the language of anything running beside it.
+    @TaskLocal public static var override: Language?
+
     public static var current: Language {
-        Language(rawValue: UserDefaults.standard.string(forKey: settingsKey) ?? "") ?? .system
+        override ?? Language(rawValue: UserDefaults.standard.string(forKey: settingsKey) ?? "") ?? .system
     }
 
     /// The language in effect once "system" is resolved.
@@ -85,6 +89,7 @@ public let spanish: [String: String] = [
     "Choose which field holds the key": "Elige qué campo tiene la clave",
     "This file holds several keys: split it": "Este archivo tiene varias claves: sepáralo",
     "Field saved: %@. Check the key to see if it works.": "Campo guardado: %@. Prueba la clave para ver si funciona.",
+    "%@ is not in the keys folder, so it cannot be split": "%@ no está en la carpeta de claves, así que no se puede separar",
     "Only a provider whose keys have a known start can be split": "Solo se puede separar si las claves del proveedor tienen un inicio conocido",
     "This file holds one key, so there is nothing to split": "Este archivo tiene una sola clave: no hay nada que separar",
     "%d files made. The old one is in %@": "%d archivos creados. El anterior quedó en %@",

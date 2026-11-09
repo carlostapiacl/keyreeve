@@ -268,7 +268,8 @@ public struct KeyEdit: Codable, Equatable, Sendable {
         merged.tags = edit.tags ?? merged.tags
         merged.level = edit.level ?? merged.level
         merged.recipes = edit.recipes ?? merged.recipes
-        merged.field = edit.field ?? merged.field
+        // An empty field says nothing: it never takes away the field a key has, whoever wrote it.
+        merged.field = edit.field.flatMap { $0.isEmpty ? nil : $0 } ?? merged.field
         merged.name = edit.name ?? merged.name
         merged.description = edit.description ?? merged.description
         merged.criticality = edit.criticality ?? merged.criticality
@@ -380,17 +381,7 @@ extension KeyreeveFiles {
 
     public func saveEdit(_ edit: KeyEdit, for path: String) throws {
         try updateJSON(edits, as: [String: KeyEdit].self) { all in
-        var merged = all[path] ?? KeyEdit()
-        merged.tags = edit.tags ?? merged.tags
-        merged.level = edit.level ?? merged.level
-        merged.recipes = edit.recipes ?? merged.recipes
-        merged.field = edit.field ?? merged.field
-        merged.name = edit.name ?? merged.name
-        merged.description = edit.description ?? merged.description
-        merged.criticality = edit.criticality ?? merged.criticality
-        merged.host = edit.host ?? merged.host
-        merged.expires = edit.expires ?? merged.expires
-        all[path] = merged
+        all[path] = KeyEdit.merging(edit, into: all[path] ?? KeyEdit())
         }
     }
 

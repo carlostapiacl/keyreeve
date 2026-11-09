@@ -150,6 +150,7 @@ func announceRequest(_ request: AccessRequests.Entry) -> AgentBridge.Announcemen
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         open.arguments = ["-b", "io.github.carlostapiacl.keyreeve"]
         open.standardError = FileHandle.nullDevice
+        open.standardInput = FileHandle.nullDevice
         try? open.run()
         return .open
     case 1: return .later

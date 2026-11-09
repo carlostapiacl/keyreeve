@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>keyreeve: keep, check and rotate your API keys</title>
+<meta name="description" content="A local, open source tool to keep your API keys sealed, check that they still work, rotate them with recipes per provider, and let agents use them without seeing them.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate" hreflang="es" href="es/">
+<link rel="alternate" hreflang="en" href="./">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <a class="name" href="./">keyreeve</a>
+  <nav>
+    <a href="es/" hreflang="es" lang="es">Español</a>
+    <a href="https://github.com/carlostapiacl/keyreeve">GitHub</a>
+  </nav>
+</header>
+
+<main>
+<h1>Keep your API keys in one place, and let agents use them without seeing them</h1>
+
+<p class="lede">keyreeve is a free tool that runs on your own machine. It seals your keys in a vault, checks with each provider that they still work, rotates them with recipes the community writes, and lets an agent run a command with a key it never holds.</p>
+
+<p class="status">Early. Checking, sealing and agent access work on a Mac today. Rotation works in the simulator and has not yet been run against a real provider.</p>
+
+<h2>Why</h2>
+
+<p>Keys pile up in <code>.env</code> files and notes. Nobody remembers which ones still work, which one a script uses, or how to rotate one without breaking a deploy. Each provider does it a little differently. And now agents need keys too, and a key pasted into an agent's context can end up anywhere.</p>
+
+<p>keyreeve puts each provider's differences in a small file, a <em>recipe</em>, so it is written once and works for everyone. Your keys never leave your machine except toward the provider they belong to.</p>
+
+<h2>How an agent uses a key without seeing it</h2>
+
+<p>The agent asks to run a command with a key. The command gets a stand-in of the same shape in its variable, and a local proxy swaps in the real key only on requests to that provider's hosts.</p>
+
+<figure>
+<svg viewBox="0 0 440 470" role="img" aria-labelledby="d1t d1d" style="max-width:560px">
+  <title id="d1t">How use_key works</title>
+  <desc id="d1d">The agent calls use_key. The command runs with a stand-in in its variable. Its request goes through a local proxy, which takes the real key from the vault and puts it on the request only when it goes to the provider's own host. Requests to any other host keep the stand-in. Replies come back with the key replaced by the stand-in, so the agent only ever sees output.</desc>
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head"/></marker>
+    <marker id="a1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head-accent"/></marker>
+  </defs>
+  <rect class="box" x="20" y="10" width="220" height="48" rx="6"/>
+  <text class="t" x="130" y="39" text-anchor="middle">Agent</text>
+  <line class="line" x1="130" y1="58" x2="130" y2="104" marker-end="url(#a1)"/>
+  <text class="t-small" x="140" y="86">use_key netlify -- curl …</text>
+
+  <rect class="box" x="20" y="106" width="220" height="60" rx="6"/>
+  <text class="t" x="130" y="131" text-anchor="middle">Command</text>
+  <text class="t-small" x="130" y="151" text-anchor="middle">NETLIFY_AUTH_TOKEN = stand-in</text>
+  <line class="line" x1="130" y1="166" x2="130" y2="212" marker-end="url(#a1)"/>
+  <text class="t-small" x="140" y="194">request</text>
+
+  <rect class="box-strong" x="20" y="214" width="220" height="56" rx="6"/>
+  <text class="t" x="130" y="240" text-anchor="middle">Local proxy</text>
+  <text class="t-small" x="130" y="259" text-anchor="middle">on your machine</text>
+
+  <rect class="box" x="290" y="214" width="130" height="56" rx="6"/>
+  <text class="t" x="355" y="240" text-anchor="middle">Vault</text>
+  <text class="t-small" x="355" y="259" text-anchor="middle">Secure Enclave</text>
+  <line class="line-accent" x1="290" y1="242" x2="242" y2="242" marker-end="url(#a1b)"/>
+  <text class="t-small" x="355" y="290" text-anchor="middle">real key, as the</text>
+  <text class="t-small" x="355" y="306" text-anchor="middle">key's level allows</text>
+
+  <path class="line-accent" d="M95,270 L95,350" marker-end="url(#a1b)"/>
+  <path class="line" d="M185,270 L185,330 L330,330 L330,350" marker-end="url(#a1)"/>
+
+  <rect class="box-strong" x="20" y="352" width="190" height="56" rx="6"/>
+  <text class="t" x="115" y="377" text-anchor="middle">api.netlify.com</text>
+  <text class="t-ok" x="115" y="397" text-anchor="middle">gets the real key</text>
+
+  <rect class="box" x="240" y="352" width="180" height="56" rx="6"/>
+  <text class="t" x="330" y="377" text-anchor="middle">any other host</text>
+  <text class="t-small" x="330" y="397" text-anchor="middle">gets the useless stand-in</text>
+
+  <text class="t-small" x="20" y="440">Replies come back with the key swapped for the stand-in.</text>
+  <text class="t-small" x="20" y="460">The agent sees the output, never the key.</text>
+</svg>
+<figcaption>The swap happens in headers and Basic passwords, and in the address only for a provider that takes its key there, such as Telegram. A body keeps the stand-in, so a tool that sends its key in a body fails and leaks nothing.</figcaption>
+</figure>
+
+<p>Agents connect over <a href="https://modelcontextprotocol.io">MCP</a> with <code>keyreeve-vault mcp</code>. They get <code>list_keys</code>, <code>use_key</code>, <code>request_access</code> and <code>rotate_key</code>, and with your permission <code>inventory</code> and <code>propose</code> to help sort a folder of loose keys. None of them returns a value.</p>
+
+<h2>Who decides</h2>
+
+<p>Each key has a level, and you set it in the app. A key nobody has opened is yours alone.</p>
+
+<figure>
+<svg viewBox="0 0 440 330" role="img" aria-labelledby="d3t d3d" style="max-width:560px">
+  <title id="d3t">The four levels of a key</title>
+  <desc id="d3d">Only me: agents get nothing. Ask: a window shows the key, the command and the agent's reason; you choose once or for 1 to 24 hours, or deny, and confirm with your fingerprint. Free: one fingerprint, then no questions until you quit Keyreeve, a day at most. Always, no fingerprint: one fingerprint to seal a second copy, then agents use it through the proxy with no question, across restarts. The real key always asks.</desc>
+  <rect class="box-strong" x="20" y="10" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="36">Only me</text>
+  <text class="t-small" x="36" y="58">The default. Agents get nothing.</text>
+
+  <rect class="box" x="20" y="82" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="108">Ask</text>
+  <text class="t-small" x="36" y="130">You see the command and why, then pick once or 1 to 24 h.</text>
+
+  <rect class="box" x="20" y="154" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="180">Free</text>
+  <text class="t-small" x="36" y="202">One fingerprint, then none until you quit, 24 h at most.</text>
+
+  <rect class="box" x="20" y="226" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="252">Always, no fingerprint</text>
+  <text class="t-small" x="36" y="274">Through the proxy only, across restarts. For read-only keys.</text>
+
+  <text class="t-small" x="20" y="316">The real key itself (get, --real) asks every time.</text>
+</svg>
+<figcaption>Quitting Keyreeve, or <em>Lock everything</em> in the menu bar, ends every permission at once. Every yes, no and refusal goes in a log with the agent's reason.</figcaption>
+</figure>
+
+<h2>Recipes</h2>
+
+<p>Everything keyreeve knows about a provider lives in one YAML file. The app knows no provider by name.</p>
+
+<pre><code>schema: 1
+provider: github
+name: GitHub
+dashboard: https://github.com/settings/tokens
+prefixes: [ghp_, github_pat_]
+hosts: [api.github.com]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /user }
+identify:
+  request: { method: GET, path: /user }
+  fields: { account: $.login, email: $.email }</code></pre>
+
+<p>A recipe is data and cannot run code. Requests go over HTTPS, only to the hosts it lists, with redirects off, and the key has no placeholder, so a recipe cannot put it in a URL or a body. It can still list a host that stores what it receives, so read <code>hosts</code> before you trust one. A check is a single GET. The repository ships recipes for more than thirty providers, from Anthropic and AWS to Stripe and Telegram.</p>
+
+<h2>How a rotation goes</h2>
+
+<figure>
+<svg viewBox="0 0 470 400" role="img" aria-labelledby="d2t d2d" style="max-width:560px">
+  <title id="d2t">The order of a rotation</title>
+  <desc id="d2d">Step one, create the new key and save it. Step two, check that it works; if it fails, revoke it and stop. Step three, update each place that uses the key; if one fails, restore all of them and revoke the new key. Step four, make the new key current and wait out the overlap. Step five, revoke the old key. Each step is written to a journal first, so a crash can be resumed.</desc>
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head"/></marker>
+  </defs>
+  <rect class="box" x="20" y="10" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="41">1. Create and save the new key</text>
+  <line class="line" x1="145" y1="60" x2="145" y2="80" marker-end="url(#a2)"/>
+
+  <rect class="box" x="20" y="82" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="113">2. Check that it works</text>
+  <line class="line-stop" x1="270" y1="107" x2="284" y2="107"/>
+  <text class="t-stop" x="290" y="103">fails: revoke the new</text>
+  <text class="t-stop" x="290" y="119">key and stop</text>
+  <line class="line" x1="145" y1="132" x2="145" y2="152" marker-end="url(#a2)"/>
+
+  <rect class="box" x="20" y="154" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="185">3. Update every place</text>
+  <line class="line-stop" x1="270" y1="179" x2="284" y2="179"/>
+  <text class="t-stop" x="290" y="175">one fails: restore them</text>
+  <text class="t-stop" x="290" y="191">all, revoke the new key</text>
+  <line class="line" x1="145" y1="204" x2="145" y2="224" marker-end="url(#a2)"/>
+
+  <rect class="box" x="20" y="226" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="257">4. Make it current, overlap</text>
+  <line class="line" x1="145" y1="276" x2="145" y2="296" marker-end="url(#a2)"/>
+
+  <rect class="box-strong" x="20" y="298" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="329">5. Revoke the old key</text>
+
+  <text class="t-small" x="20" y="380">Each step goes to a journal first: ids and step names, never values.</text>
+</svg>
+<figcaption>The old key is revoked last, and a new key is not revoked while a service may still hold it. <code>keyreeve simulate</code> stops the process at every operation, and again at every operation of the recovery, and checks that every place still holds a working key.</figcaption>
+</figure>
+
+<p>A pass in the simulator shows the recipe and the engine hold up. It does not prove a real provider behaves as its recipe says, and no rotation has run against a real service yet.</p>
+
+<h2>Try it</h2>
+
+<p>You need <a href="https://rustup.rs">Rust</a>. There are no prebuilt binaries yet. This runs offline and uses no real keys:</p>
+
+<pre><code>cargo install --git https://github.com/carlostapiacl/keyreeve
+git clone https://github.com/carlostapiacl/keyreeve
+cd keyreeve
+keyreeve check examples/recipe.yaml
+keyreeve simulate examples/recipe.yaml</code></pre>
+
+<p>To see what you already have, point it at a folder of key files. Neither command changes a file, and neither writes a value:</p>
+
+<pre><code>keyreeve inventory ~/my-keys --out ~/.keyreeve/inventory.json
+keyreeve verify github --key-file ~/my-keys/app.env --field GITHUB_TOKEN</code></pre>
+
+<h3>The Mac app</h3>
+
+<p>A native window over your keys, in English and Spanish, with the vault inside. It is built from source and is not notarized yet, so macOS warns you the first time.</p>
+
+<pre><code>app/build-app.sh
+open app/dist/Keyreeve.app</code></pre>
+
+<p>Each sealed key is a standard <a href="https://age-encryption.org">age</a> file, sealed for a key in your Mac's Secure Enclave and for a recovery key you keep elsewhere. With only the vault and the <code>age</code> command you can open your keys on any computer, so they do not depend on this tool.</p>
+
+<h2>What is not done</h2>
+
+<ul>
+  <li>A rotation run against a real provider.</li>
+  <li>The vault on Linux and Windows. The command line runs on Linux, Windows has not been tried, and the vault's file format already works on both.</li>
+  <li>An Apple signature, so the app can be downloaded and not only built.</li>
+  <li>Other vaults as storage, such as 1Password or the system keychain.</li>
+  <li>Recipes that can rotate for more providers.</li>
+</ul>
+
+<h2>Security</h2>
+
+<p>keyreeve holds credentials that can create and revoke keys, so a mistake costs more than in most tools. It guards against a careless or malicious recipe, a crash halfway through a rotation, a value reaching a log, and a provider answer that holds too much. It does not protect against anything else running as your user, a compromised provider or dependency, or a recipe whose listed host stores what it receives. The vault's code has had no outside review.</p>
+
+<p>The full list is in <a href="https://github.com/carlostapiacl/keyreeve/blob/main/THREAT_MODEL.md">THREAT_MODEL.md</a>. To report a vulnerability, use <a href="https://github.com/carlostapiacl/keyreeve/security/advisories/new">private reporting</a>.</p>
+
+<h2>Contributing</h2>
+
+<p>The most useful contribution is a recipe for a provider you use. A recipe that only checks a key needs <code>verify</code>; one that rotates also needs <code>create</code> and <code>revoke</code>. Run <code>keyreeve check</code> and <code>keyreeve simulate</code> on it, link the provider's documentation for each step, and never paste a real key or response. <a href="https://github.com/carlostapiacl/keyreeve/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> has the fields and the checklist.</p>
+
+</main>
+
+<footer>
+  <p>keyreeve is open source under the <a href="https://github.com/carlostapiacl/keyreeve/blob/main/LICENSE">MIT license</a>. Code, issues and recipes on <a href="https://github.com/carlostapiacl/keyreeve">GitHub</a>.</p>
+</footer>
+</body>
+</html>

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>keyreeve: guarda, prueba y rota tus claves de API</title>
+<meta name="description" content="Herramienta local y de código abierto para sellar tus claves de API, comprobar que siguen funcionando, rotarlas con recetas por proveedor y dejar que los agentes las usen sin verlas.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate" hreflang="en" href="../">
+<link rel="alternate" hreflang="es" href="./">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header>
+  <a class="name" href="./">keyreeve</a>
+  <nav>
+    <a href="../" hreflang="en" lang="en">English</a>
+    <a href="https://github.com/carlostapiacl/keyreeve">GitHub</a>
+  </nav>
+</header>
+
+<main>
+<h1>Tus claves de API en un solo lugar, y los agentes las usan sin verlas</h1>
+
+<p class="lede">keyreeve es una herramienta gratis que corre en tu computador. Sella tus claves en una bóveda, le pregunta a cada proveedor si siguen funcionando, las rota con recetas que escribe la comunidad y deja que un agente corra un comando con una clave que nunca tiene en sus manos.</p>
+
+<p class="status">Está en etapa temprana. Probar, sellar y dar acceso a agentes ya funciona en Mac. La rotación pasa el simulador, pero todavía no se ha corrido contra un proveedor real.</p>
+
+<h2>Por qué existe</h2>
+
+<p>Las claves se van juntando en archivos <code>.env</code> y notas sueltas. Nadie se acuerda de cuáles siguen vivas, qué script usa cuál, ni cómo rotar una sin romper un deploy. Cada proveedor lo hace a su manera. Y ahora los agentes también necesitan claves, y una clave pegada en el contexto de un agente puede terminar en cualquier parte.</p>
+
+<p>keyreeve guarda lo propio de cada proveedor en un archivo chico, una <em>receta</em>. Se escribe una vez y le sirve a todos. Tus claves no salen de tu computador, salvo hacia el proveedor al que pertenecen.</p>
+
+<h2>Cómo un agente usa una clave sin verla</h2>
+
+<p>El agente pide correr un comando con una clave. El comando recibe en su variable un reemplazo con la misma forma, y un proxy local pone la clave real solo en los pedidos que van al servidor de ese proveedor.</p>
+
+<figure>
+<svg viewBox="0 0 440 470" role="img" aria-labelledby="d1t d1d" style="max-width:560px">
+  <title id="d1t">Cómo funciona use_key</title>
+  <desc id="d1d">El agente llama a use_key. El comando corre con un reemplazo en su variable. Su pedido pasa por un proxy local, que saca la clave real de la bóveda y la pone en el pedido solo si va al servidor del proveedor. Los pedidos a cualquier otro servidor llevan el reemplazo. Las respuestas vuelven con la clave cambiada por el reemplazo, así que el agente solo ve el resultado.</desc>
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head"/></marker>
+    <marker id="a1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head-accent"/></marker>
+  </defs>
+  <rect class="box" x="20" y="10" width="220" height="48" rx="6"/>
+  <text class="t" x="130" y="39" text-anchor="middle">Agente</text>
+  <line class="line" x1="130" y1="58" x2="130" y2="104" marker-end="url(#a1)"/>
+  <text class="t-small" x="140" y="86">use_key netlify -- curl …</text>
+
+  <rect class="box" x="20" y="106" width="220" height="60" rx="6"/>
+  <text class="t" x="130" y="131" text-anchor="middle">Comando</text>
+  <text class="t-small" x="130" y="151" text-anchor="middle">NETLIFY_AUTH_TOKEN = reemplazo</text>
+  <line class="line" x1="130" y1="166" x2="130" y2="212" marker-end="url(#a1)"/>
+  <text class="t-small" x="140" y="194">pedido</text>
+
+  <rect class="box-strong" x="20" y="214" width="220" height="56" rx="6"/>
+  <text class="t" x="130" y="240" text-anchor="middle">Proxy local</text>
+  <text class="t-small" x="130" y="259" text-anchor="middle">en tu computador</text>
+
+  <rect class="box" x="290" y="214" width="130" height="56" rx="6"/>
+  <text class="t" x="355" y="240" text-anchor="middle">Bóveda</text>
+  <text class="t-small" x="355" y="259" text-anchor="middle">Secure Enclave</text>
+  <line class="line-accent" x1="290" y1="242" x2="242" y2="242" marker-end="url(#a1b)"/>
+  <text class="t-small" x="355" y="286" text-anchor="middle">clave real, según</text>
+  <text class="t-small" x="355" y="300" text-anchor="middle">el nivel de la clave</text>
+
+  <path class="line-accent" d="M95,270 L95,350" marker-end="url(#a1b)"/>
+  <path class="line" d="M185,270 L185,338 L330,338 L330,350" marker-end="url(#a1)"/>
+
+  <rect class="box-strong" x="20" y="352" width="190" height="56" rx="6"/>
+  <text class="t" x="115" y="377" text-anchor="middle">api.netlify.com</text>
+  <text class="t-ok" x="115" y="397" text-anchor="middle">recibe la clave real</text>
+
+  <rect class="box" x="240" y="352" width="180" height="56" rx="6"/>
+  <text class="t" x="330" y="377" text-anchor="middle">otro servidor</text>
+  <text class="t-small" x="330" y="397" text-anchor="middle">recibe el reemplazo inútil</text>
+
+  <text class="t-small" x="20" y="440">Las respuestas vuelven con la clave cambiada por el reemplazo.</text>
+  <text class="t-small" x="20" y="460">El agente ve el resultado y nunca la clave.</text>
+</svg>
+<figcaption>El cambio se hace en los encabezados y en las contraseñas Basic, y en la dirección solo para un proveedor que recibe ahí su clave, como Telegram. El cuerpo del pedido conserva el reemplazo: una herramienta que manda su clave en el cuerpo falla y no filtra nada.</figcaption>
+</figure>
+
+<p>Los agentes se conectan por <a href="https://modelcontextprotocol.io">MCP</a> con <code>keyreeve-vault mcp</code>. Tienen <code>list_keys</code>, <code>use_key</code>, <code>request_access</code> y <code>rotate_key</code>, y si lo permites, <code>inventory</code> y <code>propose</code> para ayudarte a ordenar una carpeta de claves sueltas. Ninguna devuelve un valor.</p>
+
+<h2>Quién decide</h2>
+
+<p>Cada clave tiene un nivel, y lo eliges tú en la app. Una clave que nadie ha abierto es solo tuya.</p>
+
+<figure>
+<svg viewBox="0 0 440 330" role="img" aria-labelledby="d3t d3d" style="max-width:560px">
+  <title id="d3t">Los cuatro niveles de una clave</title>
+  <desc id="d3d">Solo yo: los agentes no reciben nada. Preguntar: una ventana muestra la clave, el comando y el motivo del agente; eliges una vez o de 1 a 24 horas, o rechazas, y confirmas con tu huella. Libre: una huella y después ninguna pregunta hasta que cierras Keyreeve, un día como máximo. Siempre, sin huella: una huella para sellar una segunda copia, y desde ahí los agentes la usan por el proxy sin preguntar, aunque reinicies. Entregar la clave real pregunta siempre.</desc>
+  <rect class="box-strong" x="20" y="10" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="36">Solo yo</text>
+  <text class="t-small" x="36" y="58">Lo que viene por defecto. Los agentes no reciben nada.</text>
+
+  <rect class="box" x="20" y="82" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="108">Preguntar</text>
+  <text class="t-small" x="36" y="130">Ves el comando y el motivo, y eliges una vez o 1 a 24 h.</text>
+
+  <rect class="box" x="20" y="154" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="180">Libre</text>
+  <text class="t-small" x="36" y="202">Una huella y ninguna más hasta que cierras, 24 h como tope.</text>
+
+  <rect class="box" x="20" y="226" width="400" height="62" rx="6"/>
+  <text class="t" x="36" y="252">Siempre, sin huella</text>
+  <text class="t-small" x="36" y="274">Solo por el proxy, aunque reinicies. Para claves de lectura.</text>
+
+  <text class="t-small" x="20" y="316">La clave real misma (get, --real) pide huella siempre.</text>
+</svg>
+<figcaption>Cerrar Keyreeve, o <em>Bloquear todo</em> en la barra de menú, termina todos los permisos de una vez. Cada sí, cada no y cada rechazo queda en un registro con el motivo que dio el agente.</figcaption>
+</figure>
+
+<h2>Recetas</h2>
+
+<p>Todo lo que keyreeve sabe de un proveedor está en un archivo YAML. La app no conoce ningún proveedor por su nombre.</p>
+
+<pre><code>schema: 1
+provider: github
+name: GitHub
+dashboard: https://github.com/settings/tokens
+prefixes: [ghp_, github_pat_]
+hosts: [api.github.com]
+auth: { header: Authorization, prefix: "Bearer " }
+verify: { method: GET, path: /user }
+identify:
+  request: { method: GET, path: /user }
+  fields: { account: $.login, email: $.email }</code></pre>
+
+<p>Una receta son datos y no puede correr código. Los pedidos van por HTTPS, solo a los servidores que declara y sin seguir redirecciones. La clave no tiene marcador en la receta, así que no hay forma de ponerla en una URL o en el cuerpo. Igual una receta puede declarar un servidor que guarda lo que recibe, así que lee <code>hosts</code> antes de confiar en ella. Una prueba es un solo GET. El repositorio trae recetas para más de treinta proveedores, de Anthropic y AWS a Stripe y Telegram.</p>
+
+<h2>Cómo va una rotación</h2>
+
+<figure>
+<svg viewBox="0 0 470 400" role="img" aria-labelledby="d2t d2d" style="max-width:560px">
+  <title id="d2t">El orden de una rotación</title>
+  <desc id="d2d">Paso uno, crear la clave nueva y guardarla. Paso dos, probar que funciona; si falla, se revoca y se detiene. Paso tres, actualizar cada lugar que la usa; si uno falla, se restauran todos y se revoca la nueva. Paso cuatro, dejar la nueva como actual y esperar el traslape. Paso cinco, revocar la vieja. Cada paso se anota antes en un registro, para retomar después de una caída.</desc>
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head"/></marker>
+  </defs>
+  <rect class="box" x="20" y="10" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="41">1. Crear y guardar la nueva</text>
+  <line class="line" x1="145" y1="60" x2="145" y2="80" marker-end="url(#a2)"/>
+
+  <rect class="box" x="20" y="82" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="113">2. Probar que funciona</text>
+  <line class="line-stop" x1="270" y1="107" x2="284" y2="107"/>
+  <text class="t-stop" x="290" y="103">si falla: se revoca</text>
+  <text class="t-stop" x="290" y="119">la nueva y se detiene</text>
+  <line class="line" x1="145" y1="132" x2="145" y2="152" marker-end="url(#a2)"/>
+
+  <rect class="box" x="20" y="154" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="185">3. Actualizar cada lugar</text>
+  <line class="line-stop" x1="270" y1="179" x2="284" y2="179"/>
+  <text class="t-stop" x="290" y="175">si uno falla: se restauran</text>
+  <text class="t-stop" x="290" y="191">todos y se revoca la nueva</text>
+  <line class="line" x1="145" y1="204" x2="145" y2="224" marker-end="url(#a2)"/>
+
+  <rect class="box" x="20" y="226" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="257">4. Dejarla actual, traslape</text>
+  <line class="line" x1="145" y1="276" x2="145" y2="296" marker-end="url(#a2)"/>
+
+  <rect class="box-strong" x="20" y="298" width="250" height="50" rx="6"/>
+  <text class="t" x="34" y="329">5. Revocar la vieja</text>
+
+  <text class="t-small" x="20" y="380">Cada paso se anota antes: ids y nombres de pasos, nunca valores.</text>
+</svg>
+<figcaption>La clave vieja se revoca al final, y una nueva no se revoca mientras algún servicio pueda tenerla. <code>keyreeve simulate</code> detiene el proceso en cada operación, y otra vez en cada operación de la recuperación, y comprueba que todos los lugares sigan con una clave que funciona.</figcaption>
+</figure>
+
+<p>Pasar el simulador muestra que la receta y el motor aguantan. No prueba que el proveedor real se comporte como dice su receta, y ninguna rotación se ha corrido todavía contra un servicio real.</p>
+
+<h2>Pruébalo</h2>
+
+<p>Necesitas <a href="https://rustup.rs">Rust</a>. Todavía no hay binarios listos. Esto corre sin conexión y sin claves reales:</p>
+
+<pre><code>cargo install --git https://github.com/carlostapiacl/keyreeve
+git clone https://github.com/carlostapiacl/keyreeve
+cd keyreeve
+keyreeve check examples/recipe.yaml
+keyreeve simulate examples/recipe.yaml</code></pre>
+
+<p>Para ver lo que ya tienes, apúntalo a una carpeta con tus claves. Ningún comando cambia un archivo ni escribe un valor:</p>
+
+<pre><code>keyreeve inventory ~/mis-claves --out ~/.keyreeve/inventory.json
+keyreeve verify github --key-file ~/mis-claves/app.env --field GITHUB_TOKEN</code></pre>
+
+<h3>La app para Mac</h3>
+
+<p>Una ventana nativa sobre tus claves, en español e inglés, con la bóveda adentro. Se compila desde el código y todavía no está notarizada, así que macOS te avisa la primera vez.</p>
+
+<pre><code>app/build-app.sh
+open app/dist/Keyreeve.app</code></pre>
+
+<p>Cada clave sellada es un archivo <a href="https://age-encryption.org">age</a> estándar, sellado para una llave dentro del Secure Enclave de tu Mac y para una llave de recuperación que guardas en otra parte. Con la bóveda y el comando <code>age</code> abres tus claves en cualquier computador, así que no dependen de esta herramienta.</p>
+
+<h2>Lo que falta</h2>
+
+<ul>
+  <li>Una rotación corrida contra un proveedor real.</li>
+  <li>La bóveda en Linux y Windows. La línea de comandos corre en Linux, Windows no se ha probado, y el formato de la bóveda ya sirve en los dos.</li>
+  <li>La firma de Apple, para que la app se pueda descargar y no solo compilar.</li>
+  <li>Otras bóvedas como almacenamiento, como 1Password o el llavero del sistema.</li>
+  <li>Recetas que sepan rotar para más proveedores.</li>
+</ul>
+
+<h2>Seguridad</h2>
+
+<p>keyreeve maneja credenciales que pueden crear y revocar claves, así que un error cuesta más que en la mayoría de las herramientas. Se protege de una receta descuidada o maliciosa, de una caída a mitad de una rotación, de un valor que llegue a un registro y de una respuesta del proveedor que traiga más de la cuenta. No protege de otro programa que corra con tu usuario, de un proveedor o una dependencia comprometidos, ni de una receta cuyo servidor guarde lo que recibe. El código de la bóveda no ha tenido revisión externa.</p>
+
+<p>La lista completa está en <a href="https://github.com/carlostapiacl/keyreeve/blob/main/THREAT_MODEL.md">THREAT_MODEL.md</a>, en inglés. Para reportar una vulnerabilidad, usa el <a href="https://github.com/carlostapiacl/keyreeve/security/advisories/new">reporte privado</a>.</p>
+
+<h2>Cómo aportar</h2>
+
+<p>Lo que más sirve es una receta para un proveedor que uses. Una receta que solo prueba una clave necesita <code>verify</code>; una que rota necesita además <code>create</code> y <code>revoke</code>. Córrele <code>keyreeve check</code> y <code>keyreeve simulate</code>, enlaza la documentación del proveedor en cada paso y nunca pegues una clave ni una respuesta real. <a href="https://github.com/carlostapiacl/keyreeve/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> tiene los campos y la lista para revisar antes de abrir el pull request.</p>
+
+</main>
+
+<footer>
+  <p>keyreeve es código abierto con <a href="https://github.com/carlostapiacl/keyreeve/blob/main/LICENSE">licencia MIT</a>. El código, los issues y las recetas están en <a href="https://github.com/carlostapiacl/keyreeve">GitHub</a>.</p>
+</footer>
+</body>
+</html>

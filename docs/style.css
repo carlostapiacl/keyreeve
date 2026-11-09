@@ -1,0 +1,143 @@
+:root {
+  --bg: #fbfaf7;
+  --text: #1d1c1a;
+  --muted: #5d5a54;
+  --line: #d9d5cc;
+  --code-bg: #f1eee7;
+  --accent: #8a4b14;
+  --box: #ffffff;
+  --ok: #2f6b3a;
+  --stop: #9b2c2c;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161514;
+    --text: #e9e6df;
+    --muted: #a6a197;
+    --line: #3a3733;
+    --code-bg: #211f1d;
+    --accent: #e0a46a;
+    --box: #1d1c1a;
+    --ok: #8fc79a;
+    --stop: #ef9a9a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-size: 1.125rem;
+  line-height: 1.6;
+}
+
+main, header, footer {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding-top: 1.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.95rem;
+}
+
+header .name { font-weight: 600; color: var(--text); text-decoration: none; }
+header nav a { color: var(--muted); margin-left: 1rem; }
+
+h1 {
+  font-size: 2.2rem;
+  line-height: 1.15;
+  margin: 2.5rem 0 1rem;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 1.45rem;
+  line-height: 1.25;
+  margin: 3rem 0 0.75rem;
+}
+
+h3 { font-size: 1.1rem; margin: 2rem 0 0.5rem; }
+
+p, ul, ol { margin: 0 0 1rem; }
+li { margin-bottom: 0.35rem; }
+
+a { color: var(--accent); text-underline-offset: 0.15em; }
+
+.lede { font-size: 1.25rem; color: var(--text); }
+
+.status {
+  border-left: 3px solid var(--accent);
+  padding: 0.25rem 0 0.25rem 1rem;
+  color: var(--muted);
+}
+
+code, pre {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+
+pre {
+  background: var(--code-bg);
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  line-height: 1.45;
+  margin: 0 0 1.25rem;
+}
+
+pre code { background: none; padding: 0; font-size: 1em; }
+
+figure { margin: 1.5rem 0 2rem; }
+
+figure svg { width: 100%; height: auto; display: block; }
+
+figcaption { font-size: 0.95rem; color: var(--muted); margin-top: 0.5rem; }
+
+svg .box { fill: var(--box); stroke: var(--line); stroke-width: 1.5; }
+svg .box-strong { fill: var(--box); stroke: var(--accent); stroke-width: 2; }
+svg .t { fill: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; }
+svg .t-small { fill: var(--muted); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; }
+svg .t-ok { fill: var(--ok); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; }
+svg .t-stop { fill: var(--stop); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; }
+svg .line { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .line-accent { stroke: var(--accent); stroke-width: 2; fill: none; }
+svg .line-stop { stroke: var(--stop); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+svg .head { fill: var(--muted); }
+svg .head-accent { fill: var(--accent); }
+
+table { border-collapse: collapse; width: 100%; margin: 0 0 1.5rem; font-size: 0.95rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.5rem 0.5rem 0.5rem 0; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; }
+
+.table-wrap { overflow-x: auto; }
+
+footer {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  padding-bottom: 3rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+@media (max-width: 480px) {
+  body { font-size: 1.05rem; }
+  h1 { font-size: 1.8rem; margin-top: 2rem; }
+  h2 { font-size: 1.3rem; }
+}

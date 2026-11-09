@@ -79,7 +79,7 @@ public enum AgentSorting {
             if change["kind"] as? String == "provider", let id = change["provider"] as? String, !known.contains(id) {
                 notes.append("\(path): no provider \(id) is known, so it stays as it was")
             }
-            if let field = change["field"] as? String, !((row["fields"] as? [String]) ?? []).contains(field) {
+            if let field = change["field"] as? String, !holds((row["fields"] as? [String]) ?? [], field: field) {
                 notes.append("\(path): the file has no field \(field)")
             }
             if change["check"] as? Bool == true {
@@ -101,6 +101,12 @@ public enum AgentSorting {
             }
         }
         return notes
+    }
+
+    /// One field name, or several joined with `+` for a key in parts, each of them in the file.
+    static func holds(_ fields: [String], field: String) -> Bool {
+        let parts = field.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+        return !parts.isEmpty && parts.allSatisfy { !$0.isEmpty && fields.contains($0) }
     }
 
     static func isDay(_ text: String) -> Bool {

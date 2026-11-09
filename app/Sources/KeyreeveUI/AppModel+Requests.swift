@@ -277,8 +277,8 @@ extension AppModel {
     ) {
         Task { @MainActor in
             let deadline = Date().addingTimeInterval(wait)
-            while (busy || rebuildingNow) && Date() < deadline { try? await Task.sleep(for: .milliseconds(200)) }
-            guard !(busy || rebuildingNow) else {
+            while settling && Date() < deadline { try? await Task.sleep(for: .milliseconds(200)) }
+            guard !settling else {
                 message = T("%@ did not run: Keyreeve stayed busy for ten minutes.", what.prefix(1).uppercased() + what.dropFirst())
                 skipped()
                 return

@@ -65,4 +65,26 @@ struct CleanupTests {
         let places = try JSONDecoder().decode(KeyPlaces.self, from: Data(old.utf8))
         #expect(places.revokePage == nil && places.isDecided)
     }
+
+    @Test func aProposalThatNamesNoFieldKeepsTheFieldTheKeyHas() {
+        var item = CatalogItem(path: "hf.env", recipes: ["huggingface"], labels: ["HF_TOKEN", "OTHER"])
+        item.field = "HF_TOKEN"
+        let edit = Suggestion(path: "hf.env", kind: .provider("huggingface", field: nil), why: "agent").edit(for: item)
+        #expect(edit.field == nil)
+        #expect(item.applying(edit).field == "HF_TOKEN")
+        let named = Suggestion(path: "hf.env", kind: .provider("huggingface", field: "OTHER"), why: "agent").edit(for: item)
+        #expect(item.applying(named).field == "OTHER")
+    }
+
+    @Test func anAnswerMayNameAFieldInParts() {
+        let items = [CatalogItem(path: "g.json", labels: ["client_id", "client_secret", "refresh_token"])]
+        let providers = ProviderDirectory([ProviderInfo(id: "google", name: "Google")])
+        let answer = #"""
+            [{"path":"g.json","kind":"provider","provider":"google","field":"client_id+client_secret+refresh_token"}]
+            """#
+        let found = Suggester.read(answer, items: items, providers: providers)
+        #expect(found.first?.kind == .provider("google", field: "client_id+client_secret+refresh_token"))
+        let wrong = Suggester.read(answer.replacingOccurrences(of: "refresh_token\"", with: "nope\""), items: items, providers: providers)
+        #expect(wrong.first?.kind == .provider("google", field: nil))
+    }
 }

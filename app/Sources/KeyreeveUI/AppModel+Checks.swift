@@ -71,7 +71,9 @@ extension AppModel {
 
     public func check(_ chosen: [CatalogItem], then done: (@MainActor () -> Void)? = nil) {
         let list = chosen.filter(providers.canCheck)
-        guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
+        guard let (folder, binary) = readyToRun(list, none: T("None of these keys can be checked from here")) else { return }
+        let providers = self.providers
+        let alsoIdentify = Self.alsoIdentify(list, providers: providers)
         let reason =
             list.count == 1
             ? T("check 1 key with its provider") : T("check %d keys with their providers", list.count)
@@ -85,6 +87,12 @@ extension AppModel {
                 let result = Result {
                     try CheckRunner.run(list, binary: binary, keysFolder: folder, files: files, sealed: sealed) { finished, total in
                         Task { @MainActor in self.progress = (finished, total) }
+                    }
+                    // Checking many keys at once also asks their providers whose they are, with the copies already
+                    // opened: that is how a key's account and the day it stops working stay current.
+                    if !alsoIdentify.isEmpty {
+                        try CheckRunner.identify(
+                            alsoIdentify, providers: providers, binary: binary, keysFolder: folder, files: files, sealed: sealed)
                     }
                 }
                 await MainActor.run {
@@ -107,9 +115,35 @@ extension AppModel {
         }
     }
 
+    /// The keys of a run of several whose provider can also say whose they are. A single check stays a check.
+    nonisolated static func alsoIdentify(_ list: [CatalogItem], providers: ProviderDirectory) -> [CatalogItem] {
+        list.count > 1 ? list.filter(providers.canIdentify) : []
+    }
+
+    /// The folder and the command, when work can start now. Otherwise it says why, never nothing.
+    func readyToRun(_ list: [CatalogItem], none: String) -> (URL, URL)? {
+        guard let binary else {
+            message = T("This app was built without its command")
+            return nil
+        }
+        guard let folder = keysFolder else {
+            message = T("Choose the folder that holds your key files")
+            return nil
+        }
+        guard !busy else {
+            message = T("Keyreeve is busy. Try again when it finishes.")
+            return nil
+        }
+        guard !list.isEmpty else {
+            message = none
+            return nil
+        }
+        return (folder, binary)
+    }
+
     public func identify(_ chosen: [CatalogItem]) {
         let list = chosen.filter(providers.canIdentify)
-        guard !list.isEmpty, !busy, let folder = keysFolder, let binary else { return }
+        guard let (folder, binary) = readyToRun(list, none: T("None of these keys can be identified: their provider cannot say whose they are, or they cannot be checked from here")) else { return }
         withKeys(list, reason: T("identify %d keys with their providers", list.count), by: "identify") { sealed in
             self.busy = true
             self.message = T("Identifying…")

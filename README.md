@@ -133,8 +133,12 @@ command of your own can read files on your Mac while they work; Claude Code is l
 
 ```bash
 app/build-app.sh
-open app/dist/Keyreeve.app
+ditto app/dist/Keyreeve.app /Applications/Keyreeve.app   # once, to keep it with your other apps
+open /Applications/Keyreeve.app
 ```
+
+Once a copy is in /Applications, each build updates it too, and a Keyreeve that was open is quit before and opened again
+after, so no older copy keeps running beside the files the new one writes.
 
 **Check all**, in My keys, asks first, then sends each key to its own provider, at most six at a time, with progress and a summary. In Settings you can
 also check keys set to "Checked without asking" every week, which needs no fingerprint and notifies you if one stops working. It

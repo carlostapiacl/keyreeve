@@ -1,5 +1,10 @@
 # Contributing
 
+[Español](CONTRIBUTING.es.md)
+
+Thank you for helping. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). To report a vulnerability,
+do not open an issue: see [SECURITY.md](SECURITY.md).
+
 The most useful contribution is a recipe for a provider you use. Label words for `keyreeve inventory` are also welcome, in `KNOWN_WORDS` in `src/inventory.rs`. A label word must be common enough that it cannot be a password.
 
 ## Writing a recipe
@@ -49,6 +54,25 @@ Your pull request should say:
 
 Never paste a real key, a real id or a real response. If you used someone else's guide, write the recipe
 from the provider's documentation. A recipe must be under MIT, and some guides have other licenses.
+
+## Running everything locally
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cd app && swift test
+```
+
+The same commands run in CI on each pull request. `app/build-app.sh` builds the app, and it replaces a copy in
+/Applications and reopens it, so do not run it when you only want the tests.
+
+## Pull requests
+
+- One recipe per pull request, so each one can be checked on its own.
+- Commit messages and pull requests in English, saying what changes for the person using keyreeve.
+- Keep a pull request to one change. Open it as a draft while you work.
+- Add a test for a bug you fix, one that fails without the fix.
 
 ## Changing the app or the vault
 

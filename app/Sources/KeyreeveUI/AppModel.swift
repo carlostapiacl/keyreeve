@@ -98,6 +98,9 @@ public final class AppModel: ObservableObject {
     /// Reads of the private files not yet shown. A rebuild ends with one, so work that reads the list waits for
     /// it too, or it would run with the list from before an edit.
     var loadsInFlight = 0
+    /// What loads that a newer one replaced were to do once the list was shown: the newer one does it, so a
+    /// result such as a check's message is never lost to a reload that started after it.
+    private var afterLoad: [@MainActor () -> Void] = []
     /// Something is still changing what the list says: work that reads it waits.
     var settling: Bool { busy || rebuildingNow || loadsInFlight > 0 }
 
@@ -222,8 +225,14 @@ public final class AppModel: ObservableObject {
             let snapshot = Snapshot(reading: source)
             await MainActor.run {
                 self.loadsInFlight -= 1
-                guard current == self.generation else { return }
+                guard current == self.generation else {
+                    if let done { self.afterLoad.append(done) }
+                    return
+                }
                 self.apply(snapshot)
+                let waiting = self.afterLoad
+                self.afterLoad = []
+                for work in waiting { work() }
                 done?()
             }
         }

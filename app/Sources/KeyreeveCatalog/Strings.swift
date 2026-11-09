@@ -6,8 +6,12 @@ public enum Language: String, CaseIterable, Sendable {
 
     public static let settingsKey = "language"
 
+    /// A language for the work inside `Language.$override.withValue`, and only that work: drawing a view in
+    /// one language never changes the language of anything running beside it.
+    @TaskLocal public static var override: Language?
+
     public static var current: Language {
-        Language(rawValue: UserDefaults.standard.string(forKey: settingsKey) ?? "") ?? .system
+        override ?? Language(rawValue: UserDefaults.standard.string(forKey: settingsKey) ?? "") ?? .system
     }
 
     /// The language in effect once "system" is resolved.

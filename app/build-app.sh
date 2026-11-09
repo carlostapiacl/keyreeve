@@ -10,11 +10,13 @@ BIN=$(swift build -c release --show-bin-path)
 APP="dist/Keyreeve.app"
 # A Keyreeve left running would go on with the old code over files the new one writes, and one from before a
 # format change can drop what it does not know. It is quit here and opened again at the end.
+# A copy installed in /Applications is kept the same as this build, so whatever opens Keyreeve gets this version.
+INSTALLED="/Applications/Keyreeve.app"
 RUNNING=""
-if pgrep -f "$PWD/$APP/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
+if pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
     RUNNING=yes
     osascript -e 'tell application id "io.github.carlostapiacl.keyreeve" to quit' >/dev/null 2>&1 || true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$PWD/$APP/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1 || break; sleep 1; done
+    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1 || break; sleep 1; done
 fi
 rm -f "$APP/Contents/MacOS/Keyreeve" "$APP/Contents/MacOS/keyreeve-cli" "$APP/Contents/MacOS/keyreeve-vault"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -50,4 +52,11 @@ codesign --force --sign - "$APP/Contents/MacOS/keyreeve-cli"
 codesign --force --sign - "$APP/Contents/MacOS/keyreeve-vault"
 codesign --force --sign - "$APP"
 echo "Built $APP and dist/keyreeve-vault"
-if [ -n "$RUNNING" ]; then open "$APP" && echo "Keyreeve was open, so it was opened again with this build"; fi
+if [ -d "$INSTALLED" ]; then
+    ditto "$APP" "$INSTALLED.new" && rm -rf "$INSTALLED.old" && mv "$INSTALLED" "$INSTALLED.old" && mv "$INSTALLED.new" "$INSTALLED" && rm -rf "$INSTALLED.old"
+    echo "Updated $INSTALLED"
+fi
+if [ -n "$RUNNING" ]; then
+    if [ -d "$INSTALLED" ]; then open "$INSTALLED"; else open "$APP"; fi
+    echo "Keyreeve was open, so it was opened again with this build"
+fi

@@ -8,6 +8,8 @@ struct HomeView: View {
     let stats: CatalogStats
     let activity: [ActivityItem]
     @ObservedObject var model: AppModel
+    /// Every key that can be checked, after the same question My keys asks.
+    let checkAll: () -> Void
     let open: (Sidebar, String?) -> Void
 
     private let shownFirst = 5
@@ -40,6 +42,14 @@ struct HomeView: View {
                 Text(headline).font(Theme.title).foregroundStyle(Theme.text)
             }
             Spacer()
+            if stats.canCheck > 0 {
+                Button(action: checkAll) {
+                    Label(T("Check all"), systemImage: "checkmark.shield")
+                }
+                .buttonStyle(KRButtonStyle())
+                .disabled(model.busy)
+                .help(T("Each key goes to its own provider, and only to read. Keys set to Only me stay out."))
+            }
             Button {
                 model.startAddingKey()
             } label: {
@@ -103,6 +113,7 @@ struct HomeView: View {
                 resultButton(T("Works"), run.works, "checkmark", .good, "works")
                 resultButton(T("Rejected"), run.rejected, "xmark", .bad, "rejected")
                 resultButton(T("No answer"), run.noAnswer, "questionmark", .neutral, "no_answer")
+                if run.gone > 0 { resultButton(T("Not in the vault"), run.gone, "exclamationmark.triangle", .bad, "gone") }
             }
             .padding(12)
         }

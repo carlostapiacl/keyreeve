@@ -281,13 +281,16 @@ public struct RunSummary: Equatable, Sendable {
     public let works: Int
     public let rejected: Int
     public let noAnswer: Int
+    /// Keys with no copy in the vault and no file: counted apart from the ones a provider did not answer.
+    public let gone: Int
 
     public init(items: [CatalogItem], checked paths: Set<String>) {
         let done = items.filter { paths.contains($0.path) }
         checked = paths.count
         works = done.filter { $0.lastResult == "works" }.count
         rejected = done.filter { $0.lastResult == "rejected" }.count
-        noAnswer = done.filter { $0.lastResult == "no_result" || $0.lastResult == "forbidden" }.count
+        gone = done.filter(\.isGone).count
+        noAnswer = done.filter { !$0.isGone && ($0.lastResult == "no_result" || $0.lastResult == "forbidden") }.count
     }
 }
 

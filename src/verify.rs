@@ -331,8 +331,15 @@ pub(crate) fn inside_folder(file: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Why a key could not be read: no copy in the vault, and no file where it was. The app shows these
+/// apart, since they are lost unless the file comes back or a copy was kept elsewhere.
+pub const NOT_IN_VAULT: &str = "not in the vault, and its file is gone";
+
 fn run_entry(entry: &PlanKey, keys: &Path, sealed: &Sealed) -> Result<Verdict, String> {
     inside_folder(&entry.file)?;
+    if sealed.text(&entry.file).is_none() && !keys.join(&entry.file).exists() {
+        return Ok(Verdict::NoResult(NOT_IN_VAULT.into()));
+    }
     run_at(
         &entry.recipe,
         &sealed.source(keys, &entry.file),
@@ -542,6 +549,32 @@ mod tests {
     }
 
     #[test]
+    fn a_sealed_copy_answers_for_a_file_that_is_gone() {
+        let entry = PlanKey {
+            file: "gone.txt".into(),
+            recipe: "hetzner".into(),
+            field: None,
+            host: None,
+        };
+        let folder = Path::new("/nonexistent-keyreeve-folder");
+        assert_eq!(
+            run_entry(&entry, folder, &Sealed::default()).unwrap(),
+            Verdict::NoResult(NOT_IN_VAULT.into())
+        );
+        // A field that is not in the copy stops before anything is sent.
+        let entry = PlanKey {
+            field: Some("MISSING".into()),
+            ..entry
+        };
+        let sealed = Sealed::read(r#"{"gone.txt": "TOKEN=x"}"#.as_bytes()).unwrap();
+        let verdict = run_entry(&entry, folder, &sealed);
+        assert!(
+            verdict.is_err(),
+            "the sealed copy is read, not reported as gone"
+        );
+    }
+
+    #[test]
     fn the_history_holds_only_the_result() {
         let dir = std::env::temp_dir().join(format!("keyreeve-history-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -560,7 +593,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].file, "missing.txt");
         assert_eq!(entries[0].result, "no_result");
-        assert!(entries[0].reason.is_some());
+        assert_eq!(entries[0].reason.as_deref(), Some(NOT_IN_VAULT));
         assert!(!text.contains("CANARY"));
         fs::remove_dir_all(&dir).unwrap();
     }

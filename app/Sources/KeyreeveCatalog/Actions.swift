@@ -269,7 +269,8 @@ public struct KeyEdit: Codable, Equatable, Sendable {
         merged.level = edit.level ?? merged.level
         merged.recipes = edit.recipes ?? merged.recipes
         // An empty field says nothing: it never takes away the field a key has, whoever wrote it.
-        merged.field = edit.field.flatMap { $0.isEmpty ? nil : $0 } ?? merged.field
+        // An empty one already written is dropped too, so the file never keeps one.
+        merged.field = edit.field.flatMap { $0.isEmpty ? nil : $0 } ?? merged.field.flatMap { $0.isEmpty ? nil : $0 }
         merged.name = edit.name ?? merged.name
         merged.description = edit.description ?? merged.description
         merged.criticality = edit.criticality ?? merged.criticality

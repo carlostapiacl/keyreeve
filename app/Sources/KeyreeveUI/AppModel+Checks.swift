@@ -106,6 +106,8 @@ extension AppModel {
                 }
                 let identifiedNote = identified.map { Self.identifyNote($0, count: alsoIdentify.count) }
                 await MainActor.run {
+                    // How identifying went stays in the log too, so it can be told later without the window.
+                    if let identifiedNote { self.audit([("\(alsoIdentify.count) keys", identifiedNote)], event: "identify") }
                     self.busy = false
                     self.progress = nil
                     self.load {
@@ -175,6 +177,7 @@ extension AppModel {
                     try CheckRunner.identify(list, providers: providers, binary: binary, keysFolder: folder, files: files, sealed: sealed)
                 }
                 await MainActor.run {
+                    self.audit([("\(list.count) keys", Self.identifyNote(result, count: list.count))], event: "identify")
                     self.busy = false
                     self.load {
                         switch result {

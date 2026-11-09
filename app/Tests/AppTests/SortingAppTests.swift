@@ -210,6 +210,9 @@ struct IdentifyTests {
         #expect(calls.contains("identify"), "calls: \(calls)")
         #expect(model.message?.contains(T("The list could not be updated")) == true, "\(model.message ?? "-")")
         #expect(model.message?.contains(T("The identify command ended with code %d", 2)) == true, "\(model.message ?? "-")")
+        // How identifying went is in the log too, not only on the window.
+        let log = (try? String(contentsOf: files.audit, encoding: .utf8)) ?? ""
+        #expect(log.contains("identify") && log.contains("2 keys"), "log: \(log)")
     }
 
     @Test func identifyingSaysWhyWhenItCannotStart() throws {
@@ -297,4 +300,58 @@ struct LoadKeepsItsWorkTests {
         while !(ran.first && ran.second) && Date() < limit { try await Task.sleep(for: .milliseconds(20)) }
         #expect(ran.first && ran.second)
     }
+}
+
+/// Applying an agent's proposal reads it against the list as it is then, never as it was when the window opened.
+@MainActor
+struct ApplyReadsNowTests {
+    @Test func aProposalShownBeforeTheListLoadedStillSetsItsFields() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("apply-now-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(files: KeyreeveFiles(directory: root), binary: nil)
+        model.unlocked = true
+        model.providers = FieldsInPartsTestsData.providers
+        // edits.json as it was on 2026-11-09: an empty field left by an older version on each of the four.
+        try Data(#"{"gsc-token.json":{"field":"","recipes":["google"]},"youtube_token_restoiq.json":{"field":"","recipes":["google"]},"paypal-lh.json":{"field":"","recipes":["paypal"]},"paypal-recetas.json":{"field":"","recipes":["paypal"]}}"#.utf8)
+            .write(to: model.files.edits)
+        try AgentSorting.save(Data(FieldsInPartsTestsData.approved.utf8), id: "r-fields", home: root)
+        let request = AccessRequests.Entry(id: "r-fields", at: Date(), event: .asked, agent: "claude", provider: "keyreeve", reason: "fields", kind: "sort")
+        // The window read it while the list was still empty.
+        model.items = []
+        #expect(model.proposal(for: request).paths.isEmpty)
+        // Then the list came, with the field names the catalog had for each file.
+        model.items = [
+            CatalogItem(path: "gsc-token.json", recipes: ["google"], labels: ["client_id", "client_secret", "refresh_token", "scopes", "token", "token_uri"]),
+            CatalogItem(
+                path: "youtube_token_restoiq.json", recipes: ["google"],
+                labels: ["account", "client_id", "client_secret", "expiry", "refresh_token", "scopes", "token", "token_uri", "universe_domain"]),
+            CatalogItem(path: "paypal-lh.json", recipes: ["paypal"], labels: ["api_base", "client_id", "secret"]),
+            CatalogItem(
+                path: "paypal-recetas.json", recipes: ["paypal"],
+                labels: ["api_base", "client_id", "mode", "plans_monthly", "plans_yearly", "product_id", "secret", "trial_enabled", "webhook_id"]),
+        ]
+        model.applyProposal(for: request, chosen: Set(FieldsInPartsTestsData.paths))
+        let edits = try JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: model.files.edits))
+        #expect(edits["gsc-token.json"]?.field == "client_id+client_secret+refresh_token")
+        #expect(edits["youtube_token_restoiq.json"]?.field == "client_id+client_secret+refresh_token")
+        #expect(edits["paypal-lh.json"]?.field == "client_id+secret")
+        #expect(edits["paypal-recetas.json"]?.field == "client_id+secret")
+        #expect(!String(decoding: try Data(contentsOf: model.files.edits), as: UTF8.self).contains(#""field":"""#))
+        #expect(!String(decoding: try Data(contentsOf: model.files.edits), as: UTF8.self).contains(#""field" : """#))
+    }
+}
+
+/// The same proposal as the catalog tests, for the app's tests.
+enum FieldsInPartsTestsData {
+    static let approved = #"""
+        [{"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"gsc-token.json","provider":"google"},
+         {"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"youtube_token_restoiq.json","provider":"google"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-lh.json","provider":"paypal"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-recetas.json","provider":"paypal"}]
+        """#
+    static let providers = ProviderDirectory([
+        ProviderInfo(id: "google", name: "Google account", can_identify: true), ProviderInfo(id: "paypal", name: "PayPal", can_identify: true),
+    ])
+    static let paths = ["gsc-token.json", "youtube_token_restoiq.json", "paypal-lh.json", "paypal-recetas.json"]
 }

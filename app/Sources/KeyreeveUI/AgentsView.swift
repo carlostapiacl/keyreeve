@@ -600,7 +600,7 @@ struct SortProposalRow: View {
                 }
                 Spacer()
                 Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
-                Button(T("Apply %d", chosen.count)) { model.apply(proposal, chosen: chosen, for: request) }
+                Button(T("Apply %d", chosen.count)) { model.applyProposal(for: request, chosen: chosen) }
                     .buttonStyle(KRButtonStyle(primary: true))
                     .disabled(model.busy || chosen.isEmpty)
             }
@@ -610,6 +610,12 @@ struct SortProposalRow: View {
             let read = model.proposal(for: request)
             self.proposal = read
             chosen = Set(read.paths)
+        }
+        // What is shown follows the list as it loads, so it says what applying will do.
+        .onChange(of: model.itemsVersion) { _, _ in
+            let read = model.proposal(for: request)
+            if self.proposal?.paths.isEmpty != false { chosen = Set(read.paths) }
+            self.proposal = read
         }
     }
 

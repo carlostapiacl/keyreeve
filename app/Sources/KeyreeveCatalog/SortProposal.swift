@@ -16,6 +16,8 @@ public struct SortProposal: Sendable {
     public var expires: [String: String] = [:]
     /// Every file it touches, in the order the agent gave them.
     public var paths: [String] = []
+    /// Fields the agent named that this list says the file does not hold, by file: left out, and said so.
+    public var fieldsLeftOut: [String: String] = [:]
 
     public init() {}
 
@@ -23,7 +25,13 @@ public struct SortProposal: Sendable {
         var proposal = SortProposal()
         guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return proposal }
         let known = Set(items.map(\.path))
-        proposal.suggestions = Suggester.read(String(decoding: data, as: UTF8.self), items: items, providers: providers)
+        proposal.suggestions = Suggester.read(String(decoding: data, as: UTF8.self), items: items, providers: providers, fieldsChecked: true)
+        for row in rows {
+            guard let path = row["path"] as? String, known.contains(path), let field = row["field"] as? String, !field.isEmpty
+            else { continue }
+            if case .provider(_, let kept)? = proposal.suggestions.first(where: { $0.path == path })?.kind, kept == field { continue }
+            proposal.fieldsLeftOut[path] = field
+        }
         for row in rows {
             guard let path = row["path"] as? String, known.contains(path) else { continue }
             if row["seal"] as? Bool == true { proposal.seal.insert(path) }

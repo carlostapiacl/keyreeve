@@ -90,3 +90,49 @@ struct KeepWhatAKeyHasTests {
         #expect(fieldOnly == KeyEdit(field: "B"))
     }
 }
+
+/// An agent's proposal as it was approved on 2026-11-09: four keys with fields in parts.
+struct FieldsInPartsTests {
+    static let approved = #"""
+        [{"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"gsc-token.json","provider":"google"},
+         {"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"youtube_token_restoiq.json","provider":"google"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-lh.json","provider":"paypal"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-recetas.json","provider":"paypal"}]
+        """#
+    static let providers = ProviderDirectory([
+        ProviderInfo(id: "google", name: "Google account", can_identify: true), ProviderInfo(id: "paypal", name: "PayPal", can_identify: true),
+    ])
+    static let paths = ["gsc-token.json", "youtube_token_restoiq.json", "paypal-lh.json", "paypal-recetas.json"]
+
+    @Test func aFieldTheListCannotVouchForYetIsKeptFromTheAgentsProposal() {
+        // The list of a key whose field names were not read yet, as when the app has just opened.
+        let items = Self.paths.map { CatalogItem(path: $0, level: "ask", recipes: [$0.hasPrefix("paypal") ? "paypal" : "google"]) }
+        let proposal = SortProposal.read(Data(Self.approved.utf8), items: items, providers: Self.providers)
+        for path in Self.paths {
+            guard case .provider(_, let field)? = proposal.suggestion(for: path)?.kind else {
+                Issue.record("no suggestion for \(path)")
+                continue
+            }
+            #expect(field == (path.hasPrefix("paypal") ? "client_id+secret" : "client_id+client_secret+refresh_token"))
+        }
+        #expect(proposal.fieldsLeftOut.isEmpty)
+    }
+
+    @Test func aFieldTheListSaysTheFileLacksIsLeftOutAndSaid() {
+        let items = [CatalogItem(path: "paypal-lh.json", recipes: ["paypal"], labels: ["api_base", "client_id"])]
+        let proposal = SortProposal.read(Data(Self.approved.utf8), items: items, providers: Self.providers)
+        #expect(proposal.suggestion(for: "paypal-lh.json")?.kind == .provider("paypal", field: nil))
+        #expect(proposal.fieldsLeftOut == ["paypal-lh.json": "client_id+secret"])
+    }
+
+    @Test func anEmptyFieldAlreadyWrittenIsDroppedAtTheNextWrite() {
+        #expect(KeyEdit.merging(KeyEdit(description: "d"), into: KeyEdit(field: "")).field == nil)
+        #expect(KeyEdit.merging(KeyEdit(field: "client_id+secret"), into: KeyEdit(field: "")).field == "client_id+secret")
+    }
+
+    @Test func anAssistantStillNeedsTheFieldNamesToNameAField() {
+        let items = [CatalogItem(path: "gsc-token.json", recipes: ["google"])]
+        let answer = #"[{"path":"gsc-token.json","kind":"provider","provider":"google","field":"client_id+client_secret+refresh_token"}]"#
+        #expect(Suggester.read(answer, items: items, providers: Self.providers).first?.kind == .provider("google", field: nil))
+    }
+}

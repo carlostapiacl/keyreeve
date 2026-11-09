@@ -162,7 +162,11 @@ extension Suggester {
     }
 
     /// The assistant's answer, kept only where it names a provider keyreeve knows and a field the file has.
-    public static func read(_ answer: String, items: [CatalogItem], providers: ProviderDirectory) -> [Suggestion] {
+    /// `fieldsChecked` is for an agent's proposal, whose fields keyreeve already checked against the list it gave
+    /// the agent: a key whose field names the app has not read yet keeps the proposed field instead of losing it.
+    public static func read(
+        _ answer: String, items: [CatalogItem], providers: ProviderDirectory, fieldsChecked: Bool = false
+    ) -> [Suggestion] {
         let text = RecipeSpec.extractYAML(answer)
         guard let start = text.firstIndex(of: "["), let end = text.lastIndex(of: "]"),
             let rows = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [[String: Any]]
@@ -177,7 +181,10 @@ extension Suggester {
             switch kind {
             case "provider":
                 guard let id = row["provider"] as? String, known.contains(id) else { return nil }
-                let field = (row["field"] as? String).flatMap { Suggester.holds(item.labels, field: $0) ? $0 : nil }
+                let field = (row["field"] as? String).flatMap { field in
+                    let unknown = fieldsChecked && item.labels.allSatisfy(\.isEmpty)
+                    return !field.isEmpty && (unknown || Suggester.holds(item.labels, field: field)) ? field : nil
+                }
                 return Suggestion(path: path, kind: .provider(id, field: field), why: "assistant", what: what)
             case "untestable": return Suggestion(path: path, kind: .untestable, why: "assistant", what: what)
             case "internal": return Suggestion(path: path, kind: .internalSecret, why: "assistant", what: what)

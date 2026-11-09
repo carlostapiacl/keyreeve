@@ -175,6 +175,12 @@ extension AppModel {
         try? files.writePrivate(data, to: file)
     }
 
+    /// Applies an agent's proposal as it reads against the list now, never a reading kept from when the window
+    /// opened: a list still loading then would have dropped what it could not vouch for, such as a field.
+    public func applyProposal(for request: AccessRequests.Entry, chosen: Set<String>) {
+        apply(proposal(for: request), chosen: chosen, for: request)
+    }
+
     /// The changes an agent proposed, read against today's list.
     public func proposal(for request: AccessRequests.Entry) -> SortProposal {
         guard let data = AgentSorting.load(id: request.id, home: files.directory) else { return SortProposal() }
@@ -229,7 +235,11 @@ extension AppModel {
                 to: self.requestsFile)
             self.reloadRequests()
         }
-        record("accepted: \(edits.count) changes saved; splitting \(toSplit.count), sealing \(sealPaths.count), checking \(checkPaths.count) follow")
+        let leftOut = proposal.fieldsLeftOut.filter { chosen.contains($0.key) }.sorted { $0.key < $1.key }
+            .map { "\($0.key) has no field \($0.value) on the list" }
+        record(
+            "accepted: \(edits.count) changes saved; splitting \(toSplit.count), sealing \(sealPaths.count), checking \(checkPaths.count) follow"
+                + (leftOut.isEmpty ? "" : "; field not set: " + leftOut.joined(separator: ", ")))
         message = T("%d changes saved. Splitting, sealing and checking follow.", chosen.count)
         rebuildCatalog()
         // Splitting first: it makes the files that sealing and checking are about, so a file that is split is

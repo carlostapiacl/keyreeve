@@ -1,0 +1,51 @@
+name: Bug
+description: Something does not work as the README or the app says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste a real key, a real key id or a real provider response. For a security problem, use private reporting instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Where
+      options:
+        - keyreeve command (engine, recipes, proxy)
+        - Mac app
+        - keyreeve-vault (vault, agents, MCP)
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: The output of `git rev-parse --short HEAD` in your checkout.
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: macOS 15.2, Apple silicon
+  - type: textarea
+    id: log
+    attributes:
+      label: Output or log
+      description: Error messages help. Check that nothing in them is a key.
+      render: text

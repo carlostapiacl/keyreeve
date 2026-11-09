@@ -1,0 +1,19 @@
+name: Idea
+description: Something keyreeve could do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The situation, before any solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+  - type: markdown
+    attributes:
+      value: |
+        keyreeve takes care of keys: keeping, checking, rotating and letting agents use them without seeing them. Sandboxing processes and filling web logins are out of its scope.

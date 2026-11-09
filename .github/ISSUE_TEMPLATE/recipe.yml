@@ -1,0 +1,38 @@
+name: Recipe for a provider
+description: Ask for a provider, or plan one you will write.
+labels: [enhancement]
+body:
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      placeholder: Example Cloud
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Link to its API documentation for keys
+    validations:
+      required: true
+  - type: checkboxes
+    id: can
+    attributes:
+      label: What its API allows
+      options:
+        - label: Checking a key with a GET request
+        - label: Creating a key
+        - label: Revoking a key by id
+        - label: Telling whose key it is, or when it expires
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: The permission a key needs, how long a new key takes to work, anything unusual. No real keys or responses.
+  - type: dropdown
+    id: write
+    attributes:
+      label: Will you write it?
+      options:
+        - Yes, I will open a pull request
+        - I would like someone to

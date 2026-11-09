@@ -250,7 +250,11 @@ extension AppModel {
         }
         whenIdle("splitting", skipped: { outcome.skipped.append("splitting, sealing, checking"); finish() }) {
             for item in toSplit {
-                if let names = self.split(item) { outcome.split[item.path] = names } else { outcome.failed.append(item.path) }
+                if let names = self.split(item) {
+                    outcome.split[item.path] = names
+                } else {
+                    outcome.failed.append(self.message.map { "\(item.path) (\($0))" } ?? item.path)
+                }
             }
             self.whenIdle("sealing", skipped: { outcome.skipped.append("sealing, checking"); finish() }) {
                 let toSeal = current(sealPaths).filter { $0.vault == .none }

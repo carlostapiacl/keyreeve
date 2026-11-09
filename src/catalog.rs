@@ -292,7 +292,8 @@ fn build_row(
         if let Some(edited) = &edit.recipes {
             recipes = edited.clone();
         }
-        if let Some(edited) = &edit.field {
+        // An empty field in an edit says nothing, so it never takes away the field the rules give.
+        if let Some(edited) = edit.field.as_ref().filter(|f| !f.is_empty()) {
             field = edited.clone();
         }
         name = edit.name.clone().unwrap_or_default();
@@ -606,6 +607,21 @@ files: { deploy.key: { recipes: [github] } }
         assert_eq!(rows[1].level, Level::Never);
         assert_eq!(rows[1].tags, ["ops"]);
         assert!(parse_edits(r#"{"a":{"level":"sometimes"}}"#).is_err());
+    }
+
+    #[test]
+    fn an_empty_field_in_an_edit_never_takes_away_the_field_of_the_rules() {
+        let mut with_rules = rules(
+            r#"
+rules: []
+files: { gsc.json: { recipes: [google], field: "client_id+client_secret+refresh_token" } }
+"#,
+        );
+        with_rules.edits =
+            parse_edits(r#"{"gsc.json":{"field":"","description":"Search Console"}}"#).unwrap();
+        let rows = build(&[item("gsc.json")], &with_rules, &[]);
+        assert_eq!(rows[0].field, "client_id+client_secret+refresh_token");
+        assert_eq!(rows[0].description, "Search Console");
     }
 
     #[test]

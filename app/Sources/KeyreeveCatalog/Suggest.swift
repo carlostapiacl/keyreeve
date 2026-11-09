@@ -30,8 +30,11 @@ public struct Suggestion: Identifiable, Equatable, Sendable {
         self.what = what
     }
 
-    /// The change it makes, keeping the file's other tags.
-    public func edit(for item: CatalogItem) -> KeyEdit {
+    /// The change it makes, keeping the file's other tags. `fillingOnly` is for a suggestion the person did not
+    /// write, such as an assistant's: it only fills what the key lacks and never changes or takes away a provider,
+    /// a field, a level or a description the key already has.
+    public func edit(for item: CatalogItem, fillingOnly: Bool = false) -> KeyEdit {
+        if fillingOnly { return filling(item) }
         var edit: KeyEdit
         switch kind {
         case .provider(let id, let field):
@@ -48,6 +51,27 @@ public struct Suggestion: Identifiable, Equatable, Sendable {
             edit = KeyEdit()
         }
         // What the person wrote is kept; a description only fills an empty one.
+        if item.description.isEmpty, let what { edit.description = what }
+        return edit
+    }
+
+    private func filling(_ item: CatalogItem) -> KeyEdit {
+        var edit = KeyEdit()
+        let sorted = !item.recipes.isEmpty || item.isUntestable || item.isInternal
+        switch kind {
+        case .provider(let id, let field):
+            if !sorted {
+                edit.tags = item.tags.filter { $0 != "untestable" }
+                edit.recipes = [id]
+            }
+            if item.field.isEmpty, let field, !field.isEmpty, !sorted || item.recipes.contains(id) { edit.field = field }
+        case .untestable:
+            if !sorted { edit.tags = item.tags + ["untestable"] }
+        case .internalSecret:
+            if !sorted { edit.tags = item.tags + ["internal"] }
+        case .notSecret, .described:
+            break
+        }
         if item.description.isEmpty, let what { edit.description = what }
         return edit
     }

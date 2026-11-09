@@ -563,7 +563,8 @@ struct KeyDetail: View {
                         get: { item.field },
                         set: { model.save(KeyEdit(field: $0), for: item) })
                 ) {
-                    Text(T("None")).tag("")
+                    // Once a key has a field, "none" would take it away: only another field replaces it.
+                    if item.field.isEmpty { Text(T("None")).tag("") }
                     ForEach(item.labels, id: \.self) { Text($0).tag($0) }
                     if !item.field.isEmpty && !item.labels.contains(item.field) {
                         Text(item.field).tag(item.field)

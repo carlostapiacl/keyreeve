@@ -64,7 +64,7 @@ extension CatalogItem {
         if let tags = edit.tags { item.tags = tags }
         if let level = edit.level { item.level = level }
         if let recipes = edit.recipes { item.recipes = recipes }
-        if let field = edit.field { item.field = field }
+        if let field = edit.field, !field.isEmpty { item.field = field }
         if let description = edit.description { item.description = description }
         if let host = edit.host { item.host = host }
         if let expires = edit.expires { item.expires = expires }

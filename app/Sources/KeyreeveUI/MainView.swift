@@ -17,6 +17,7 @@ func resultName(_ result: String) -> String {
     case "works": return T("Works")
     case "rejected": return T("Rejected")
     case "no_answer": return T("No answer")
+    case "gone": return T("Not in the vault")
     default: return T("Never checked")
     }
 }
@@ -158,7 +159,13 @@ public struct MainView: View {
 
     @ViewBuilder private var content: some View {
         if selection == .home {
-            HomeView(stats: model.summary.stats, activity: model.activity, model: model) { target, path in
+            HomeView(
+                stats: model.summary.stats, activity: model.activity, model: model,
+                checkAll: {
+                    go(.checkable)
+                    confirmCheck = true
+                }
+            ) { target, path in
                 go(target)
                 search = ""
                 chosenRows = path.map { [$0] } ?? []

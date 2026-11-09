@@ -291,6 +291,8 @@ public let spanish: [String: String] = [
     "need a look": "por revisar",
     "Never": "Nunca",
     "No answer": "Sin respuesta",
+    "Not in the vault": "No está en la bóveda",
+    "Not in the vault, and its file is gone": "No está en la bóveda y su archivo ya no está",
     "No checks yet, and no key used through the vault.": "Aún no hay pruebas ni usos desde la bóveda.",
     "No keys here": "No hay claves aquí",
     "Nobody": "No se prueba",

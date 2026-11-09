@@ -120,6 +120,21 @@ struct ActionTests {
         XCTAssertEqual(run.works, 1)
         XCTAssertEqual(run.rejected, 1)
         XCTAssertEqual(run.noAnswer, 2)
+        XCTAssertEqual(run.gone, 0)
+    }
+
+    @Test func testAKeyGoneFromTheFolderAndTheVaultIsCountedApart() {
+        let gone = CatalogItem(path: "gone.txt", lastResult: "no_result", lastReason: notInVaultReason)
+        let quiet = CatalogItem(path: "quiet.txt", lastResult: "no_result", lastReason: "timed out")
+        let items = [gone, quiet]
+        XCTAssertEqual(gone.isGone, true)
+        XCTAssertFalse(quiet.isGone)
+        XCTAssertEqual(filter(items, by: .result("gone"), search: "").map(\.path), ["gone.txt"])
+        XCTAssertEqual(filter(items, by: .result("no_answer"), search: "").map(\.path), ["quiet.txt"])
+        let run = RunSummary(items: items, checked: ["gone.txt", "quiet.txt"])
+        XCTAssertEqual(run.gone, 1)
+        XCTAssertEqual(run.noAnswer, 1)
+        XCTAssertEqual(gone.attentionRanked?.rank, 1)
     }
 
     @Test func testOnlyApprovedFilesOfferTheirButtons() {

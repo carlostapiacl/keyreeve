@@ -122,6 +122,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
             if days < 0 { return (1, T("Expired on %@: renew it", expiryDay ?? "")) }
             if days <= 14 { return (3, days == 0 ? T("Expires today") : days == 1 ? T("Expires tomorrow") : T("Expires in %d days", days)) }
         }
+        // Gone from the folder with no copy in the vault: only a backup or the provider can bring it back.
+        if isGone && isSecret && !isDone { return (1, T("Not in the vault, and its file is gone")) }
         // A value that is not secret answers to nobody, so an old refusal is no reason to look at it.
         if lastResult == "rejected" && !isBackup && !isDone && isSecret { return (3, T("The last check was rejected")) }
         if needsField { return (3, T("Choose which field holds the key")) }
@@ -155,6 +157,9 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var needsField: Bool {
         field.isEmpty && labels.filter { !$0.isEmpty }.count > 1 && lastReason.contains("more than one value")
     }
+
+    /// The last check found no copy in the vault and no file in the folder. Said by the engine in these words.
+    public var isGone: Bool { lastResult == "no_result" && lastReason.contains(notInVaultReason) }
 
     /// The last check found more than one key of the provider in the file, with no names to tell them apart.
     public var holdsSeveralKeys: Bool { field.isEmpty && lastReason.contains("several keys of this provider") }
@@ -276,6 +281,9 @@ public enum CatalogParser {
     }
 }
 
+/// What `keyreeve verify` records when a key has no sealed copy and its file is gone.
+public let notInVaultReason = "not in the vault, and its file is gone"
+
 public enum Sidebar: Hashable, Sendable {
     case home
     case all
@@ -313,7 +321,8 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .expiring: return !item.isArchived && item.isSecret && (item.daysLeft() ?? Int.max) <= 30
         case .result(let result):
             guard !item.isArchived, item.isSecret else { return false }
-            if result == "no_answer" { return item.lastResult == "no_result" || item.lastResult == "forbidden" }
+            if result == "gone" { return item.isGone }
+            if result == "no_answer" { return !item.isGone && (item.lastResult == "no_result" || item.lastResult == "forbidden") }
             return item.lastResult == result
         case .level(let level): return item.level == level && !item.isArchived
         case .tag(let tag): return item.tags.contains(tag) && !item.isArchived

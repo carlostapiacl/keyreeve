@@ -226,6 +226,10 @@ public enum CheckRunner {
             arguments += ["--rules", files.rules.path]
         }
         arguments += ["--edits", files.edits.path, "--moved", files.moved.path]
+        // Once keys.toml holds every key, it says what each one is; the command reads only such a book.
+        if FileManager.default.fileExists(atPath: files.keyIndex.path) {
+            arguments += ["--keys", files.keyIndex.path]
+        }
         guard try execute(binary, arguments) == 0 else {
             throw CheckError(T("The list could not be updated"))
         }

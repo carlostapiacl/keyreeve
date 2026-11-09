@@ -142,12 +142,20 @@ struct AgentsView: View {
                 if model.sealedWithoutIdentifier > 0 {
                     HStack {
                         Text(model.sealedWithoutIdentifier == 1
-                            ? T("1 sealed key has no identifier yet, so it cannot be chosen.")
-                            : T("%d sealed keys have no identifier yet, so they cannot be chosen.", model.sealedWithoutIdentifier))
+                            ? T("1 sealed key has no identifier yet. Agents do not see it until you offer it.")
+                            : T("%d sealed keys have no identifier yet. Agents do not see them until you offer them.", model.sealedWithoutIdentifier))
                             .font(Theme.caption).foregroundStyle(Theme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                         Spacer()
                         Button(T("Give them identifiers")) { model.assignIdentifiers() }.buttonStyle(KRButtonStyle())
                     }
+                }
+                if model.sealedNotOffered > 0 {
+                    Text(model.sealedNotOffered == 1
+                        ? T("1 sealed key is not offered to agents. Offer it from its page, under Usage.")
+                        : T("%d sealed keys are not offered to agents. Offer one from its page, under Usage.", model.sealedNotOffered))
+                        .font(Theme.caption).foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(14)

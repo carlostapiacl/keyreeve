@@ -77,6 +77,7 @@ extension AppModel {
     /// Opens a permission through the same command an agent would use, so the service asks for your finger.
     public func grant(_ key: KeyIndex.Key, program: String?, duration: String) {
         guard let tool = vaultTool else { return }
+        offerIfWaiting(key.id)
         var arguments = ["grant", key.id, "--for", duration]
         if let program { arguments += ["--program", URL(fileURLWithPath: program).lastPathComponent] }
         message = T("Touch the sensor to give this permission.")
@@ -195,9 +196,9 @@ extension AppModel {
 
     public func setAccount(_ text: String, of id: String) {
         var index = keyIndex
-        guard let at = index.keys.firstIndex(where: { $0.id == id }) else { return }
+        guard index.isTaken(id) else { return }
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        index.keys[at].account = clean.isEmpty ? nil : clean
+        index.update(id: id) { $0.account = clean.isEmpty ? nil : clean }
         do {
             try saveIndex(index)
         } catch {
@@ -230,21 +231,22 @@ extension AppModel {
         }
     }
 
-    /// Gives one to each sealed key that has none, which a person can change afterwards.
+    /// Gives one to each sealed key that has none, which a person can change afterwards. None of them is offered
+    /// to agents: a click for every key is not a person choosing which keys agents may see.
     public func assignIdentifiers() {
         var index = keyIndex
         var added = 0
         for item in items where item.vault == .sealed || item.vault == .outdated {
             // A key that got its identifier before its account was known picks it up here.
-            for existing in index.keys(forSource: item.path) where existing.account == nil {
-                if let found = account(of: item), let at = index.keys.firstIndex(where: { $0.id == existing.id }) {
-                    index.keys[at].account = found
+            if let found = account(of: item) {
+                for existing in index.allKeys(forSource: item.path) where existing.account == nil {
+                    index.update(id: existing.id) { $0.account = found }
                 }
             }
-            guard index.keys(forSource: item.path).isEmpty else { continue }
+            guard index.allKeys(forSource: item.path).isEmpty else { continue }
             let id = index.suggestion(
                 provider: item.recipes.first, project: project(of: item), account: account(of: item), source: item.path)
-            try? index.add(
+            try? index.addUnoffered(
                 KeyIndex.Key(
                     id: id, source: item.path, field: item.field.isEmpty ? nil : item.field, provider: item.recipes.first,
                     project: project(of: item), account: account(of: item),
@@ -253,10 +255,52 @@ extension AppModel {
         }
         do {
             try saveIndex(index)
-            message = added == 1 ? T("1 identifier added") : T("%d identifiers added", added)
+            message = added == 1
+                ? T("1 identifier added, not offered to agents")
+                : T("%d identifiers added, not offered to agents", added)
         } catch {
             message = T("That identifier could not be saved")
         }
+    }
+
+    /// Offers a key to agents, so they can see it and ask for it, or takes it out of their sight. Taken out,
+    /// it also closes: its level, the agents it was open to and the programs allowed with it go.
+    public func setOffered(_ offered: Bool, id: String) {
+        var index = keyIndex
+        if offered {
+            guard !index.isOffered(id), index.isTaken(id) else { return }
+            index.offer(id: id)
+        } else {
+            guard index.isOffered(id) else { return }
+            index.withdraw(id: id)
+        }
+        do {
+            try saveIndex(index)
+        } catch {
+            message = T("That identifier could not be saved")
+            return
+        }
+        guard !offered else { return }
+        let policy = agentPolicy
+        if policy.levels[id] != nil || policy.agents[id] != nil || policy.until[id] != nil || policy.commands[id] != nil {
+            if policy.levels[id] == .always, let key = index.unoffered.first(where: { $0.id == id }) {
+                try? vaultStore.update { $0.dropUnattended(name: key.source) }
+            }
+            updatePolicy { policy in
+                policy.levels[id] = nil
+                policy.until[id] = nil
+                policy.agents[id] = nil
+                policy.commands[id] = nil
+                policy.hashes[id] = nil
+            }
+        }
+        revoke(key: id)
+    }
+
+    /// A person giving a key a level, a program or a permission offers it to agents, if it was not.
+    func offerIfWaiting(_ id: String) {
+        guard !keyIndex.isOffered(id), keyIndex.isTaken(id) else { return }
+        setOffered(true, id: id)
     }
 
     private func saveIndex(_ index: KeyIndex) throws {
@@ -269,7 +313,7 @@ extension AppModel {
             message = T("%@ can print or send whatever it gets, so it cannot be allowed.", URL(fileURLWithPath: program).lastPathComponent)
             return
         }
-        guard let id = keyIndex.keys(forSource: item.path).first?.id else { return }
+        guard let id = (keyIndex.keys(forSource: item.path).first ?? keyIndex.allKeys(forSource: item.path).first)?.id else { return }
         allow(program: program, keyID: id)
     }
 
@@ -283,6 +327,7 @@ extension AppModel {
             message = T("That program could not be read")
             return
         }
+        offerIfWaiting(id)
         updatePolicy { policy in
             if !(policy.commands[id] ?? []).contains(program) { policy.commands[id, default: []].append(program) }
             // Pinned as it is now: if it changes, agents cannot run it until you allow it again.
@@ -292,6 +337,7 @@ extension AppModel {
 
     /// How agents may use a key: nil keeps it yours alone.
     public func setAgentLevel(_ level: AgentPolicy.Level?, for id: String) {
+        if level != nil { offerIfWaiting(id) }
         // "Always" needs a copy sealed to the chip's key that asks nothing, made with this fingerprint once.
         if level == .always { return markAlways(id) }
         // Off "always", the copy goes: nothing can open the key with no fingerprint any more.
@@ -409,7 +455,15 @@ extension AppModel {
 
     /// Sealed keys that still need an identifier before an agent can be allowed.
     public var sealedWithoutIdentifier: Int {
-        items.filter { ($0.vault == .sealed || $0.vault == .outdated) && keyIndex.keys(forSource: $0.path).isEmpty }.count
+        items.filter { ($0.vault == .sealed || $0.vault == .outdated) && keyIndex.allKeys(forSource: $0.path).isEmpty }.count
+    }
+
+    /// Sealed keys with an identifier that no agent sees, since no person offered them yet.
+    public var sealedNotOffered: Int {
+        items.filter { item in
+            (item.vault == .sealed || item.vault == .outdated) && keyIndex.keys(forSource: item.path).isEmpty
+                && !keyIndex.allKeys(forSource: item.path).isEmpty
+        }.count
     }
 
     public func disallow(program: String, for item: CatalogItem) {

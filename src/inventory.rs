@@ -262,7 +262,7 @@ fn write_all(mut file: fs::File, text: &str) -> io::Result<()> {
     file.sync_all()
 }
 
-fn create_private_dir(path: &Path) -> io::Result<()> {
+pub fn create_private_dir(path: &Path) -> io::Result<()> {
     if path.exists() {
         return Ok(());
     }

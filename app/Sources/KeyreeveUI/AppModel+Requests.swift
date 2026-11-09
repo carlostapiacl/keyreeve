@@ -69,6 +69,12 @@ extension AppModel {
             let id: String
             if let existing = index.keys(forSource: item.path).first {
                 id = existing.id
+            } else if let waiting = index.allKeys(forSource: item.path).first {
+                // Answering the request is the person offering the key: it keeps the identifier it had.
+                id = waiting.id
+                index.offer(id: id)
+                try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
+                keyIndex = index
             } else {
                 id = suggestedIdentifier(for: item)
                 let provider = providers.all.first { $0.id == request.provider }

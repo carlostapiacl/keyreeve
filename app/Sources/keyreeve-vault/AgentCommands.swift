@@ -85,8 +85,8 @@ func serveAgents() throws {
     let bridge = AgentBridge(
         policy: { AgentPolicy.load(from: policyFile) },
         names: {
-            let sealed = try store.load().entries.keys
-            return try KeyIndex.load(from: keysFile).keys.filter { sealed.contains($0.source) }.map(\.id)
+            let sealed = Set(try store.load().entries.keys)
+            return try KeyIndex.load(from: keysFile).agentNames(sealed: sealed)
         },
         open: { id, prompt in
             let key = try indexed(id)
@@ -108,10 +108,7 @@ func serveAgents() throws {
                 event: event, key: key, observed: observed,
                 declared: AuditLog.Declared(agent: agent, reason: reason), detail: detail)
         },
-        describe: {
-            let keys = (try? KeyIndex.load(from: keysFile).keys) ?? []
-            return Dictionary(keys.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        },
+        describe: { (try? KeyIndex.load(from: keysFile).agentDescriptions) ?? [:] },
         transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) },
         decideAccess: askAccess,
         updatePolicy: { change in

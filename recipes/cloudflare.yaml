@@ -14,4 +14,10 @@ verify: { method: GET, path: "/client/v4/accounts?per_page=1", reject: [400, 403
 identify:
   request: { method: GET, path: "/client/v4/accounts?per_page=1" }
   fields: { account: $.result.0.name, id: $.result.0.id }
+  # When the token expires, if it does: a user's token answers the first, an account's the second.
+  also:
+    - request: { method: GET, path: "/client/v4/user/tokens/verify" }
+      fields: { expires: $.result.expires_on, token_status: $.result.status }
+    - request: { method: GET, path: "/client/v4/accounts/{id}/tokens/verify" }
+      fields: { expires: $.result.expires_on, token_status: $.result.status }
 suggested_name: "Cloudflare · {account}"

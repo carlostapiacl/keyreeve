@@ -95,7 +95,65 @@ pub fn identify(
             }
         }
     }
+    for lookup in &identify.also {
+        look_up(recipe, lookup, &credential, key, transport, &mut fields);
+    }
     Ok(fields)
+}
+
+/// One further request: it only adds, and a failure leaves what the first one found.
+fn look_up(
+    recipe: &Recipe,
+    lookup: &crate::recipe::Lookup,
+    credential: &Secret,
+    key: &Secret,
+    transport: &mut dyn Transport,
+    fields: &mut BTreeMap<String, String>,
+) {
+    if lookup.fields.keys().all(|name| fields.contains_key(name)) {
+        return;
+    }
+    let wanted = crate::recipe::placeholders(&lookup.request.path);
+    let mut vars = Vec::new();
+    for name in wanted {
+        match fields.get(name) {
+            Some(value) => vars.push((name.to_owned(), value.clone())),
+            // `{key}` comes from the credential, for a provider that takes it in the address.
+            None if name == "key" => {}
+            None => return,
+        }
+    }
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+    let request = Request::for_step(recipe, &lookup.request, &vars, credential);
+    let Ok(response) = transport.send(&request) else {
+        return;
+    };
+    if !lookup.request.accepts(response.status) {
+        return;
+    }
+    let body = response.body.expose();
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
+        return;
+    };
+    for (name, path) in &lookup.fields {
+        if fields.contains_key(name) {
+            continue;
+        }
+        let value = match path.strip_prefix("header:") {
+            Some(header) => response
+                .headers
+                .iter()
+                .find(|(found, _)| found.eq_ignore_ascii_case(header))
+                .map(|(_, value)| value.clone()),
+            None if path.contains(".*") => crate::recipe::extract_all(&json, path),
+            None => extract(&json, path),
+        };
+        if let Some(value) = value {
+            if safe_value(&value, credential) && safe_value(&value, key) {
+                fields.insert(name.clone(), value);
+            }
+        }
+    }
 }
 
 fn xml_tag(body: &str, tag: &str) -> Option<String> {
@@ -126,10 +184,14 @@ fn program_fields(
     recipe: &Recipe,
     key: &Secret,
 ) -> BTreeMap<String, String> {
-    let declared = recipe.identify.as_ref().map(|found| &found.fields);
+    let declared: Vec<&str> = recipe
+        .identify
+        .iter()
+        .flat_map(|found| found.field_names())
+        .collect();
     fields
         .into_iter()
-        .filter(|field| declared.is_some_and(|names| names.contains_key(&field.0)))
+        .filter(|field| declared.contains(&field.0.as_str()))
         .filter(|field| safe_field(field, key))
         .collect()
 }
@@ -249,6 +311,120 @@ mod tests {
 
     fn recipe(name: &str) -> Recipe {
         crate::providers::load(name).unwrap()
+    }
+
+    /// Answers by path, and keeps the paths it was asked for.
+    struct ByPath(Vec<(&'static str, u16, &'static str)>, Vec<String>);
+
+    impl Transport for ByPath {
+        fn send(&mut self, request: &Request) -> Result<Response, TransportError> {
+            let path = request.rendered.path.clone();
+            self.1.push(path.clone());
+            let (status, body) = self
+                .0
+                .iter()
+                .find(|(p, _, _)| path.starts_with(p))
+                .map_or((404, "{}"), |(_, status, body)| (*status, *body));
+            Ok(Response {
+                headers: Vec::new(),
+                status,
+                body: Secret::new(body),
+            })
+        }
+    }
+
+    const ACCOUNTS: (&str, u16, &str) = (
+        "/client/v4/accounts?",
+        200,
+        r#"{"result":[{"name":"Acme","id":"0123456789abcdef0123456789abcdef"}]}"#,
+    );
+
+    #[test]
+    fn a_cloudflare_user_token_says_when_it_expires() {
+        let mut answer = ByPath(
+            vec![
+                ACCOUNTS,
+                (
+                    "/client/v4/user/tokens/verify",
+                    200,
+                    r#"{"success":true,"result":{"id":"t1","status":"active","expires_on":"2026-12-01T00:00:00Z"}}"#,
+                ),
+            ],
+            Vec::new(),
+        );
+        let fields = identify(&recipe("cloudflare"), &Secret::new("k"), &mut answer).unwrap();
+        assert_eq!(fields["account"], "Acme");
+        assert_eq!(fields["expires"], "2026-12-01T00:00:00Z");
+        assert_eq!(fields["token_status"], "active");
+        assert_eq!(answer.1.len(), 2, "nothing left to ask: {:?}", answer.1);
+    }
+
+    #[test]
+    fn a_cloudflare_account_token_is_asked_under_its_account() {
+        let mut answer = ByPath(
+            vec![
+                ACCOUNTS,
+                ("/client/v4/user/tokens/verify", 401, r#"{"success":false}"#),
+                (
+                    "/client/v4/accounts/0123456789abcdef0123456789abcdef/tokens/verify",
+                    200,
+                    r#"{"result":{"id":"t2","status":"active","expires_on":"2027-03-04T05:06:07Z"}}"#,
+                ),
+            ],
+            Vec::new(),
+        );
+        let fields = identify(&recipe("cloudflare"), &Secret::new("k"), &mut answer).unwrap();
+        assert_eq!(fields["expires"], "2027-03-04T05:06:07Z");
+        assert_eq!(fields["id"], "0123456789abcdef0123456789abcdef");
+    }
+
+    #[test]
+    fn a_token_that_never_expires_gets_no_day_and_a_failure_keeps_the_rest() {
+        let mut never = ByPath(
+            vec![
+                ACCOUNTS,
+                (
+                    "/client/v4/user/tokens/verify",
+                    200,
+                    r#"{"result":{"id":"t3","status":"active"}}"#,
+                ),
+            ],
+            Vec::new(),
+        );
+        let fields = identify(&recipe("cloudflare"), &Secret::new("k"), &mut never).unwrap();
+        assert!(!fields.contains_key("expires"));
+        assert_eq!(fields["token_status"], "active");
+
+        let mut broken = ByPath(
+            vec![ACCOUNTS, ("/client/v4/user/tokens/verify", 200, "not json")],
+            Vec::new(),
+        );
+        let fields = identify(&recipe("cloudflare"), &Secret::new("k"), &mut broken).unwrap();
+        assert_eq!(fields["account"], "Acme");
+        assert!(!fields.contains_key("expires"));
+    }
+
+    #[test]
+    fn a_further_answer_cannot_hand_back_the_key() {
+        let mut answer = ByPath(
+            vec![
+                ACCOUNTS,
+                (
+                    "/client/v4/user/tokens/verify",
+                    200,
+                    r#"{"result":{"status":"CANARYkey","expires_on":"2026-12-01T00:00:00Z"}}"#,
+                ),
+            ],
+            Vec::new(),
+        );
+        let fields = identify(
+            &recipe("cloudflare"),
+            &Secret::new("CANARYkey"),
+            &mut answer,
+        )
+        .unwrap();
+        assert!(!format!("{fields:?}").contains("CANARY"));
+        assert_eq!(fields["expires"], "2026-12-01T00:00:00Z");
     }
 
     #[test]

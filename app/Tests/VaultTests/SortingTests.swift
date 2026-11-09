@@ -120,5 +120,15 @@ struct SortingTests {
         #expect(notes.filter { $0.hasPrefix("done.txt: host is reached over https only") }.count == 1)
         #expect(notes.filter { $0.hasPrefix("done.txt: expires must be a day") }.count == 1)
     }
-}
 
+    @Test func aFieldInPartsIsAFieldTheFileHoldsWhenEveryPartIsThere() {
+        let list = Data(#"""
+            {"keys":[{"path":"g.json","provider":"google","level":"ask","fields":["client_id","client_secret","refresh_token"]}],
+             "providers":[{"id":"google","name":"Google"}]}
+            """#.utf8)
+        let ok = AgentSorting.notes(for: [["path": "g.json", "field": "client_id+client_secret+refresh_token"]], inventory: list)
+        #expect(!ok.contains { $0.contains("has no field") })
+        let missing = AgentSorting.notes(for: [["path": "g.json", "field": "client_id+nope"], ["path": "g.json", "field": "client_id+"]], inventory: list)
+        #expect(missing.filter { $0.contains("has no field") }.count == 2)
+    }
+}

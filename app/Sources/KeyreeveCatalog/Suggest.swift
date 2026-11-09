@@ -35,7 +35,9 @@ public struct Suggestion: Identifiable, Equatable, Sendable {
         var edit: KeyEdit
         switch kind {
         case .provider(let id, let field):
-            edit = KeyEdit(tags: item.tags.filter { $0 != "untestable" }, recipes: [id], field: field ?? "")
+            // No field named keeps the one the key has: a proposal that only names a provider must not
+            // take away the field the person chose.
+            edit = KeyEdit(tags: item.tags.filter { $0 != "untestable" }, recipes: [id], field: field)
         case .untestable:
             edit = KeyEdit(tags: item.tags.filter { $0 != "untestable" } + ["untestable"], recipes: [])
         case .internalSecret:
@@ -79,6 +81,13 @@ public enum Suggester {
             }
             return nil
         }
+    }
+
+    /// Whether a file with these fields holds `field`: one name, or several joined with `+` for a key in
+    /// parts, each of them in the file.
+    public static func holds(_ labels: [String], field: String) -> Bool {
+        let parts = field.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+        return !parts.isEmpty && parts.allSatisfy { !$0.isEmpty && labels.contains($0) }
     }
 
     /// The field that holds this provider's key, when the file has several and one name says so: its usual
@@ -144,7 +153,7 @@ extension Suggester {
             switch kind {
             case "provider":
                 guard let id = row["provider"] as? String, known.contains(id) else { return nil }
-                let field = (row["field"] as? String).flatMap { item.labels.contains($0) ? $0 : nil }
+                let field = (row["field"] as? String).flatMap { Suggester.holds(item.labels, field: $0) ? $0 : nil }
                 return Suggestion(path: path, kind: .provider(id, field: field), why: "assistant", what: what)
             case "untestable": return Suggestion(path: path, kind: .untestable, why: "assistant", what: what)
             case "internal": return Suggestion(path: path, kind: .internalSecret, why: "assistant", what: what)

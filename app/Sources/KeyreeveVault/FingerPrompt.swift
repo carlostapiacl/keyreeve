@@ -42,6 +42,18 @@ public enum FingerPrompt {
         return head + Self.account(account) + with + Self.lasts(lasts) + said(reason)
     }
 
+    /// "let python3 use 3 keys (meta-ads, calcom, sentry) with python3, for 5 min: “weekly report”". One finger for all.
+    public static func useMany(
+        who: String, keys: [String], program: String? = nil, lasts: Lasts? = nil, always: String? = nil, reason: String? = nil
+    ) -> String {
+        let shown = keys.prefix(6).joined(separator: ", ") + (keys.count > 6 ? (spanish ? " y \(keys.count - 6) más" : " and \(keys.count - 6) more") : "")
+        let with = program.map { spanish ? " con \($0)" : " with \($0)" } ?? ""
+        let count = spanish ? "\(keys.count) claves" : "\(keys.count) keys"
+        let head = spanish ? "dejar que \(who) use \(count) (\(shown))" : "let \(who) use \(count) (\(shown))"
+        let how = always.map { spanish ? ", siempre en \($0)" : ", always in \($0)" } ?? Self.lasts(lasts)
+        return head + with + how + said(reason)
+    }
+
     /// "give the real key resend to node: “send the test email”"
     public static func real(who: String, key: String, account: String? = nil, reason: String? = nil) -> String {
         let head = spanish ? "dar la clave real de \(key)" + Self.account(account) + " a \(who)"

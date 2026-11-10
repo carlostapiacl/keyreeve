@@ -253,8 +253,8 @@ public final class KeyService: @unchecked Sendable {
     /// A file's SHA-256, for the program and script a standing permission pins.
     let fingerprint: (_ path: String) -> String?
     let isRunning: (_ pid: Int32) -> Bool
-    /// How long a use that needs the person waits for others from the same caller, so they share one window.
-    let gather: TimeInterval
+    /// How a use that needs the person waits for others from the same caller, so they share one window.
+    let gather: Gather
     /// Uses waiting to be asked together, by who asks.
     var gatherings: [String: Gathering] = [:]
     var revocations = 0
@@ -275,7 +275,7 @@ public final class KeyService: @unchecked Sendable {
         openStanding: @escaping (_ source: String) -> Data? = { _ in nil },
         fingerprint: @escaping (_ path: String) -> String? = AgentPolicy.fingerprint(of:),
         isRunning: @escaping (_ pid: Int32) -> Bool = { kill($0, 0) == 0 || errno == EPERM },
-        gather: TimeInterval = 0
+        gather: Gather = .never
     ) {
         self.openMany = openMany
         self.choose = choose
@@ -498,7 +498,7 @@ public final class KeyService: @unchecked Sendable {
         let quiet = (request.unattended == true ? openUnattended(id, request.agent, key.source) : nil) ?? standingValue(for: ask)
         // A caller that brings its own words already asked its own question, such as an agent's window: it is not
         // asked again in a shared one.
-        if quiet == nil, gather > 0, request.prompt == nil { return try coalesce(ask) }
+        if quiet == nil, gather.hold != nil, request.prompt == nil { return try coalesce(ask) }
         return try personal(ask, quiet: quiet)
     }
 

@@ -38,6 +38,21 @@ public func translate(_ english: String, to language: Language) -> String {
 }
 
 public let spanish: [String: String] = [
+    // Key sets.
+    "Key sets": "Conjuntos de claves",
+    "Make a set from what this project used": "Armar un conjunto con lo que usó este proyecto",
+    "New set": "Nuevo conjunto",
+    "Edit set": "Editar conjunto",
+    "The keys a project needs, asked for in one window with one fingerprint: keyreeve-vault use --set NAME -- command. A set grants nothing on its own.": "Las claves que necesita un proyecto, pedidas en una sola ventana con una sola huella: keyreeve-vault use --set NOMBRE -- comando. Un conjunto por sí solo no permite nada.",
+    "No set yet.": "Todavía no hay conjuntos.",
+    "Nothing used two or more keys from one folder in the last hour.": "En la última hora nada usó dos o más claves desde una misma carpeta.",
+    "Always, for one program in one folder": "Siempre, para un programa en una carpeta",
+    "Name, such as weekly-report": "Nombre, como reporte-semanal",
+    "Folder, optional": "Carpeta, opcional",
+    "%d keys chosen. Only keys offered to agents are listed.": "%d claves elegidas. Solo aparecen las claves ofrecidas a agentes.",
+    "The set could not be saved": "No se pudo guardar el conjunto",
+    "%d times": "%d veces",
+    "Since %@": "Desde %@",
     "An internal secret has no provider to ask": "Un secreto interno no tiene proveedor a quién preguntar",
     "Internal secrets": "Secretos internos",
     "Internal secret, no provider": "Secreto interno, sin proveedor",

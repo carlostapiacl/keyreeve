@@ -277,6 +277,25 @@ keyreeve-vault env app.env -- ./deploy.sh
 
 One fingerprint opens them all for that command.
 
+### Several keys at once
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 report.py
+keyreeve-vault use --set weekly-report --as calcom=CAL_KEY -- python3 report.py
+```
+
+Each key goes in its own variable. One window lists them with the program, the folder and the reason: untick what you do not want,
+choose 5 minutes, until it finishes, a day, or always for this program in this folder, and give one fingerprint. Single uses from
+one script that arrive within two seconds share that window too.
+
+*Always* is bound to the program's path and SHA-256, the script it runs when its first argument is a file, and the folder. A copy of
+each key is sealed to the chip's key that asks nothing, as for *Always, no fingerprint*, so a script that runs on Monday at 9:00 needs
+no one. A changed program or script, another folder or a key added later asks again. Remove it under **Agents**, in **Key sets**.
+
+A set is a name for a list of keys, made in the app under **Agents**: by hand, or with **Make a set from what this project used**,
+which suggests the keys one folder and program used in the last hour. Sets live in `~/.keyreeve/sets.toml`. A set grants nothing on
+its own, and lists only keys offered to agents. No agent tool makes one.
+
 ### Agents over MCP
 
 An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. The app's **Agents** section shows
@@ -325,6 +344,9 @@ hours or always, or **Deny**. After a yes the key is free to that agent alone, w
 time is up. A no stops that agent asking again in its session. A key already open to another agent is not reopened on new terms:
 you add the second agent under **Agents**.
 
+An agent that needs several keys sends `keys` in place of `key`. You see them in one window, untick what you do not want, and one
+fingerprint opens the rest, so its next `use_key` asks nothing.
+
 When the agent asks for a provider whose key is not saved, the request waits in the app. Pick the file that holds it and press
 **Save and allow**: it is sealed, named and opened to that agent in one step. With no file, **Paste a new one** takes a key you copy
 from the provider. If the agent knows which account the key should belong to, it says so with `account`, and the file that matches
@@ -359,7 +381,8 @@ keyreeve-vault log --key resend --csv    # for a spreadsheet
 ```
 
 It joins the usage log, what agents ran, every check of a key and your own uses, with names in place of file paths. Each decision
-you make in the app goes in it too: a level changed, a request answered, a pause. No value is in any of them.
+you make in the app goes in it too: a level changed, a request answered, a pause. No value is in any of them. In the app's **Log**, a
+request or use that repeats, such as a bot polling every thirty seconds, is one row with a count; the file keeps every line.
 
 ### With seisin
 

@@ -83,6 +83,9 @@ struct KeyUsagePanel: View {
 struct UsageRow: View {
     let entry: AuditLog.Entry
     let showsKey: Bool
+    /// How many identical lines this row stands for, the newest shown.
+    var count = 1
+    var since: Date?
 
     static func label(of event: String) -> String {
         switch event {
@@ -98,6 +101,7 @@ struct UsageRow: View {
         case "sealed": return T("Sealed")
         case "rotated": return T("Rotated")
         case "copied": return T("Copied")
+        case "standing": return T("Always, for one program in one folder")
         default: return event
         }
     }
@@ -115,6 +119,10 @@ struct UsageRow: View {
             HStack(spacing: 6) {
                 Text(Self.label(of: entry.event)).font(Theme.caption).foregroundStyle(Theme.text)
                 if showsKey { Text(entry.key).font(Theme.code).foregroundStyle(Theme.muted).lineLimit(1) }
+                if count > 1 {
+                    Text(T("%d times", count)).font(Theme.caption).foregroundStyle(Theme.muted)
+                        .help(since.map { T("Since %@", $0.formatted(date: .abbreviated, time: .shortened)) } ?? "")
+                }
                 Spacer(minLength: 4)
                 Text(entry.at, format: .dateTime.day().month().hour().minute())
                     .font(Theme.caption).foregroundStyle(Theme.faint)
@@ -150,7 +158,8 @@ struct UsageLogSheet: View {
             if let line = model.usage.brokenLine {
                 Text((line == 0 ? T("The usage log could not be read.") : T("The usage log was changed at line %d.", line))).font(Theme.caption).foregroundStyle(Theme.bad)
             }
-            List(shown, id: \.hash) { UsageRow(entry: $0, showsKey: true) }
+            // Lines that repeat, such as a bot's polling, are one row with a count. The file keeps every line.
+            List(LogGroups.collapse(shown)) { UsageRow(entry: $0.entry, showsKey: true, count: $0.count, since: $0.since) }
         }
         .padding(inline ? Theme.pagePadding : 16)
         .frame(minWidth: 560, minHeight: 420)

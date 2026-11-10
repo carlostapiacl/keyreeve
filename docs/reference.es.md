@@ -91,8 +91,8 @@ elijas, en una sola pantalla:
   Acceso total al disco.
 - **Qué hace.** Separa cada archivo en piezas, dice qué es cada una (clave, configuración, usuario y clave, documento o llave
   pública), junta las partes de una clave (client id y secreto, las tres de Google, una access key con su secreto y el endpoint como
-  servidor), une la misma clave encontrada en dos lugares y prueba cada clave con los proveedores que podrían ser suyos. El que
-  responde es su proveedor.
+  servidor) y une la misma clave encontrada en dos lugares. Una clave solo se prueba con el único proveedor que indica su
+  prefijo, el nombre de su variable o su client id; un nombre que solo menciona un proveedor se muestra como sugerencia y no envía nada.
 - **Revisar.** Los valores siguen tapados. Las que funcionan quedan elegidas, las muertas no, la configuración y las llaves públicas
   nunca se sellan, y tú decides solo las dudosas.
 - **Sellar.** Una huella. Cada clave queda con identificador y sin ofrecer a los agentes. Con un clic puedes ofrecer las que ya usa
@@ -404,7 +404,7 @@ El comando `keyreeve` funciona en cualquier sistema con Rust, y no necesita ni l
 ### Mira lo que tienes
 
 `keyreeve bring` es lo que corre Traer en la app. Muestra cada clave que encuentra, qué es, su proveedor y si funciona, y nunca un
-valor ni un cambio a un archivo:
+valor ni un cambio a un archivo. Una clave solo se envía al único proveedor que indica su prefijo, su variable o su client id:
 
 ```bash
 keyreeve bring --places --projects ~/code --dry-run   # busca, no prueba nada

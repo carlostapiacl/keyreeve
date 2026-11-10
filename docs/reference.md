@@ -89,8 +89,8 @@ choose, in one screen:
   Access.
 - **What it does.** Splits each file into pieces, says what each is (a key, configuration, a login, a document or a public key),
   puts the parts of one key together (client id and secret, Google's three, an access key and its secret with the endpoint as the
-  server), joins the same key found in two places, and checks each key with the providers that could own it. The one that
-  answers is its provider.
+  server), and joins the same key found in two places. A key is checked only by the one provider its prefix, its variable
+  name or its client id names; a name that only mentions a provider is shown as a guess and sends nothing.
 - **Review.** Values stay hidden. Keys that work are chosen, dead ones are not, configuration and public keys are never sealed,
   and you decide only the doubtful ones.
 - **Seal.** One fingerprint. Each key gets an identifier and is not offered to agents. One click can offer the ones a project's
@@ -389,7 +389,7 @@ The `keyreeve` command works on any system with Rust, and needs neither the app 
 ### See what you have
 
 `keyreeve bring` is what the app's Bring in runs. It prints each key it finds, what it is, its provider and whether it works,
-and never a value or a change to a file:
+and never a value or a change to a file. A key is only sent to the one provider its prefix, variable or client id names:
 
 ```bash
 keyreeve bring --places --projects ~/code --dry-run   # look, check nothing

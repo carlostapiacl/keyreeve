@@ -61,6 +61,8 @@ struct AgentsView: View {
                     if index > 0 { Divider() }
                     if request.kind == "sort" {
                         SortProposalRow(request: request, model: model)
+                    } else if request.kind == AgentBringing.kind {
+                        BringProposalRow(request: request, model: model)
                     } else if request.isRotation {
                         RotationRequestRow(request: request, model: model)
                     } else {
@@ -553,6 +555,38 @@ struct RotationRequestRow: View {
 
 /// An agent's proposal to sort many keys, in one list: each file with what would change, all chosen to
 /// start, and one button to apply the chosen ones. Checking asks for the fingerprint as always.
+/// An agent's proposal of keys to bring in. Reviewing it looks again and checks each key, in Bring in.
+struct BringProposalRow: View {
+    let request: AccessRequests.Entry
+    @ObservedObject var model: AppModel
+    @State private var proposal: AgentBringing.Proposal?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(T("%@ proposes bringing in %d keys", request.agent, proposal?.sealCount ?? 0))
+                    .font(Theme.rowTitle).foregroundStyle(Theme.text)
+                Spacer(minLength: 8)
+                Text(request.at, style: .relative).font(Theme.caption).foregroundStyle(Theme.faint)
+            }
+            if let reason = request.reason {
+                Text("\u{201C}\(reason)\u{201D}").font(Theme.body).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(T("Reviewing looks again where the agent looked and checks each key with its own provider. You change what you want, and seal with your fingerprint."))
+                .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                Button(T("Decline")) { model.decline(request) }.buttonStyle(KRButtonStyle())
+                Button(T("Review")) { model.reviewBringProposal(request) }
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .disabled(proposal == nil || model.bringing != nil)
+            }
+        }
+        .onAppear { proposal = AgentSorting.load(id: request.id, home: model.files.directory).flatMap(AgentBringing.decode) }
+    }
+}
+
 struct SortProposalRow: View {
     let request: AccessRequests.Entry
     @ObservedObject var model: AppModel

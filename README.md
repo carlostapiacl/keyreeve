@@ -99,6 +99,8 @@ Agents connect over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault 
 | `run_with_key` | runs a program you allowed, pinned by its SHA-256, with the real key in one variable |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes, only while you allow it |
+| `find_keys` | finds keys on this Mac or in a folder, by name and place, with no value and no provider check |
+| `propose_bring` | proposes which keys found to seal; you review it in Bring in and seal with one fingerprint |
 
 Every yes, no and use goes in `~/.keyreeve/audit.jsonl`, with no values. Each line carries the hash of the one before, so
 `keyreeve-vault audit --verify` finds an edit.

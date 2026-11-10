@@ -1,4 +1,5 @@
 import KeyreeveCatalog
+import KeyreeveVault
 import SwiftUI
 
 /// Bring in, on one screen: where to look, then what was found with values hidden, then one fingerprint.
@@ -121,6 +122,7 @@ private struct BringReview: View {
             Text(T("What was found")).font(Theme.title).foregroundStyle(Theme.text)
             Text(T("Values stay hidden. Decide only the doubtful ones; the rest is already chosen."))
                 .font(Theme.body).foregroundStyle(Theme.muted)
+            if let request = state.request { agentBanner(request) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     group(T("Work"), icon: "checkmark.circle.fill", tone: .good, rows: state.candidates(.works), toggles: true)
@@ -159,6 +161,28 @@ private struct BringReview: View {
         .padding(24)
     }
 
+    /// Whose suggestions these are, set apart, with the person's say over the names.
+    private func agentBanner(_ request: AccessRequests.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(T("%@ suggested what to seal. Its choices are marked, and you can change any of them.", request.agent), systemImage: "sparkles")
+                .font(Theme.body).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+            if let reason = request.reason {
+                Text("\u{201C}\(reason)\u{201D}").font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(2)
+            }
+            Toggle(T("Use the names and notes it suggested"), isOn: Binding(
+                get: { state.useAgentNames },
+                set: { model.bringing?.useAgentNames = $0 }))
+                .toggleStyle(.checkbox).font(Theme.caption)
+            if !state.agentMissed.isEmpty {
+                Text(T("%d of its choices no longer match what was found: the file changed or is gone.", state.agentMissed.count))
+                    .font(Theme.caption).foregroundStyle(Theme.warn)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.smallRadius))
+    }
+
     @ViewBuilder private var doubtful: some View {
         let rows = state.candidates(.doubtful)
         if !rows.isEmpty {
@@ -171,7 +195,7 @@ private struct BringReview: View {
                 }
                 ForEach(rows) { row in
                     HStack(spacing: 8) {
-                        BringRow(candidate: row, model: model)
+                        BringRow(candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id])
                         Picker("", selection: Binding(
                             get: { state.decisions[row.id] },
                             set: { if let seal = $0 { model.decide(row.id, seal: seal) } })
@@ -193,7 +217,7 @@ private struct BringReview: View {
         if !rows.isEmpty {
             DisclosureGroup(isExpanded: $showOther) {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(rows) { BringRow(candidate: $0, model: model) }
+                    ForEach(rows) { BringRow(candidate: $0, model: model, agent: nil, choice: nil) }
                 }
                 .padding(.top, 4)
             } label: {
@@ -213,7 +237,7 @@ private struct BringReview: View {
                         get: { state.decisions[row.id] == true },
                         set: { model.decide(row.id, seal: $0) })
                     ) {
-                        BringRow(candidate: row, model: model)
+                        BringRow(candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id])
                     }
                 }
             }
@@ -225,6 +249,9 @@ private struct BringReview: View {
 private struct BringRow: View {
     let candidate: BringCandidate
     @ObservedObject var model: AppModel
+    /// The agent that proposed this review, and what it suggested for this key.
+    let agent: String?
+    let choice: AgentBringing.Proposal.Item?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -232,6 +259,7 @@ private struct BringRow: View {
                 Text(candidate.partNames.isEmpty ? T("whole file") : candidate.partNames)
                     .font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
                 Text(origin).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.middle)
+                if let agent, let choice { suggestion(agent, choice) }
             }
             Spacer(minLength: 6)
             if candidate.duplicate { Chip(text: T("%d places", candidate.origins.count)) }
@@ -248,6 +276,16 @@ private struct BringRow: View {
                 Text(T(reason)).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(1)
             }
         }
+    }
+
+    /// What the agent suggested, in its words and set apart from keyreeve's own.
+    private func suggestion(_ agent: String, _ choice: AgentBringing.Proposal.Item) -> some View {
+        var parts = [choice.seal ? T("%@ suggests sealing it", agent) : T("%@ suggests skipping it", agent)]
+        if let id = choice.id { parts.append(T("as %@", id)) }
+        if let provider = choice.provider, provider != candidate.provider { parts.append(T("says %@", model.providerName(provider))) }
+        if let words = choice.description ?? choice.reason { parts.append("\u{201C}\(words)\u{201D}") }
+        return Label(parts.joined(separator: " · "), systemImage: "sparkles")
+            .font(Theme.caption).foregroundStyle(Theme.accent).lineLimit(1).truncationMode(.tail)
     }
 
     private var origin: String {

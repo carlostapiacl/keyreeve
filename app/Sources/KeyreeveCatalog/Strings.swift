@@ -825,6 +825,18 @@ public let spanish: [String: String] = [
     "public": "pública",
     "Each has an identifier, and no agent sees it until you offer it. Your files stay as they were.": "Cada una tiene un identificador y ningún agente la ve hasta que la ofrezcas. Tus archivos quedan como estaban.",
     "Offer the %d your scripts already use": "Ofrecer las %d que ya usan tus scripts",
+    // An agent proposing keys to bring in.
+    "That proposal could not be read. Decline it, and ask the agent again.": "No se pudo leer esa propuesta. Recházala y pídesela de nuevo al agente.",
+    "%@ proposes bringing in %d keys": "%@ propone traer %d claves",
+    "%@ proposes bringing in keys": "%@ propone traer claves",
+    "Reviewing looks again where the agent looked and checks each key with its own provider. You change what you want, and seal with your fingerprint.": "Al revisar, Keyreeve busca de nuevo donde buscó el agente y prueba cada clave con su propio proveedor. Cambias lo que quieras y sellas con tu huella.",
+    "%@ suggested what to seal. Its choices are marked, and you can change any of them.": "%@ sugirió qué sellar. Sus elecciones están marcadas y puedes cambiar cualquiera.",
+    "Use the names and notes it suggested": "Usar los nombres y notas que sugirió",
+    "%d of its choices no longer match what was found: the file changed or is gone.": "%d de sus elecciones ya no calzan con lo encontrado: el archivo cambió o ya no está.",
+    "%@ suggests sealing it": "%@ sugiere sellarla",
+    "%@ suggests skipping it": "%@ sugiere omitirla",
+    "as %@": "como %@",
+    "says %@": "dice %@",
     "Bring in keys…": "Traer claves…",
     "Find keys in the usual places on this Mac or in a folder": "Busca claves en los lugares típicos de este Mac o en una carpeta",
     // Reasons `keyreeve bring` gives for a key it could not check.

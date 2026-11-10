@@ -314,6 +314,8 @@ Las herramientas que recibe un agente:
 | `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios para muchos archivos, cuando lo activas |
+| `find_keys` | busca claves en este Mac o en una carpeta, por nombre y lugar, sin valores y sin probar nada con el proveedor |
+| `propose_bring` | propone cuáles sellar de las encontradas, para que la revises en Traer y selles con una sola huella |
 
 `use_key` funciona con cualquier comando, incluido `curl`. Una clave SSH inicia sesión a través de keyreeve. Una clave sin proveedor
 solo puede ir a un programa que permitas con `run_with_key`: si el archivo cambia, se rechaza hasta que lo vuelvas a permitir. Las
@@ -364,6 +366,22 @@ probadas y selladas, que tus agentes usan con `use_key`.
 
 Un servidor que sugiere un agente se guarda pero no queda aprobado. La página de la clave lo dice, y **Aprobar … y probar** lo aprueba
 después de que confirmas y prueba la clave ahí.
+
+### Cuando un agente trae tus claves
+
+Pídele a un agente "busca todas mis claves y sella las que corresponda". Con `find_keys` corre lo mismo que [Traer](#traer), sin
+probar nada: los lugares típicos de este Mac, los `.env` de las carpetas de proyectos que indique, o una carpeta. Recibe cada clave
+y cada usuario con clave por número, con su archivo y línea, los nombres que tiene, su proveedor (solo con evidencia fuerte) o una
+sugerencia, si apareció dos veces y si parece ya sellada, según el lugar y nunca según el valor. La configuración, los documentos y
+las llaves públicas solo se cuentan. Ningún valor y ninguna consulta a un proveedor.
+
+Con `propose_bring` indica los números que hay que sellar, con un identificador, una descripción y etiquetas si quiere, y los que hay
+que omitir con un motivo. Un número que no salió de una búsqueda, o un proveedor que keyreeve no conoce, rechaza la propuesta entera.
+La propuesta espera en **Agentes**. **Revisar** busca de nuevo donde buscó el agente, prueba cada clave con su propio proveedor como
+lo hace Traer y abre la revisión con lo que eligió el agente marcado. Cambia lo que quieras, o desactiva sus nombres, y **Sellar** con
+una sola huella. El proveedor que nombra el agente solo se muestra: la clave se guarda con el proveedor que indica su propia
+evidencia. Las claves selladas reciben identificador y no se ofrecen a los agentes, así que el agente no las ve en `list_keys` y
+solo tú puedes ofrecerlas. El agente sabe cuántas se sellaron, nunca cuáles.
 
 ### Un registro para todo
 

@@ -303,6 +303,8 @@ The tools an agent gets:
 | `request_access` | asks you to open a closed key, or to save one for a provider |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes for many files, when you turn it on |
+| `find_keys` | finds keys on this Mac or in a folder, by name and place, with no value and no provider check |
+| `propose_bring` | proposes which keys found to seal, for you to review in Bring in and seal with one fingerprint |
 
 `use_key` works with any command, including `curl`. An SSH key signs in through keyreeve. A key with no provider can only go to a
 program you allow with `run_with_key`: if the file changes, it is refused until you allow it again. Shells, interpreters, `curl`, `env`
@@ -350,6 +352,21 @@ ones, checks the ones it should, which may ask for your fingerprint, and seals t
 
 A server an agent suggests is saved but not approved. The key's page says so, and **Approve … and check** approves it after you
 confirm and checks the key there.
+
+### When an agent brings keys in
+
+Ask an agent to "find all my keys and seal the ones that should be". With `find_keys` it runs what [Bring in](#bring-in) runs, as a
+dry run: the usual places on this Mac, `.env` files under the project folders it names, or one folder. It gets each key and login by
+number, with its file and line, the names in it, its provider (only from strong evidence) or a guess, whether it was found twice and
+whether it looks sealed already, judged by place and never by value. Configuration, documents and public keys are only counted. No
+value, and no request to any provider.
+
+With `propose_bring` it names the numbers to seal, with an identifier, a description and tags if it wants, and the ones to skip with
+a reason. A number from no search, or a provider keyreeve does not know, refuses the whole proposal. It waits under **Agents**.
+**Review** looks again where the agent looked, checks each key with its own provider as Bring in does, and opens the review with the
+agent's choices marked. Change any of them, or turn off its names, and **Seal** with one fingerprint. A provider the agent names is
+only shown: a key is saved with the provider its own evidence names. Sealed keys get identifiers and are not offered to agents, so
+the agent does not see them in `list_keys`, and only you can offer them. The agent learns how many were sealed, never which.
 
 ### One log for everything
 

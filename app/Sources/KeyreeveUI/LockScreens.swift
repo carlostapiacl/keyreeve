@@ -36,11 +36,16 @@ public struct WelcomeView: View {
     let busy: Bool
     /// Into the app with no folder, to make a vault and paste a first key.
     let withoutFolder: (() -> Void)?
+    /// Finds keys in the usual places or a folder, and seals the chosen ones at once.
+    let bringIn: (() -> Void)?
 
-    public init(busy: Bool = false, choose: @escaping () -> Void, withoutFolder: (() -> Void)? = nil) {
+    public init(
+        busy: Bool = false, choose: @escaping () -> Void, withoutFolder: (() -> Void)? = nil, bringIn: (() -> Void)? = nil
+    ) {
         self.busy = busy
         self.choose = choose
         self.withoutFolder = withoutFolder
+        self.bringIn = bringIn
     }
 
     public var body: some View {
@@ -55,6 +60,17 @@ public struct WelcomeView: View {
             Text(T("A short list of what to do, and a way to confirm it got done.")).foregroundStyle(Theme.muted)
             if busy {
                 ProgressView().controlSize(.small).padding(.top, 6)
+            } else if let bringIn {
+                Button(T("Bring in your keys"), action: bringIn)
+                    .buttonStyle(KRButtonStyle(primary: true))
+                    .keyboardShortcut(.defaultAction)
+                    .padding(.top, 6)
+                Button(T("Choose your keys folder"), action: choose)
+                    .buttonStyle(KRButtonStyle())
+                if let withoutFolder {
+                    Button(T("Start with no folder, and paste a key"), action: withoutFolder)
+                        .buttonStyle(KRButtonStyle())
+                }
             } else {
                 Button(T("Choose your keys folder"), action: choose)
                     .buttonStyle(KRButtonStyle(primary: true))

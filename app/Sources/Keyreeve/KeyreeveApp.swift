@@ -63,7 +63,9 @@ struct KeyreeveApp: App {
                     LockedView(message: model.lockMessage, unlock: model.unlock)
                         .onAppear(perform: model.unlock)
                 } else if model.needsWelcome {
-                    WelcomeView(busy: model.busy, choose: model.chooseFolder, withoutFolder: model.startWithoutFolder)
+                    WelcomeView(
+                        busy: model.busy, choose: model.chooseFolder, withoutFolder: model.startWithoutFolder,
+                        bringIn: model.startBringIn)
                 } else {
                     // With no vault yet, it opens where one is made, which a first key needs.
                     MainView(model: model, initial: model.hasVault ? .home : .vault)
@@ -75,6 +77,10 @@ struct KeyreeveApp: App {
                 get: { model.unlocked ? model.addingKey : nil },
                 set: { if $0 == nil { model.cancelAddingKey() } })
             ) { _ in AddKeySheet(model: model) }
+            .sheet(isPresented: Binding(
+                get: { model.unlocked && model.bringing != nil },
+                set: { if !$0 { model.cancelBringIn() } })
+            ) { BringSheet(model: model) }
             .id(language)
             .environment(\.locale, chosenLocale)
             .preferredColorScheme(scheme)
@@ -92,6 +98,8 @@ struct KeyreeveApp: App {
         .defaultSize(width: 1180, height: 720)
         .commands {
             CommandGroup(after: .newItem) {
+                Button(T("Bring in keys…"), action: model.startBringIn)
+                    .disabled(!model.unlocked)
                 Button(T("Choose folder…"), action: model.chooseFolder)
                 Button(T("Scan folder"), action: model.refresh)
                     .keyboardShortcut("r")

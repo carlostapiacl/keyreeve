@@ -1,5 +1,6 @@
 //! One file per family of commands. Each reads its arguments and prints, and the work lives in the library.
 
+mod bring;
 mod catalog;
 mod checks;
 mod proxy;
@@ -10,6 +11,7 @@ use keyreeve::verify;
 use std::collections::HashMap;
 use std::process::ExitCode;
 
+pub use bring::run_bring;
 pub use catalog::{run_catalog, run_inventory, run_migrate};
 pub use checks::{run_check_free, run_custom_action, run_identify, run_verify};
 pub use proxy::run_proxy;
@@ -32,6 +34,14 @@ Usage:
       Write in <folder>/keys.toml one entry per key, from the rules, the app's edits and what providers said.
       Identifiers keep their names; files with none get one, not offered to agents. A copy of each file
       read goes to <folder>/backups first. Run twice, it changes nothing.
+  keyreeve bring --places [--projects <folder>]... [--dry-run] [--check] [--json]
+  keyreeve bring --folder <folder> [--dry-run] [--check] [--json]
+      Find keys in the places tools keep them on this Mac (and in .env files under the project
+      folders you name), or in a folder, and say what each is: a key, a setting, a login, a document
+      or a public key, its provider, and whether it works. Parts of one key go together, and the same
+      key in two places is one key. Values are never shown, and no file is moved or changed. A key is
+      checked with one read-only request, only by the one provider its prefix, its variable or its
+      client id names; a name alone is only a guess. Nothing is checked with --dry-run (unless --check).
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
   keyreeve verify <provider> --key-stdin [--field <name>]
       Check whether a key still works, with one read-only request.

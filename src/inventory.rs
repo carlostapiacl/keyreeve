@@ -518,7 +518,7 @@ fn add_fields<'a>(names: impl Iterator<Item = &'a str>, item: &mut Item) {
 }
 
 /// A name in a credentials file can be a secret, so only plain, short names pass.
-fn safe_field(name: &str) -> bool {
+pub(crate) fn safe_field(name: &str) -> bool {
     let plain = name
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'));

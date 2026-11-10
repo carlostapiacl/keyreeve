@@ -41,7 +41,9 @@ The `keyreeve` command alone, without the app, runs on Linux too: `cargo install
 
 ## The first five minutes
 
-1. **Open the app** and choose your keys folder, or **Start with no folder, and paste a key**.
+1. **Open the app** and press **Bring in your keys**. It looks where tools keep keys on this Mac (and in the project
+   folders you turn on for `.env` files) or in a folder you choose, checks each key, and shows what it found with the values
+   hidden. You decide only the doubtful ones, and seal with your fingerprint once. Your files stay where they are.
 2. **Create the vault.** In **Security and backup**, press **Create my vault**. Write down the recovery key it shows once,
    away from this Mac.
 3. **Seal a key.** Copy a key from your provider and press **+** (Add a key). keyreeve tells the provider from how the key

@@ -95,7 +95,7 @@ private struct ChooseWhere: View {
                 Label(error, systemImage: "exclamationmark.triangle.fill").font(Theme.body).foregroundStyle(Theme.bad)
             }
             HStack {
-                Text(T("Each key found is checked with one read-only request to its provider."))
+                Text(T("A key is checked only by the one provider its start, its variable or its client id names."))
                     .font(Theme.caption).foregroundStyle(Theme.muted)
                 Spacer()
                 Button(T("Cancel"), action: model.cancelBringIn).buttonStyle(KRButtonStyle()).keyboardShortcut(.cancelAction)
@@ -237,8 +237,14 @@ private struct BringRow: View {
             if candidate.duplicate { Chip(text: T("%d places", candidate.origins.count)) }
             if candidate.from_project { Chip(text: T("a project uses it")) }
             Chip(text: kind)
-            if let provider = candidate.provider { Text(model.providerName(provider)).font(Theme.caption).foregroundStyle(Theme.text) }
-            if let reason = candidate.check?.reason, candidate.group != .works {
+            if let provider = candidate.provider {
+                Text(model.providerName(provider)).font(Theme.caption).foregroundStyle(Theme.text)
+            } else if !candidate.guessed.isEmpty {
+                // A guess from a name: shown, never checked, never saved with the key.
+                Text(T("maybe %@", candidate.guessed.map(model.providerName).joined(separator: T(" or "))))
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
+            }
+            if let reason = candidate.check?.reason ?? candidate.unchecked, candidate.group != .works {
                 Text(T(reason)).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(1)
             }
         }

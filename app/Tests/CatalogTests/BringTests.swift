@@ -31,7 +31,7 @@ struct BringTests {
          "skipped":{"too_large":0,"unreadable":0,"too_deep":1,"examples":1,"stopped_early":false},
          "summary":{"works":1,"doubtful":0,"other":0,"dead":0,"duplicates":1},
          "candidates":[{"id":1,"group":"works","class":"key","why":"starts as a provider's keys do","provider":"openai",
-           "recipes":["openai"],"check":{"recipe":"openai","result":"works","reason":null,"tried":["openai"]},"server":null,
+           "evidence":"prefix","guessed":[],"check":{"recipe":"openai","result":"works","reason":null},"unchecked":null,"server":null,
            "origins":[{"path":"/h/.zshrc","area":"home","bytes":10,"modified":5,"parts":[{"name":"OPENAI_API_KEY","section":null,"line":3,"span":[2,8],"json":null,"whole":false}]},
                       {"path":"/h/code/a/.env","area":"project","bytes":10,"modified":5,"parts":[{"name":"OPENAI_API_KEY","section":null,"line":1,"span":[2,8],"json":null,"whole":false}]}],
            "duplicate":true,"from_project":true,"suggested":"seal"}]}
@@ -41,6 +41,7 @@ struct BringTests {
         let key = try #require(report.candidates.first)
         #expect(key.kind == "key" && key.group == .works && key.from_project)
         #expect(key.partNames == "OPENAI_API_KEY")
+        #expect(key.evidence == "prefix" && key.guessed.isEmpty && key.unchecked == nil)
         #expect(BringScope.places(projects: [URL(fileURLWithPath: "/h/code")]).arguments == ["--places", "--projects", "/h/code"])
         #expect(BringScope.folder(URL(fileURLWithPath: "/k")).arguments == ["--folder", "/k"])
     }

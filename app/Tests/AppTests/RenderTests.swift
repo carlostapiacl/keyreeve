@@ -24,10 +24,10 @@ struct RenderTests {
         func part(_ name: String?, line: Int, whole: Bool = false) -> BringCandidate.Part {
             .init(name: name, section: nil, line: line, span: whole ? nil : [0, 1], json: nil, whole: whole)
         }
-        func key(_ id: Int, _ group: BringCandidate.Group, _ kind: String, _ provider: String?, _ paths: [String], _ parts: [BringCandidate.Part], reason: String? = nil) -> BringCandidate {
+        func key(_ id: Int, _ group: BringCandidate.Group, _ kind: String, _ provider: String?, _ paths: [String], _ parts: [BringCandidate.Part], reason: String? = nil, guessed: [String] = [], unchecked: String? = nil) -> BringCandidate {
             BringCandidate(
-                id: id, group: group, kind: kind, why: "", provider: provider, recipes: provider.map { [$0] } ?? [],
-                check: reason.map { .init(recipe: provider ?? "", result: "no_result", reason: $0, tried: []) }, server: nil,
+                id: id, group: group, kind: kind, why: "", provider: provider, evidence: provider.map { _ in "prefix" }, guessed: guessed,
+                check: reason.map { .init(recipe: provider ?? "", result: "no_result", reason: $0) }, unchecked: unchecked, server: nil,
                 origins: paths.map { .init(path: $0, area: $0.contains("/code/") ? "project" : "home", bytes: 1, modified: 1, parts: parts) },
                 duplicate: paths.count > 1, from_project: paths.contains { $0.contains("/code/") },
                 suggested: group == .works ? "seal" : group == .doubtful ? "decide" : "skip")
@@ -38,7 +38,7 @@ struct RenderTests {
             key(3, .works, "key", "openai", ["/Users/demo/.zshrc", "/Users/demo/code/shop/.env"], [part("OPENAI_API_KEY", line: 4)]),
             key(4, .doubtful, "key", nil, ["/Users/demo/.ssh/id_ed25519"], [part(nil, line: 1, whole: true)]),
             key(5, .doubtful, "login", nil, ["/Users/demo/.netrc"], [part("login", line: 2), part("password", line: 3)]),
-            key(6, .doubtful, "key", "r2", ["/Users/demo/code/shop/.env"], [part("R2_ACCESS_KEY_ID", line: 5), part("R2_SECRET_ACCESS_KEY", line: 6)], reason: "its server is not approved yet"),
+            key(6, .doubtful, "key", nil, ["/Users/demo/code/shop/.env"], [part("R2_ACCESS_KEY_ID", line: 5), part("R2_SECRET_ACCESS_KEY", line: 6)], guessed: ["r2"], unchecked: "only its name suggests a provider"),
             key(7, .dead, "key", "telegram", ["/Users/demo/code/bot/.env"], [part("TELEGRAM_BOT_TOKEN", line: 1)]),
             key(8, .other, "configuration", nil, ["/Users/demo/code/bot/.env"], [part("TELEGRAM_CHAT_ID", line: 2)]),
             key(9, .other, "public", nil, ["/Users/demo/.ssh/id_ed25519.pub"], [part(nil, line: 1, whole: true)]),

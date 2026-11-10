@@ -37,7 +37,6 @@ public struct BringCandidate: Codable, Equatable, Hashable, Sendable, Identifiab
         public var recipe: String
         public var result: String
         public var reason: String?
-        public var tried: [String]
     }
 
     public struct Origin: Codable, Equatable, Hashable, Sendable {
@@ -63,9 +62,16 @@ public struct BringCandidate: Codable, Equatable, Hashable, Sendable, Identifiab
     /// `key`, `configuration`, `login`, `document` or `public`.
     public var kind: String
     public var why: String
+    /// The provider strong evidence names: the key's prefix, its variable, or its client id's domain. Only
+    /// this one is ever sent the key, and only this one is saved with it.
     public var provider: String?
-    public var recipes: [String]
+    /// `prefix`, `variable` or `domain`.
+    public var evidence: String?
+    /// Providers only suggested by a name, or by evidence that disagrees. Shown as a guess, never checked or saved.
+    public var guessed: [String]
     public var check: Check?
+    /// Why a key was not checked, when it was not.
+    public var unchecked: String?
     public var server: String?
     public var origins: [Origin]
     public var duplicate: Bool
@@ -74,7 +80,8 @@ public struct BringCandidate: Codable, Equatable, Hashable, Sendable, Identifiab
     public var suggested: String
 
     enum CodingKeys: String, CodingKey {
-        case id, group, kind = "class", why, provider, recipes, check, server, origins, duplicate, from_project, suggested
+        case id, group, kind = "class", why, provider, evidence, guessed, check, unchecked, server, origins, duplicate
+        case from_project, suggested
     }
 
     /// The names of its parts, as the file writes them: `client_id + client_secret`, or the line.

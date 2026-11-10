@@ -12,7 +12,7 @@ public struct PlaceBook: Codable, Hashable, Sendable {
     /// The procedures that ship with keyreeve, in `procedures/` of the repository. A file of the person's cannot
     /// take one of these names.
     public static let builtinProcedures = [
-        "coolify-env", "github-secret", "netlify-env", "ssh-env", "supabase-secret", "vercel-env",
+        "coolify-env", "dotenv-local", "github-secret", "netlify-env", "ssh-env", "supabase-secret", "vercel-env",
     ]
     public static let maxPlaces = 100
 

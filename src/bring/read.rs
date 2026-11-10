@@ -145,7 +145,7 @@ pub struct FileFound {
     pub shape: Shape,
 }
 
-#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct Skipped {
     /// Larger than a file of keys would be.
     pub too_large: usize,
@@ -157,6 +157,107 @@ pub struct Skipped {
     pub examples: usize,
     /// The walk reached its limit of entries.
     pub stopped_early: bool,
+    /// Folders left out by each rule: a built-in one, such as `tests` or `flutter`, or one of the person's, as
+    /// they wrote it.
+    pub rules: std::collections::BTreeMap<String, usize>,
+}
+
+impl Skipped {
+    fn by_rule(&mut self, rule: &str) {
+        *self.rules.entry(rule.to_owned()).or_default() += 1;
+    }
+}
+
+/// Folders a walk of whole folders leaves out by name, counted in the report: tests and their fixtures, which hold
+/// made-up keys, and the caches of SDKs and package tools, which hold other people's code.
+pub const BUILTIN_SKIPS: &[&str] = &[
+    "test",
+    "tests",
+    "__tests__",
+    "fixtures",
+    "__fixtures__",
+    "testdata",
+    "spec",
+    "examples",
+    "flutter",
+    ".pub-cache",
+    "Pods",
+    ".gradle",
+    ".m2",
+    ".rustup",
+];
+/// The same, for folders known by their last parts.
+pub const BUILTIN_SKIP_PATHS: &[&str] = &["go/pkg/mod", ".cargo/registry"];
+
+/// The built-in rule that leaves this folder out, if one does.
+fn builtin_skip(path: &Path, name: &str) -> Option<&'static str> {
+    if let Some(rule) = BUILTIN_SKIPS.iter().find(|rule| **rule == name) {
+        return Some(rule);
+    }
+    BUILTIN_SKIP_PATHS
+        .iter()
+        .find(|rule| path.ends_with(rule))
+        .copied()
+}
+
+/// Folders the person asked never to look in: a full path, which leaves out that folder and all under it, or a
+/// folder's name, which leaves out every folder of that name.
+#[derive(Debug, Clone, Default)]
+pub struct Ignore {
+    rules: Vec<(String, Rule)>,
+}
+
+#[derive(Debug, Clone)]
+enum Rule {
+    Path(PathBuf),
+    Name(String),
+}
+
+impl Ignore {
+    /// Each rule as written. `~` is the home folder; a rule with no `/` is a folder's name.
+    pub fn new(rules: &[String], home: Option<&Path>) -> Self {
+        let rules = rules
+            .iter()
+            .filter_map(|text| {
+                let trimmed = text.trim();
+                let trimmed = if trimmed.len() > 1 {
+                    trimmed.trim_end_matches('/')
+                } else {
+                    trimmed
+                };
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let rule = if trimmed == "~" || trimmed.starts_with("~/") {
+                    let rest = trimmed.trim_start_matches('~').trim_start_matches('/');
+                    Rule::Path(home?.join(rest))
+                } else if trimmed.starts_with('/') {
+                    Rule::Path(PathBuf::from(trimmed))
+                } else if !trimmed.contains('/') {
+                    Rule::Name(trimmed.to_owned())
+                } else {
+                    return None;
+                };
+                Some((text.trim().to_owned(), rule))
+            })
+            .collect();
+        Self { rules }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    /// The rule that leaves this folder out, as the person wrote it.
+    fn matches(&self, path: &Path, name: &str) -> Option<&str> {
+        self.rules.iter().find_map(|(text, rule)| {
+            let hit = match rule {
+                Rule::Path(folder) => path == folder,
+                Rule::Name(wanted) => wanted == name,
+            };
+            hit.then_some(text.as_str())
+        })
+    }
 }
 
 /// The known files under a home folder. Only those that exist are returned.
@@ -257,6 +358,7 @@ pub fn walk(
     shape: Shape,
     want: &dyn Fn(&str) -> bool,
     avoid: &[PathBuf],
+    ignore: &Ignore,
     skipped: &mut Skipped,
 ) -> Vec<FileFound> {
     let mut found = Vec::new();
@@ -279,6 +381,7 @@ pub fn walk(
             }
         },
         avoid,
+        ignore,
         &mut entries,
         skipped,
     );
@@ -287,11 +390,13 @@ pub fn walk(
     found
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_dir(
     dir: &Path,
     depth: usize,
     visit: &mut dyn FnMut(&Path, &str),
     avoid: &[PathBuf],
+    ignore: &Ignore,
     entries: &mut usize,
     skipped: &mut Skipped,
 ) {
@@ -315,6 +420,10 @@ fn walk_dir(
         let path = entry.path();
         if kind.is_dir() {
             let hidden = name.starts_with('.');
+            if let Some(rule) = ignore.matches(&path, name) {
+                skipped.by_rule(rule);
+                continue;
+            }
             if hidden || SKIP_DIRS.contains(&name) || avoid.contains(&path) {
                 continue;
             }
@@ -322,7 +431,7 @@ fn walk_dir(
                 skipped.too_deep += 1;
                 continue;
             }
-            walk_dir(&path, depth + 1, visit, avoid, entries, skipped);
+            walk_dir(&path, depth + 1, visit, avoid, ignore, entries, skipped);
         } else if kind.is_file() {
             visit(&path, name);
         }
@@ -501,6 +610,7 @@ fn holds_known_prefix(path: &Path) -> bool {
 pub fn walk_everywhere(
     roots: &[PathBuf],
     avoid: &[PathBuf],
+    ignore: &Ignore,
     budget: Budget,
     skipped: &mut Skipped,
 ) -> Walked {
@@ -509,6 +619,7 @@ pub fn walk_everywhere(
         until: std::time::Instant::now() + std::time::Duration::from_secs(budget.seconds),
         budget,
         avoid,
+        ignore,
         files: Vec::new(),
         out: false,
     };
@@ -528,8 +639,12 @@ pub fn walk_everywhere(
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
             if kind.is_dir() {
-                if !skip_everywhere(name) && !avoid.contains(&entry.path()) {
-                    folders.push(entry.path());
+                let path = entry.path();
+                if state.left_out(&path, name, skipped) {
+                    continue;
+                }
+                if !skip_everywhere(name) && !avoid.contains(&path) {
+                    folders.push(path);
                 }
             } else if kind.is_file() {
                 state.file(&entry.path(), name, skipped);
@@ -554,12 +669,26 @@ struct Walk<'a> {
     until: std::time::Instant,
     budget: Budget,
     avoid: &'a [PathBuf],
+    ignore: &'a Ignore,
     files: Vec<FileFound>,
     /// The budget ran out: nothing more is read.
     out: bool,
 }
 
 impl Walk<'_> {
+    /// Whether a rule leaves this folder out, counted under that rule: the built-in ones, then the person's.
+    fn left_out(&self, path: &Path, name: &str, skipped: &mut Skipped) -> bool {
+        if let Some(rule) = builtin_skip(path, name) {
+            skipped.by_rule(rule);
+            return true;
+        }
+        if let Some(rule) = self.ignore.matches(path, name) {
+            skipped.by_rule(rule);
+            return true;
+        }
+        false
+    }
+
     fn spend(&mut self) -> bool {
         self.entries += 1;
         if self.entries > self.budget.entries
@@ -600,6 +729,9 @@ impl Walk<'_> {
             let Some(name) = name.to_str() else { continue };
             let path = entry.path();
             if kind.is_dir() {
+                if self.left_out(&path, name, skipped) {
+                    continue;
+                }
                 if skip_everywhere(name) || self.avoid.contains(&path) {
                     continue;
                 }

@@ -47,6 +47,13 @@ Usage:
       key in two places is one key. Values are never shown, and no file is moved or changed. A key is
       checked with one read-only request, only by the one provider its prefix, its variable or its
       client id names; a name alone is only a guess. Nothing is checked with --dry-run (unless --check).
+      Each key is grouped under its project: the nearest folder above it with .git, package.json,
+      composer.json, Cargo.toml, pyproject.toml, go.mod or a .env. --everywhere leaves out test folders,
+      fixtures, examples and SDK caches, and every search leaves out the folders in ~/.keyreeve/bring.toml
+      and those given with --ignore (a path, or a folder name). The report counts what each rule left out.
+      --hashes-out <file> writes each key's SHA-256 to a new private file, for the Mac app alone.
+  keyreeve bring ignore [--add <folder>]... [--remove <folder>]...
+      List, add or remove the folders Bring in never looks in, kept in ~/.keyreeve/bring.toml.
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
   keyreeve verify <provider> --key-stdin [--field <name>]
       Check whether a key still works, with one read-only request.

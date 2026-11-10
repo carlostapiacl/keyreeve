@@ -93,10 +93,32 @@ elijas, en una sola pantalla:
   apps y los archivos grandes, se detiene a los dos minutos y te dice qué carpetas no terminó, con **Buscar en esas** para seguir.
   macOS puede pedirte permiso antes de leer Escritorio, Documentos y Descargas. O *Elegir una carpeta*. Se salta `node_modules`,
   `.git`, compilaciones y cachés, y no necesita Acceso total al disco.
+- **No buscar aquí.** En toda la carpeta también se salta las carpetas llamadas `test`, `tests`, `__tests__`, `fixtures`,
+  `__fixtures__`, `testdata`, `spec` y `examples`, y los cachés de SDK y paquetes (`flutter`, `.pub-cache`, `Pods`, `.gradle`, `.m2`,
+  `go/pkg/mod`, `.cargo/registry`, `.rustup`). Tu propia lista está en `~/.keyreeve/bring.toml`, `ignore = ["~/archivo-viejo",
+  "~/benchmarks"]`: una ruta completa o `~/ruta` deja fuera esa carpeta y todo lo de adentro, y un nombre sin `/` toda carpeta con
+  ese nombre. Se edita en la primera pantalla o con `keyreeve bring ignore --add <carpeta>` (y `--remove`); `--ignore <carpeta>`
+  deja una fuera en una sola búsqueda. Una carpeta que eliges buscar se busca aunque esté en la lista. La revisión dice cuántas
+  carpetas dejó fuera cada regla.
 - **Qué hace.** Separa cada archivo en piezas, dice qué es cada una (clave, configuración, usuario y clave, documento o llave
   pública), junta las partes de una clave (client id y secreto, las tres de Google, una access key con su secreto y el endpoint como
   servidor) y une la misma clave encontrada en dos lugares. Una clave solo se prueba con el único proveedor que indica su
   prefijo, el nombre de su variable o su client id; un nombre que solo menciona un proveedor se muestra como sugerencia y no envía nada.
+- **Ya en la bóveda.** Cada clave encontrada queda marcada **en tu bóveda como** su identificador, **un valor anterior de** una, o
+  **nueva**, por valor y sin mostrar ninguno: el motor le pasa a la app el SHA-256 de cada valor en un archivo privado que se borra
+  al tiro, y la app lo convierte en el digest con clave que solo este Mac sabe hacer (ver [Dónde vive una clave](#dónde-vive-una-clave))
+  y lo busca. Para eso necesita el digest de cada valor de la bóveda. **Aprender lo que tiene la bóveda** abre cada valor sellado una
+  vez, con una huella, guarda su digest y el de cada campo, y bota los valores; desde ahí, las rotaciones y cada apertura lo
+  mantienen al día. Mientras no se aprenda, la revisión dice que no puede saberlo y no llama nueva a ninguna. Una clave que ya está
+  en la bóveda parte omitida.
+- **Proyectos.** Cada clave pertenece a su proyecto: la carpeta más cercana sobre su archivo con `.git`, `package.json`,
+  `composer.json`, `Cargo.toml`, `pyproject.toml`, `go.mod` o un `.env`, o si no su propia carpeta. **Por proyecto** agrupa la
+  revisión así. **Guardar proyectos** los escribe en `~/.keyreeve/projects.toml`: el nombre, la carpeta, los identificadores de sus
+  claves y los archivos donde se encontraron, nunca un valor. **Proyectos**, en Herramientas, muestra cada uno con sus claves en la
+  bóveda, nuevas o faltantes, sus archivos, y **Hacer su conjunto**, un [conjunto de claves](#varias-claves-a-la-vez) con las que
+  están ofrecidas a los agentes.
+- **Lugares.** Donde una clave de la bóveda apareció en un archivo dotenv, la revisión ofrece **Agregarlos como lugares**: un lugar
+  por cada una, el archivo y su variable con `dotenv-local`, aprobados con una huella.
 - **Revisar.** Los valores siguen tapados. Las que funcionan quedan elegidas, las muertas no, la configuración y las llaves públicas
   nunca se sellan, y tú decides solo las dudosas.
 - **Sellar.** Una huella. Cada clave queda con identificador y sin ofrecer a los agentes. Con un clic puedes ofrecer las que ya usa
@@ -445,13 +467,20 @@ después de que confirmas y prueba la clave ahí.
 Pídele a un agente "busca todas mis claves y sella las que corresponda". Con `find_keys` corre lo mismo que [Traer](#traer), sin
 probar nada. `where` es `everywhere` (toda la carpeta de inicio), `places` (los lugares típicos, y los `.env` de las carpetas
 `projects` que indique) o `folders` (solo esas, igual que en todas partes). Si a `everywhere` se le acaba el tiempo, `unfinished`
-nombra las carpetas que faltan y el agente sigue con `where: "folders"`. Recibe cada clave
-y cada usuario con clave por número, con su archivo y línea, los nombres que tiene, su proveedor (solo con evidencia fuerte) o una
-sugerencia, si apareció dos veces y si parece ya sellada, según el lugar y nunca según el valor. La configuración, los documentos y
-las llaves públicas solo se cuentan. Ningún valor y ninguna consulta a un proveedor.
+nombra las carpetas que faltan y el agente sigue con `where: "folders"`. Recibe un resumen por proyecto, unos pocos kilobytes para
+cien proyectos: `columns` dice el orden de cada fila de `projects` (ruta bajo `under`, claves, usuarios con clave, repetidas,
+selladas, nuevas, proveedores), y `left_out` cuántas carpetas dejó fuera cada regla. Después `find_keys {"project": "<ruta>"}` lista
+las claves de ese proyecto de la misma búsqueda, por número: nombres, `at` (archivo:línea dentro del proyecto), proveedor o
+sugerencia, y `sealed_as` con el identificador si la clave está ofrecida al agente, o `"sealed": true` si no. `new` aparece solo si se
+comparó cada valor de la bóveda; mientras no aprietes **Aprender lo que tiene la bóveda**, `sealed_check` lo dice y no afirma nada.
+La configuración, los documentos y las llaves públicas solo se cuentan. Ningún valor, ningún hash de uno y ninguna consulta a un
+proveedor.
 
-Con `propose_bring` indica los números que hay que sellar, con un identificador, una descripción y etiquetas si quiere, y los que hay
-que omitir con un motivo. Un número que no salió de una búsqueda, o un proveedor que keyreeve no conoce, rechaza la propuesta entera.
+Con `propose_bring` indica los números que hay que sellar, de cualquier lista de la búsqueda, con un identificador, una descripción y
+etiquetas si quiere, los que hay que omitir con un motivo, e `ignore`, carpetas que sugiere dejar fuera, que la revisión te muestra
+para que las agregues o no. Un número que no salió de una búsqueda, o un proveedor que keyreeve no conoce, rechaza la propuesta entera.
+`list_projects` muestra tus proyectos, con los identificadores de sus claves ofrecidas al agente y solo la cuenta del resto; solo tú
+los creas o cambias.
 La propuesta espera en **Agentes**. **Revisar** busca de nuevo donde buscó el agente, prueba cada clave con su propio proveedor como
 lo hace Traer y abre la revisión con lo que eligió el agente marcado. Cambia lo que quieras, o desactiva sus nombres, y **Sellar** con
 una sola huella. El proveedor que nombra el agente solo se muestra: la clave se guarda con el proveedor que indica su propia
@@ -664,6 +693,7 @@ sin ningún valor. Un procedimiento es un programa que actualiza un tipo de luga
 | `vercel-env` | folder, variable, environment? | el comando `vercel` en una carpeta enlazada. Una revisión solo dice si está o no |
 | `netlify-env` | token_key, account, site, variable, context? | la API de Netlify, con un token tuyo de Netlify mediante `keyreeve-vault use` |
 | `coolify-env` | token_key, server, app, variable, restart? | la API de Coolify, igual |
+| `dotenv-local` | file, variable | un archivo dotenv en este Mac, como el `.env` de un proyecto, con un solo rename, sin tocar las demás líneas |
 | `supabase-secret` | token_key, project, name | la API de Supabase, que lista el SHA-256 de cada secreto |
 
 Ninguno se ha corrido todavía contra esos servicios. `ssh-env` calcula el hash en el servidor, así que el valor nunca vuelve. Los de

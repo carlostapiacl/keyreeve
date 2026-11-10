@@ -69,6 +69,8 @@ public struct ValueDigests: Codable, Equatable, Sendable {
     public var schema = ValueDigests.schemaVersion
     /// Vault name, then the sealing's revision, then the field (empty for the whole value), then the keyed digest.
     public var entries: [String: [String: [String: String]]] = [:]
+    /// When the person last had Keyreeve learn what the whole vault holds, with one fingerprint.
+    public var learned: Date?
 
     public init() {}
 

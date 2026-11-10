@@ -78,6 +78,10 @@ public final class AppModel: ObservableObject {
     @Published public var addingKey: AddKeyDraft?
     /// Bring in, while its sheet is open: where to look, what was found, and what the person chose.
     @Published public var bringing: BringState?
+    /// The person's projects, from projects.toml.
+    @Published public var projectBook = Projects()
+    /// What the last Bring in found in each project and whether the vault holds it, to count new keys in Projects.
+    @Published public var lastFound: [String: [BringFound]] = [:]
     /// Bumped to bring the window to the keys that are new and not reviewed.
     @Published public var showNewKeys = 0
     /// The requests file as last read, so an unchanged file is not read again.

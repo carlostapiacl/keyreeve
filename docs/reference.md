@@ -45,7 +45,7 @@ Once a copy is in /Applications, each build updates it too, and a Keyreeve that 
 after, so no older copy keeps running beside the files the new one writes. The build is not notarized, so macOS warns you
 the first time.
 
-The first time, choose your keys folder, or **Start with no folder, and paste a key** to begin with an empty vault. The app opens with your
+The first time, press **Bring in your keys** ([below](#bring-in)), choose your keys folder, or **Start with no folder, and paste a key** to begin with an empty vault. The app opens with your
 fingerprint or your Mac's password, or with neither if you turn that off in Settings, since the list holds no value. This
 lock covers the window. Keys are protected by [the vault](#the-vault-mac).
 
@@ -77,6 +77,24 @@ An AI you already run in your terminal, such as Claude Code, Codex or OpenCode, 
 Settings, it drafts provider files under **Providers** and, in **Sort keys**, proposes a provider for keys keyreeve cannot check
 yet. It is given file names, tags and field names, never a value, and the app says so each time. keyreeve never hands it a key,
 but Codex, OpenCode or a command of your own can read files on your Mac while they work. Claude Code is limited to web search.
+
+### Bring in
+
+**Bring in your keys** (on the first screen, in **Security and backup**, or File > Bring in keys…) finds keys and seals the ones you
+choose, in one screen:
+
+- **Where to look.** *Usual places on this Mac*: `~/.aws`, the GitHub CLI, gcloud, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, Docker,
+  the `export` lines of your shell's startup files and your SSH keys (only their first line is read), plus `.env` files under the
+  project folders you turn on. Or *Choose a folder*. It skips `node_modules`, `.git`, builds and caches, and needs no Full Disk
+  Access.
+- **What it does.** Splits each file into pieces, says what each is (a key, configuration, a login, a document or a public key),
+  puts the parts of one key together (client id and secret, Google's three, an access key and its secret with the endpoint as the
+  server), and joins the same key found in two places. A key is checked only by the one provider its prefix, its variable
+  name or its client id names; a name that only mentions a provider is shown as a guess and sends nothing.
+- **Review.** Values stay hidden. Keys that work are chosen, dead ones are not, configuration and public keys are never sealed,
+  and you decide only the doubtful ones.
+- **Seal.** One fingerprint. Each key gets an identifier and is not offered to agents. One click can offer the ones a project's
+  `.env` already uses. The original files are never moved, changed or deleted; where each key came from is kept with its copy.
 
 ### Add a key
 
@@ -370,7 +388,17 @@ The `keyreeve` command works on any system with Rust, and needs neither the app 
 
 ### See what you have
 
-If your keys live in a folder of text files, start here. Neither command changes a file.
+`keyreeve bring` is what the app's Bring in runs. It prints each key it finds, what it is, its provider and whether it works,
+and never a value or a change to a file. A key is only sent to the one provider its prefix, variable or client id names:
+
+```bash
+keyreeve bring --places --projects ~/code --dry-run   # look, check nothing
+keyreeve bring --folder ~/my-keys                     # look and check each key with one read-only request
+```
+
+Add `--json` for the report the app reads: paths, names, lines and where each value stands in its file.
+
+If your keys live in a folder of text files, you can also start here. Neither command changes a file.
 
 ```bash
 keyreeve inventory ~/my-keys --out ~/.keyreeve/inventory.json

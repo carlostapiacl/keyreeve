@@ -14,9 +14,17 @@ public struct BringState {
         public var on: Bool
     }
 
+    public enum Place: Equatable { case usual, everywhere, folder }
+
     public var step = Step.choose
-    /// Usual places on this Mac, or one folder.
-    public var usualPlaces = true
+    /// Usual places on this Mac, the whole home folder, or one folder.
+    public var place = Place.usual
+    /// With `everywhere`, only these folders: those an agent named, or those a search did not finish.
+    public var under: [URL] = []
+    public var usualPlaces: Bool {
+        get { place == .usual }
+        set { place = newValue ? .usual : .folder }
+    }
     /// Folders to search for `.env` files. None is searched until the person turns it on.
     public var projects: [Project] = []
     public var folder: URL?
@@ -27,14 +35,26 @@ public struct BringState {
     /// The identifiers given at the end, with whether a project's `.env` uses the key.
     public var sealed: [(id: String, fromProject: Bool)] = []
     public var failed: [String] = []
+    /// The agent's request this review answers, when an agent proposed it.
+    public var request: AccessRequests.Entry?
+    public var agentProposal: AgentBringing.Proposal?
+    /// The agent's suggestion for each key found again in this search, by its number here.
+    public var agentChoices: [Int: AgentBringing.Proposal.Item] = [:]
+    /// The agent's choices no key found now matches: the file changed or is gone.
+    public var agentMissed: [AgentBringing.Proposal.Item] = []
+    /// Whether the identifiers, notes and tags the agent suggested are used. The person can turn them off.
+    public var useAgentNames = true
 
     public init(projects: [URL] = []) {
         self.projects = projects.map { Project(url: $0, on: false) }
     }
 
     public var scope: BringScope? {
-        if usualPlaces { return .places(projects: projects.filter(\.on).map(\.url)) }
-        return folder.map(BringScope.folder)
+        switch place {
+        case .usual: return .places(projects: projects.filter(\.on).map(\.url))
+        case .everywhere: return .everywhere(under: under)
+        case .folder: return folder.map(BringScope.folder)
+        }
     }
 
     func candidates(_ group: BringCandidate.Group) -> [BringCandidate] {
@@ -105,6 +125,12 @@ extension AppModel {
         case .success(let report):
             bringing?.report = report
             bringing?.decisions = Self.firstDecisions(report)
+            if let proposal = bringing?.agentProposal {
+                let found = Self.agentChoices(report, proposal: proposal)
+                bringing?.agentChoices = found.choices
+                bringing?.agentMissed = found.missed
+                for (id, item) in found.choices { bringing?.decisions[id] = item.seal }
+            }
             bringing?.step = .review
         case .failure(let error):
             bringing?.error = (error as? CheckError)?.description ?? T("Looking for keys did not finish")
@@ -123,6 +149,59 @@ extension AppModel {
             }
         }
         return decisions
+    }
+
+    /// Opens an agent's proposal in Bring in: Keyreeve looks again where the agent looked, checks each key with
+    /// its own provider as it does for the person, and fills the review with the agent's choices. Nothing is
+    /// sealed until the person seals, with their fingerprint.
+    public func reviewBringProposal(_ request: AccessRequests.Entry) {
+        guard let data = AgentSorting.load(id: request.id, home: files.directory), let proposal = AgentBringing.decode(data) else {
+            message = T("That proposal could not be read. Decline it, and ask the agent again.")
+            return
+        }
+        var state = BringState()
+        state.projects = proposal.scope.projects.map { .init(url: URL(fileURLWithPath: $0), on: true) }
+        switch proposal.scope.place {
+        case .places: state.place = .usual
+        case .everywhere: state.place = .everywhere
+        case .folders:
+            state.place = .everywhere
+            state.under = proposal.scope.folders.map { URL(fileURLWithPath: $0) }
+        }
+        state.request = request
+        state.agentProposal = proposal
+        bringing = state
+        lookForKeys()
+    }
+
+    /// The agent's choice for each key found now, matched by file and part names, since numbers change from
+    /// one search to the next. Configuration is never sealed, whatever the agent said.
+    nonisolated static func agentChoices(
+        _ report: BringReport, proposal: AgentBringing.Proposal
+    ) -> (choices: [Int: AgentBringing.Proposal.Item], missed: [AgentBringing.Proposal.Item]) {
+        var choices: [Int: AgentBringing.Proposal.Item] = [:]
+        var used = Set<Int>()
+        for candidate in report.candidates where candidate.group != .other {
+            let signatures = Set(candidate.origins.map { origin in
+                AgentBringing.signature(
+                    path: origin.path,
+                    parts: origin.parts.map { AgentBringing.Part(name: $0.name, line: $0.line, whole: $0.whole).label })
+            })
+            if let at = proposal.items.indices.first(where: { !used.contains($0) && !signatures.isDisjoint(with: proposal.items[$0].origins) }) {
+                used.insert(at)
+                choices[candidate.id] = proposal.items[at]
+            }
+        }
+        let missed = proposal.items.indices.filter { !used.contains($0) }.map { proposal.items[$0] }
+        return (choices, missed)
+    }
+
+    /// Goes on in the folders a search of everywhere did not finish, keeping the agent's proposal if there is one.
+    public func lookInUnfinished() {
+        guard let unfinished = bringing?.report?.unfinished, !unfinished.isEmpty else { return }
+        bringing?.place = .everywhere
+        bringing?.under = unfinished.map { URL(fileURLWithPath: $0) }
+        lookForKeys()
     }
 
     public func decide(_ id: Int, seal: Bool) { bringing?.decisions[id] = seal }
@@ -150,12 +229,25 @@ extension AppModel {
             var index = FileManager.default.fileExists(atPath: files.keyIndex.path) ? try KeyIndex.load(from: files.keyIndex) : keyIndex
             let selfHosted = Set(providers.all.filter(\.self_hosted).map(\.id))
             let variables = Dictionary(providers.all.compactMap { p in p.env_var.map { (p.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            let named = bringing?.useAgentNames == true ? bringing?.agentChoices ?? [:] : [:]
             let result = try Self.sealBrought(
-                chosen, index: index, store: vaultStore, selfHosted: selfHosted, variables: variables
+                chosen, index: index, store: vaultStore, selfHosted: selfHosted, variables: variables, named: named
             ) { try self.files.writePrivate($0, to: self.files.keyIndex) }
             index = result.index
             keyIndex = index
-            audit(result.sealed.map { ($0.id, "brought in") }, event: "sealed")
+            if let request = bringing?.request {
+                audit(result.sealed.map { ($0.id, "brought in, proposed by \(request.agent) in \(request.id)") }, event: "sealed")
+                // The agent learns how many, never which identifiers: they are not offered to it.
+                let words = "the person sealed \(result.sealed.count) keys" + (result.failed.isEmpty ? "" : ", \(result.failed.count) could not be read")
+                try? AccessRequests.append(
+                    AccessRequests.Entry(
+                        id: request.id, at: Date(), event: .allowed, agent: request.agent, provider: request.provider,
+                        kind: AgentBringing.kind, result: words),
+                    to: requestsFile)
+                reloadRequests()
+            } else {
+                audit(result.sealed.map { ($0.id, "brought in") }, event: "sealed")
+            }
             bringing?.sealed = result.sealed
             bringing?.failed = result.failed
             bringing?.step = .done
@@ -178,7 +270,7 @@ extension AppModel {
     /// no name. A key whose file changed since it was read is left out and named in `failed`.
     nonisolated static func sealBrought(
         _ chosen: [BringCandidate], index: KeyIndex, store: VaultStore, selfHosted: Set<String> = [],
-        variables: [String: String] = [:], writeIndex: (Data) throws -> Void
+        variables: [String: String] = [:], named: [Int: AgentBringing.Proposal.Item] = [:], writeIndex: (Data) throws -> Void
     ) throws -> (index: KeyIndex, sealed: [(id: String, fromProject: Bool)], failed: [String]) {
         var index = index
         var values: [(entry: String, data: Data, source: String)] = []
@@ -196,9 +288,16 @@ extension AppModel {
                 continue
             }
             let first = candidate.origins[0]
-            let id = index.suggestion(provider: candidate.provider, project: nil, source: first.path)
+            // The name an agent suggested, if it is free; a provider it suggested is never saved, only shown.
+            let suggested = named[candidate.id]
+            var id = index.suggestion(provider: candidate.provider, project: nil, source: first.path)
+            if let wanted = suggested?.id, KeyIndex.isValid(id: wanted), !index.isTaken(wanted) {
+                id = wanted
+            }
             let entry = AppModel.addedFolder + id
             var key = KeyIndex.Key(id: id, source: entry, field: read.field, provider: candidate.provider)
+            key.description = suggested?.description
+            if let tags = suggested?.tags, !tags.isEmpty { key.more.tags = tags }
             let ownName = first.parts.count == 1 ? BringValue.envName(first.parts[0].name) : nil
             key.variable = ownName.flatMap { $0 == $0.uppercased() ? $0 : nil } ?? candidate.provider.flatMap { variables[$0] }
             if let provider = candidate.provider, selfHosted.contains(provider), let server = candidate.server {

@@ -141,6 +141,28 @@ func serveAgents() throws {
             let recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), reason: prompt)
             let value = try store.load().open(name: key.source, with: recipient)
             try store.update { try $0.sealUnattended(name: key.source, value: value) }
+        },
+        scanKeys: { arguments in
+            // keyreeve-cli, beside this program, always as a dry run: no request leaves this Mac from here.
+            let cli = ownPath().deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
+            return try AgentBringing.runEngine(binary: cli, arguments: arguments)
+        },
+        sealedSources: {
+            // Where sealed keys came from, read from names and recorded origins. No value is opened.
+            var sources = Set<String>()
+            if let index = try? KeyIndex.load(from: keysFile) {
+                for key in index.keys + index.unoffered { sources.insert(key.source) }
+            }
+            for (name, entry) in (try? store.load())?.entries ?? [:] {
+                sources.insert(name)
+                let lines = (entry.source ?? "").split(separator: "\n").map(String.init)
+                sources.formUnion(lines)
+                // A file sealed from the keys folder is named by its path in it, and the folder is its source.
+                if lines.count == 1, !name.hasPrefix("/"), !name.hasPrefix("added/") {
+                    sources.insert(URL(fileURLWithPath: lines[0]).appendingPathComponent(name).path)
+                }
+            }
+            return sources
         })
     // One message per line, at most a megabyte: a client that sends more is told so and the line is
     // dropped, read in pieces and never held whole.

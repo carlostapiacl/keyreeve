@@ -8,6 +8,8 @@ use std::process::ExitCode;
 /// `keyreeve bring`: reads, sorts and checks, and never moves, copies or changes a file.
 pub fn run_bring(args: &[String]) -> ExitCode {
     let mut places = false;
+    let mut everywhere = false;
+    let mut under: Vec<PathBuf> = Vec::new();
     let mut folder: Option<PathBuf> = None;
     let mut projects: Vec<PathBuf> = Vec::new();
     let (mut dry_run, mut check, mut json) = (false, false, false);
@@ -15,6 +17,11 @@ pub fn run_bring(args: &[String]) -> ExitCode {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--places" => places = true,
+            "--everywhere" => everywhere = true,
+            "--under" => match rest.next() {
+                Some(dir) => under.push(PathBuf::from(dir)),
+                None => return usage(),
+            },
             "--folder" => match rest.next() {
                 Some(dir) => folder = Some(PathBuf::from(dir)),
                 None => return usage(),
@@ -30,25 +37,45 @@ pub fn run_bring(args: &[String]) -> ExitCode {
         }
     }
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let scope = match (places, folder) {
-        (true, None) => {
-            let Some(home) = home.clone() else {
-                eprintln!("bring: HOME is not set, so there are no usual places to look in");
-                return ExitCode::from(2);
-            };
-            Scope::Places {
-                home,
-                projects: projects.clone(),
-            }
+    let scope = if everywhere {
+        if places || folder.is_some() || !projects.is_empty() {
+            return usage();
         }
-        (false, Some(folder)) if projects.is_empty() => {
-            if !folder.is_dir() {
-                eprintln!("bring: {} is not a folder", folder.display());
-                return ExitCode::from(2);
-            }
-            Scope::Folder(folder)
+        let Some(home) = home.clone() else {
+            eprintln!("bring: HOME is not set, so there is no home folder to look in");
+            return ExitCode::from(2);
+        };
+        if let Some(missing) = under.iter().find(|dir| !dir.is_dir()) {
+            eprintln!("bring: {} is not a folder", missing.display());
+            return ExitCode::from(2);
         }
-        _ => return usage(),
+        Scope::Everywhere {
+            home,
+            under: under.clone(),
+        }
+    } else if !under.is_empty() {
+        return usage();
+    } else {
+        match (places, folder) {
+            (true, None) => {
+                let Some(home) = home.clone() else {
+                    eprintln!("bring: HOME is not set, so there are no usual places to look in");
+                    return ExitCode::from(2);
+                };
+                Scope::Places {
+                    home,
+                    projects: projects.clone(),
+                }
+            }
+            (false, Some(folder)) if projects.is_empty() => {
+                if !folder.is_dir() {
+                    eprintln!("bring: {} is not a folder", folder.display());
+                    return ExitCode::from(2);
+                }
+                Scope::Folder(folder)
+            }
+            _ => return usage(),
+        }
     };
     let checker = |recipe: &keyreeve::recipe::Recipe, key: &keyreeve::secret::Secret| {
         verify::check(recipe, key, &mut HttpTransport::for_recipe(recipe))
@@ -69,6 +96,12 @@ pub fn run_bring(args: &[String]) -> ExitCode {
     );
     for line in bring::lines(&report, home.as_deref()) {
         println!("{line}");
+    }
+    if !report.unfinished.is_empty() {
+        println!(
+            "Stopped before finishing, to keep the search short. Not finished: {}. Go on with --everywhere --under <folder> for each.",
+            report.unfinished.join(", ")
+        );
     }
     if !report.checked {
         println!("Nothing was checked. Without --dry-run, each key is checked with one read-only request to its provider.");

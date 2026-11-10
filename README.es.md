@@ -110,6 +110,8 @@ valor de una clave.
 | `run_with_key` | corre un programa que tú permitiste, fijado por su SHA-256, con la clave real en una variable |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios, solo mientras tú lo permites |
+| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
+| `propose_bring` | propone cuáles sellar de las encontradas; tú la revisas en Traer y sellas con una sola huella |
 
 Cada sí, cada no y cada uso queda en `~/.keyreeve/audit.jsonl`, sin valores. Cada línea lleva el hash de la anterior, así
 `keyreeve-vault audit --verify` encuentra una edición.

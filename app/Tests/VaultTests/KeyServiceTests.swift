@@ -355,7 +355,7 @@ struct KeyServiceTests {
     }
 
     /// `revoke` must get through while your finger is being waited for, and must also stop what comes of it.
-    @Test func testRevokingDoesNotWaitForAPromptAndEndsWhatItOpens() async throws {
+    @Test func testRevokingDoesNotWaitForAPromptAndEndsWhatItOpens() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -366,19 +366,19 @@ struct KeyServiceTests {
             index: { try KeyIndex.parse("[[key]]\nid = \"n\"\nsource = \"s\"\nprovider = \"netlify\"\n") },
             open: { _, _ in
                 touching.signal()
-                touched.wait()
+                _ = touched.wait(timeout: .now() + Self.patience)
                 return Data("CANARY\n".utf8)
             },
             proxy: proxy, log: AuditLog(url: folder.appendingPathComponent("a.jsonl")))
-        let using = Task.detached { service.handle(.init(op: "use", key: "n", program: "/bin/x"), caller: nil) }
-        touching.wait()
+        let using = OnThread { service.handle(.init(op: "use", key: "n", program: "/bin/x"), caller: nil) }
+        try #require(touching.wait(timeout: .now() + Self.patience) == .success, "the prompt never opened")
         let started = Date()
         #expect(service.handle(.init(op: "revoke"), caller: nil).ok)
         #expect(service.handle(.init(op: "grants"), caller: nil).grants?.isEmpty == true)
         // Waiting for the prompt would take until the signal below, so any short bound shows it.
         #expect(Date().timeIntervalSince(started) < 5)
         touched.signal()
-        let answer = await using.value
+        let answer = try #require(using.value(), "the use never ended")
         #expect(!answer.ok)
         #expect(answer.standIn == nil)
         #expect(service.isIdle)
@@ -432,7 +432,7 @@ struct KeyServiceTests {
     }
 
     /// A use stuck behind someone else's prompt says which prompt, before the client gives up in silence.
-    @Test func aUseBehindAnotherPromptSaysWhatItWaitsFor() async throws {
+    @Test func aUseBehindAnotherPromptSaysWhatItWaitsFor() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -443,23 +443,23 @@ struct KeyServiceTests {
             index: { try KeyIndex.parse("[[key]]\nid = \"n\"\nsource = \"s\"\nprovider = \"netlify\"\n\n[[key]]\nid = \"m\"\nsource = \"t\"\nprovider = \"netlify\"\n") },
             open: { _, _ in
                 touching.signal()
-                touched.wait()
+                _ = touched.wait(timeout: .now() + Self.patience)
                 return Data("CANARY\n".utf8)
             },
             proxy: FakeProxy(), log: log, promptWait: 0.2)
-        let first = Task.detached { service.handle(.init(op: "use", key: "n", program: "/bin/x", agent: "motor"), caller: nil) }
-        touching.wait()
+        let first = OnThread { service.handle(.init(op: "use", key: "n", program: "/bin/x", agent: "motor"), caller: nil) }
+        try #require(touching.wait(timeout: .now() + Self.patience) == .success, "the first prompt never opened")
         let second = service.handle(.init(op: "use", key: "m", program: "/bin/y", agent: "claude"), caller: nil)
         #expect(!second.ok)
         #expect(second.error?.contains("waiting for the person's fingerprint for n, asked by motor") == true)
         #expect(try log.entries().contains { $0.event == "refused" && $0.key == "m" && $0.detail == "another fingerprint is pending" })
         touched.signal()
-        #expect(await first.value.ok)
+        #expect(try #require(first.value(), "the first use never ended").ok)
         // The turn is free again once the prompt ahead is answered.
-        let third = Task.detached { service.handle(.init(op: "use", key: "m", program: "/bin/y", agent: "claude"), caller: nil) }
-        touching.wait()
+        let third = OnThread { service.handle(.init(op: "use", key: "m", program: "/bin/y", agent: "claude"), caller: nil) }
+        try #require(touching.wait(timeout: .now() + Self.patience) == .success, "the third prompt never opened")
         touched.signal()
-        #expect(await third.value.ok)
+        #expect(try #require(third.value(), "the third use never ended").ok)
     }
 
     @Test func aSilentServiceIsBlamedOnTheFingerprintOnlyForAUse() {
@@ -745,4 +745,28 @@ struct KeyServiceTests {
     }
 
     final class Flag: @unchecked Sendable { var value = false }
+}
+
+extension KeyServiceTests {
+    /// How long a test waits for something before it fails instead.
+    static let patience: TimeInterval = 20
+}
+
+/// Runs work on a thread of its own, outside Swift's shared pool, and waits for it a bounded time. A test that
+/// waits on the pool for work also queued on the pool can hang a machine with few cores; this cannot.
+final class OnThread<T>: @unchecked Sendable {
+    private let done = DispatchSemaphore(value: 0)
+    private var result: T?
+
+    init(_ body: @escaping @Sendable () -> T) {
+        Thread {
+            self.result = body()
+            self.done.signal()
+        }.start()
+    }
+
+    /// The result, or nil if it did not come in time.
+    func value(within seconds: TimeInterval = KeyServiceTests.patience) -> T? {
+        done.wait(timeout: .now() + seconds) == .success ? result : nil
+    }
 }

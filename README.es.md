@@ -81,6 +81,26 @@ puede usar, ni por un agente ni con `keyreeve-vault use`. Los identificadores qu
 en **Agentes** o con `keyreeve migrate`, parten sin ofrecer. Si dejas de ofrecer una clave, también se cierra: se van su nivel, sus agentes y sus programas
 permitidos.
 
+## Cómo entran las claves
+
+Toda entrada a la bóveda deja el mismo rastro. Una clave sellada con **+**, **Trae tus claves** o **Sellar**, o desde una
+terminal o un agente con `keyreeve-vault add`, recibe un identificador en `keys.toml` que dice quién la agregó y cuándo. Agregar
+no pide huella y no permite leer nada de vuelta:
+
+```bash
+pbpaste | keyreeve-vault add added/hosting --description "Hosting, producción" --tags trabajo
+```
+
+Una clave que agregó algo distinto de ti en la app no se ofrece a los agentes y espera en **Mis claves** bajo **Nuevas, sin
+revisar**, con un aviso en la barra de menús y en **Agentes**, como "claude agregó 21 claves". Revisar es mirarla, nombrarla y
+apretar **Marcar como revisada**, y no ofrece nada.
+
+`keyreeve-vault put` sobre una clave que ya está no la reemplaza. El valor nuevo espera al lado, la clave conserva el que tenía,
+y la app dice "Hay un valor nuevo para hosting esperando, de claude". Lo aceptas con tu huella, y el valor anterior queda
+sellado, o lo descartas. Solo la rotación de la propia clave la reemplaza directo. Una clave en la bóveda sin identificador,
+como una que selló una versión anterior, aparece como **Sellada sin registro** con un botón para darle uno, y `keyreeve-vault
+orphans` las lista.
+
 ## Niveles
 
 Cada clave ofrecida tiene un nivel, que eliges en la app.

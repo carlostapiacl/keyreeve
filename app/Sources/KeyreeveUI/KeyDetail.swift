@@ -27,6 +27,7 @@ struct KeyDetail: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 header
+                ArrivalBanner(item: item, model: model)
                 Picker(T("Part of the key"), selection: $tab) {
                     Text(T("Summary")).tag(Tab.summary)
                     Text(T("Usage")).tag(Tab.use)

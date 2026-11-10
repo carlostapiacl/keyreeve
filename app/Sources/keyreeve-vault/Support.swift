@@ -8,13 +8,17 @@ let help = """
     Usage:
       keyreeve-vault init
           Create the vault and show its recovery key, once. Needs a terminal.
-      keyreeve-vault add <name>
-          Add a key, read from stdin. Needs no fingerprint.
+      keyreeve-vault add <name> [--description TEXT] [--tags a,b]
+          Add a key, read from stdin. Needs no fingerprint, and cannot read anything back. It gets an identifier
+          in keys.toml, not offered to agents, and Keyreeve shows it as new until you review it.
       keyreeve-vault put <name>
-          Add a key or replace it, read from stdin. The old value stays sealed. Needs no fingerprint.
+          Add a key, read from stdin, as add does. For a key already there, the new value waits as
+          <name>#pending and the current one stays in force until you accept it in Keyreeve, with your finger.
       keyreeve-vault reseal <name> [<name>...]
           Seal a key's file again, exactly as it is now, from the folder it was sealed from. The old copy
           stays sealed. Needs no fingerprint. For a file changed outside the app, such as by a script.
+      keyreeve-vault orphans
+          Show the vault's keys that have no identifier in keys.toml, by name. Keyreeve offers to give them one.
       keyreeve-vault drop <name#pending|name#previous>
           Remove a temporary copy of a rotation. Real keys cannot be removed.
       keyreeve-vault names

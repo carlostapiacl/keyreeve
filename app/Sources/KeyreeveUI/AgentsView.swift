@@ -28,6 +28,8 @@ struct AgentsView: View {
                     .font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 if !model.pendingRequests.isEmpty { requestsCard }
+                let news = ArrivalNews.make(items: model.items, index: model.keyIndex)
+                if !news.isEmpty { Card { ArrivalNotice(news: news, review: model.showNewKeysNow).padding(14) } }
                 sortingCard
                 connectionCard
                 allowedCard

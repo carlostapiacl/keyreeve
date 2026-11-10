@@ -140,6 +140,7 @@ public struct MainView: View {
                 model.reloadRequests()
             }
             .onChange(of: model.showRequests) { _, _ in go(.agents) }
+            .onChange(of: model.showNewKeys) { _, _ in go(.unreviewed) }
             .sheet(isPresented: $sorting) { SortSheet(model: model, keys: sortingKeys) }
             .confirmationDialog(
                 T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
@@ -205,6 +206,7 @@ public struct MainView: View {
     private var filterBar: some View {
         FlowRow(spacing: 6) {
             filterChip(T("All"), .all)
+            if model.summary.count(.unreviewed) > 0 { filterChip(T("New, not reviewed"), .unreviewed) }
             filterChip(T("Can be checked"), .checkable)
             filterChip(T("Critical keys"), .critical)
             filterChip(T("Rejected"), .result("rejected"))
@@ -254,6 +256,7 @@ public struct MainView: View {
         case .stale: return T("Older than suggested")
         case .internalOnly: return T("Internal secrets")
         case .expiring: return T("Expire soon")
+        case .unreviewed: return T("New, not reviewed")
         case .result(let result): return resultName(result)
         case .level(let level): return levelName(level)
         case .tag(let tag): return tag

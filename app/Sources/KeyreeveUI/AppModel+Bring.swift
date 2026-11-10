@@ -232,8 +232,10 @@ extension AppModel {
             let named = bringing?.useAgentNames == true ? bringing?.agentChoices ?? [:] : [:]
             let result = try Self.sealBrought(
                 chosen, index: index, store: vaultStore, selfHosted: selfHosted, variables: variables, named: named
-            ) { try self.files.writePrivate($0, to: self.files.keyIndex) }
-            index = result.index
+            ) { [base = index] written in
+                // Only the keys this added, onto keys.toml as it is now, under the lock keyreeve-vault takes too.
+                index = try KeyIndex.save(try KeyIndex.parse(String(decoding: written, as: UTF8.self)), from: base, at: self.files.keyIndex)
+            }
             keyIndex = index
             if let request = bringing?.request {
                 audit(result.sealed.map { ($0.id, "brought in, proposed by \(request.agent) in \(request.id)") }, event: "sealed")
@@ -303,6 +305,7 @@ extension AppModel {
             if let provider = candidate.provider, selfHosted.contains(provider), let server = candidate.server {
                 key.more.host = server
             }
+            (key.more.addedBy, key.more.addedAt) = (KeyArrival.byPerson, KeyArrival.stamp())
             try index.addUnoffered(key)
             values.append((entry, read.data, candidate.origins.map(\.path).joined(separator: "\n")))
             sealed.append((id, candidate.from_project))

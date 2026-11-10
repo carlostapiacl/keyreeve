@@ -80,6 +80,26 @@ cannot be used, by agents or by `keyreeve-vault use`. Identifiers given in bulk,
 `keyreeve migrate`, start not offered.
 Taking a key back closes it too: its level, agents and allowed programs go.
 
+## How keys get in
+
+Every way into the vault leaves the same trace. A key sealed with **+**, **Bring in your keys** or **Seal**, or from a
+terminal or an agent with `keyreeve-vault add`, gets an identifier in `keys.toml` that says who added it and when. Adding needs
+no fingerprint and cannot read anything back:
+
+```bash
+pbpaste | keyreeve-vault add added/hosting --description "Hosting, production" --tags work
+```
+
+A key that anything other than you in the app added is not offered to agents, and waits in **My keys** under **New, not
+reviewed**, with a notice in the menu bar and in **Agents**, such as "claude added 21 keys". Reviewing is looking at it, naming
+it and pressing **Mark reviewed**, and it offers nothing.
+
+`keyreeve-vault put` on a key already there does not replace it. The new value waits beside it, the key keeps the value it had,
+and the app says "A new value for hosting is waiting, from claude". You accept it with your fingerprint, and the old value
+stays sealed, or you discard it. Only the key's own rotation replaces it directly. A key in the vault with no identifier, such
+as one an older version sealed, shows as **Sealed without a record** with a button to give it one, and `keyreeve-vault
+orphans` lists them.
+
 ## Levels
 
 Each offered key has a level, set in the app.

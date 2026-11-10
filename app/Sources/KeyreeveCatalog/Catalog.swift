@@ -41,10 +41,19 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var lastReason: String
     /// The day it stops working, `yyyy-mm-dd`, as the person or an agent wrote it.
     public var expires: String
+    /// Who sealed it, while it waits for the person's look: something other than the person in the app added it.
+    public var newFrom: String?
+    /// In the vault with no record in keys.toml, such as a key an older version sealed.
+    public var withoutRecord = false
+    /// A new value for this key waits for the person, from this agent or program. The current one is in force.
+    public var waitingFrom: String?
     /// The provider answered its OAuth credential with `invalid_grant`: a person has to sign in again and
     /// replace it. Read from key-state.json, which only the key service writes.
     public var needsReauthorizing = false
     public var id: String { path }
+
+    /// New, or sealed with no record: something the person has not looked at yet.
+    public var isNew: Bool { newFrom != nil || withoutRecord }
 
     /// A secret with no provider, such as a signing key, so there is nowhere to check it.
     public var isInternal: Bool { tags.contains("internal") }
@@ -115,6 +124,10 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         if let until = ignoredUntil, until > now { return nil }
         // Archiving hides a key from view, and it does not stop a key that still works.
         if isArchived { return lastResult == "works" ? (6, T("Archived, but it still works")) : nil }
+        // How a key got in, before what it is: a value that waits, and keys nobody looked at.
+        if let from = waitingFrom { return (2, T("A new value is waiting, from %@", from)) }
+        if let from = newFrom { return (4, T("New, not reviewed: added by %@", from)) }
+        if withoutRecord { return (4, T("Sealed without a record")) }
         let isBackup = tags.contains("status:backup")
         let revoke = tags.contains("revoke")
         if revoke && lastResult == "works" { return (0, T("Still works: revoke it")) }
@@ -302,6 +315,8 @@ public enum Sidebar: Hashable, Sendable {
     case stale
     case internalOnly
     case expiring
+    /// Keys an agent or a program added that the person has not looked at, and keys sealed with no record.
+    case unreviewed
     case result(String)
     case level(String)
     case tag(String)
@@ -327,6 +342,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .stale: return item.isOlderThanSuggested()
         case .internalOnly: return item.isInternal && !item.isArchived
         case .expiring: return !item.isArchived && item.isSecret && (item.daysLeft() ?? Int.max) <= 30
+        case .unreviewed: return item.isNew || item.waitingFrom != nil
         case .result(let result):
             guard !item.isArchived, item.isSecret else { return false }
             if result == "gone" { return item.isGone }
@@ -514,7 +530,8 @@ public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
 public struct CatalogSummary: Sendable {
     /// The filters with a chip above the list.
     public static let chips: [Sidebar] = [
-        .all, .checkable, .critical, .result("rejected"), .result("works"), .result("no_answer"), .result(""), .stale, .expiring, .archive,
+        .all, .unreviewed, .checkable, .critical, .result("rejected"), .result("works"), .result("no_answer"), .result(""), .stale,
+        .expiring, .archive,
     ]
 
     public let active: Int

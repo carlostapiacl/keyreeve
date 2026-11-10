@@ -25,31 +25,88 @@ func createVault() throws {
         """)
 }
 
-func addKey() throws {
-    guard arguments.count == 2 else { fail(help, code: 2) }
-    guard !VaultFile.isTemporary(arguments[1]) else { fail("that name is kept for a rotation") }
-    guard store.exists else { fail("there is no vault yet: run keyreeve-vault init") }
-    let value = readSecret(prompt: "Value for \(arguments[1])")
-    guard !value.isEmpty else { fail("the value is empty") }
-    try store.update { try $0.add(name: arguments[1], value: value) }
-    try? auditLog.append(event: "sealed", key: arguments[1])
-    print("\(arguments[1]) added")
+/// Who is sealing, as the system says and as the caller says of itself, for the key's record and the usage log.
+func arrivalCaller() -> (observed: AuditLog.Observed, addedBy: String, declared: AuditLog.Declared) {
+    let observed = CallerIdentity.observe(pid: getpid())
+    let named = ProcessInfo.processInfo.environment["KEYREEVE_AGENT"]
+    return (
+        observed, KeyArrival.addedBy(observed: observed, declared: named),
+        AuditLog.Declared(agent: KeyArrival.agent(observed: observed, declared: named), cwd: FileManager.default.currentDirectoryPath)
+    )
 }
 
+/// `add <name> [--description TEXT] [--tags a,b]`. The key goes in with a record no agent sees, marked as new
+/// for the person to review.
+func addKey() throws {
+    var name: String?
+    var description: String?
+    var tags: [String]?
+    var rest = arguments.dropFirst()
+    while let word = rest.popFirst() {
+        switch word {
+        case "--description":
+            guard let text = rest.popFirst() else { fail(help, code: 2) }
+            description = text
+        case "--tags":
+            guard let text = rest.popFirst() else { fail(help, code: 2) }
+            tags = text.split(separator: ",").map(String.init)
+        default:
+            guard name == nil, !word.hasPrefix("--") else { fail(help, code: 2) }
+            name = word
+        }
+    }
+    guard let name else { fail(help, code: 2) }
+    guard !VaultFile.isTemporary(name) else { fail("that name is kept for a rotation") }
+    guard store.exists else { fail("there is no vault yet: run keyreeve-vault init") }
+    let value = readSecret(prompt: "Value for \(name)")
+    guard !value.isEmpty else { fail("the value is empty") }
+    let caller = arrivalCaller()
+    let key = try KeyArrival.add(
+        value, as: name, addedBy: caller.addedBy, description: description, tags: tags, store: store, index: keysFile)
+    try? auditLog.append(
+        event: "sealed", key: key.id, observed: caller.observed, declared: caller.declared,
+        detail: "added \(name) by \(caller.addedBy), not offered to agents")
+    print("\(name) added as \(key.id). Agents do not see it, and Keyreeve shows it as new until you review it.")
+}
+
+/// `put <name>`. A new name goes in as `add` does. A key that is there keeps its value: the new one waits as
+/// `<name>#pending` until the person accepts it in Keyreeve. Only the key's own rotation replaces it here.
 func putKey() throws {
     guard arguments.count == 2 else { fail(help, code: 2) }
     guard store.exists else { fail("there is no vault yet: run keyreeve-vault init") }
-    let value = readSecret(prompt: "Value for \(arguments[1])")
+    let name = arguments[1]
+    let value = readSecret(prompt: "Value for \(name)")
     guard !value.isEmpty else { fail("the value is empty") }
-    try store.update { vault in
-        // A rotation's temporary copies have no history worth keeping.
-        if VaultFile.isTemporary(arguments[1]) { vault.entries[arguments[1]] = nil }
-        try vault.replace(name: arguments[1], value: value)
+    let caller = arrivalCaller()
+    // The engine runs this as `keyreeve-cli rotate`, from the app, after the person's fingerprint.
+    let parent = URL(fileURLWithPath: CallerIdentity.observe(pid: getppid()).program).lastPathComponent
+    let outcome = try KeyArrival.put(
+        value, as: name, addedBy: caller.addedBy, byEngine: ["keyreeve-cli", "keyreeve"].contains(parent),
+        journal: home.appendingPathComponent("rotations.jsonl"), store: store, index: keysFile)
+    let id = (try? KeyIndex.load(from: keysFile))?.allKeys(forSource: name).first?.id ?? name
+    switch outcome {
+    case .temporary:
+        break
+    case .added(let key):
+        try? auditLog.append(
+            event: "sealed", key: key.id, observed: caller.observed, declared: caller.declared,
+            detail: "added \(name) by \(caller.addedBy), not offered to agents")
+        print("\(name) added as \(key.id). Agents do not see it, and Keyreeve shows it as new until you review it.")
+    case .replacedByRotation:
+        try? auditLog.append(
+            event: "sealed", key: id, observed: caller.observed, declared: caller.declared, detail: "replaced by its rotation")
+        endPermissions(forSources: [name])
+    case .waiting:
+        try? auditLog.append(
+            event: "sealed", key: id, observed: caller.observed, declared: caller.declared,
+            detail: "a new value from \(caller.addedBy) waits for the person; the current one stays in force")
+        print("A new value for \(name) is waiting. The current one stays in force until you accept it in Keyreeve.")
     }
-    if !VaultFile.isTemporary(arguments[1]) {
-        try? auditLog.append(event: "sealed", key: arguments[1], detail: "replaced")
-        endPermissions(forSources: [arguments[1]])
-    }
+}
+
+/// `orphans`: vault entries with no record in keys.toml. Names only.
+func listOrphans() throws {
+    for name in KeyArrival.orphans(in: try store.load(), index: try KeyIndex.load(from: keysFile)) { print(name) }
 }
 
 /// Permissions opened with a value that was just replaced end now, not when they run out. The service also
@@ -78,10 +135,17 @@ func resealKeys() throws {
         guard let source = vault.entries[name]?.source else { fail("\(name) was not sealed from a file") }
         byFolder[source, default: []].append(name)
     }
+    let caller = arrivalCaller()
     for (folder, paths) in byFolder.sorted(by: { $0.key < $1.key }) {
         let report = try VaultKeeper.sealAgain(paths: paths, folder: URL(fileURLWithPath: folder), store: store)
+        // A key sealed with no record gets one here, as any key that goes in does.
+        _ = try? KeyArrival.giveRecords(to: report.sealed, addedBy: caller.addedBy, reviewed: false, index: keysFile)
+        let index = try? KeyIndex.load(from: keysFile)
         for path in report.sealed {
-            try? auditLog.append(event: "sealed", key: path, detail: "sealed again from its file")
+            try? auditLog.append(
+                event: "sealed", key: index?.allKeys(forSource: path).first?.id ?? path, observed: caller.observed,
+                declared: caller.declared,
+                detail: "sealed again from its file by \(caller.addedBy)")
             print("\(path) sealed again")
         }
         for (path, why) in report.skipped.sorted(by: { $0.key < $1.key }) { print("\(path) not sealed: \(why)") }

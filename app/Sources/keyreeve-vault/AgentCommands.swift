@@ -82,7 +82,7 @@ func serveAgents() throws {
         guard let key = try KeyIndex.load(from: keysFile).key(id) else { throw VaultError("no key is called \(id)") }
         return key
     }
-    let bridge = AgentBridge(
+    var bridge = AgentBridge(
         policy: { AgentPolicy.load(from: policyFile) },
         names: {
             let sealed = Set(try store.load().entries.keys)
@@ -141,6 +141,8 @@ func serveAgents() throws {
             let value = try store.load().open(name: key.source, with: recipient)
             try store.update { try $0.sealUnattended(name: key.source, value: value) }
         })
+    bridge.places = { PlaceBook.load(from: PlaceBook.file(home: home)) }
+    bridge.proceduresFolder = PlaceBook.proceduresFolder(home: home)
     // One message per line, at most a megabyte: a client that sends more is told so and the line is
     // dropped, read in pieces and never held whole.
     let limit = 1 << 20

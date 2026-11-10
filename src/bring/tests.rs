@@ -12,10 +12,13 @@ struct Temp(PathBuf);
 
 impl Temp {
     fn new(name: &str) -> Self {
+        // A number of its own as well as the thread's, so two folders of one name never meet.
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
-            "keyreeve-bring-{name}-{}-{:?}",
+            "keyreeve-bring-{name}-{}-{:?}-{}",
             std::process::id(),
-            std::thread::current().id()
+            std::thread::current().id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
         ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();

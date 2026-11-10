@@ -301,6 +301,9 @@ struct VaultView: View {
                 HStack {
                     SectionTitle(T("Add keys"))
                     Spacer()
+                    Button(T("Bring in keys…"), action: model.startBringIn)
+                        .buttonStyle(KRButtonStyle())
+                        .help(T("Find keys in the usual places on this Mac or in a folder"))
                     Button(T("Choose 5 to start")) {
                         chosen = Set(candidates.prefix(5).map(\.path))
                     }

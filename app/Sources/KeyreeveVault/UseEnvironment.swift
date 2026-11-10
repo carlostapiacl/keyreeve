@@ -12,7 +12,7 @@ public struct UseEnvironment: Equatable, Sendable {
     /// Tools that read a CA bundle from one of these.
     public static let bundleVariables = [
         "SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT", "AWS_CA_BUNDLE",
-        "CARGO_HTTP_CAINFO", "DENO_CERT",
+        "CARGO_HTTP_CAINFO", "DENO_CERT", "HTTPLIB2_CA_CERTS",
     ]
 
     /// A command with nothing added yet.

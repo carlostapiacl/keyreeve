@@ -142,6 +142,8 @@ func serveKeys() throws {
             return try? vault.openUnattended(name: source, with: recipient)
         })
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
+    // The app shows a key its provider no longer accepts like one that expired, until it works again.
+    proxy?.onAuthorization = { key, state in try? KeyIndex.markAuthorization(id: key, active: state == "active", in: keysFile) }
     // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
     // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an
     // old version running, with fixes built since never in force. The next use starts the new one.

@@ -41,6 +41,9 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     public var lastReason: String
     /// The day it stops working, `yyyy-mm-dd`, as the person or an agent wrote it.
     public var expires: String
+    /// The provider answered its OAuth credential with `invalid_grant`: a person has to sign in again and
+    /// replace it. Read from `state` in keys.toml, which the key service writes.
+    public var needsReauthorizing = false
     public var id: String { path }
 
     /// A secret with no provider, such as a signing key, so there is nowhere to check it.
@@ -117,6 +120,8 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
         if revoke && lastResult == "works" { return (0, T("Still works: revoke it")) }
         if revoke { return (1, T("Marked to revoke")) }
         if lastResult == "works" && isBackup { return (2, T("An old copy that still works")) }
+        // Like a key that expired: what uses it stops until a person authorizes it again.
+        if needsReauthorizing && isSecret && !isDone { return (1, T("The provider no longer accepts it: authorize it again")) }
         // A key that ends breaks what uses it: said before, and loudly once it has.
         if isSecret, let days = daysLeft(at: now) {
             if days < 0 { return (1, T("Expired on %@: renew it", expiryDay ?? "")) }

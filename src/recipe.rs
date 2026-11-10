@@ -184,6 +184,9 @@ pub struct Auth {
     /// Getting a token is enough to know the key works.
     #[serde(default)]
     pub token_is_proof: bool,
+    /// `oauth_token`: how this provider's client ids end, such as `.apps.googleusercontent.com`, so a pasted
+    /// credential file is recognized as this provider's.
+    pub client_id_ends: Option<String>,
     /// `command`: a program of yours does the check. Only for your own files.
     pub run: Option<CustomRun>,
     /// `ssh`: the login name, and the text around the account in the server's greeting.

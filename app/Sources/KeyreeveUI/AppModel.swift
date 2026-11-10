@@ -447,6 +447,8 @@ struct Snapshot: Sendable {
             item.originalMoved = true
             parsed.append(item)
         }
+        let reauthorize = Set((index.keys + index.unoffered).filter { $0.more.state == "reauthorize" }.map(\.source))
+        for at in parsed.indices where reauthorize.contains(parsed[at].path) { parsed[at].needsReauthorizing = true }
         items = parsed
         activity = files.activity()
         places = files.allPlaces()

@@ -85,6 +85,9 @@ Each offered key has a level, set in the app.
 The real key itself (`keyreeve-vault get`, `--real`, `run_with_key`) asks for your fingerprint every time. Quitting
 Keyreeve, **Lock everything** in the menu bar or `keyreeve-vault revoke` ends every permission.
 
+An OAuth credential, such as a Google sign-in with a refresh token, takes the same levels. keyreeve keeps the refresh token
+and gets the access tokens itself, so an unattended job can read Search Console every Monday and never hold either.
+
 ![The Agents section, with the keys offered to agents and their levels](docs/img/agents.png)
 
 ## How agents use it

@@ -86,6 +86,10 @@ Cada clave ofrecida tiene un nivel, que eliges en la app.
 La clave real (`keyreeve-vault get`, `--real`, `run_with_key`) pide tu huella cada vez. Cerrar Keyreeve, **Bloquear todo** en
 la barra de menú o `keyreeve-vault revoke` terminan todos los permisos.
 
+Una credencial OAuth, como un inicio de sesión de Google con refresh token, toma los mismos niveles. keyreeve guarda el refresh
+token y pide los tokens de acceso por su cuenta, así una tarea sin nadie al lado puede leer Search Console cada lunes sin tener
+ninguno de los dos.
+
 ![La sección Agentes, con las claves ofrecidas y sus niveles](docs/img/es/agents.png)
 
 ## Cómo la usan los agentes

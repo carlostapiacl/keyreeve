@@ -1,6 +1,6 @@
 import AppKit
 import CryptoKit
-import KeyreeveCatalog
+@testable import KeyreeveCatalog
 @testable import KeyreeveVault
 import Foundation
 @testable import KeyreeveUI
@@ -19,6 +19,34 @@ struct RenderTests {
         CatalogItem(path: "deploy.pub", level: "none", tags: ["infra"], modified: "2026-07-03", mode: "644"),
         CatalogItem(path: "mail-token.txt", tags: ["blog", "provider:mail"], modified: "2026-01-11", lastResult: "rejected", lastChecked: "2026-11-06"),
     ]
+
+    static let bringReport: BringReport = {
+        func part(_ name: String?, line: Int, whole: Bool = false) -> BringCandidate.Part {
+            .init(name: name, section: nil, line: line, span: whole ? nil : [0, 1], json: nil, whole: whole)
+        }
+        func key(_ id: Int, _ group: BringCandidate.Group, _ kind: String, _ provider: String?, _ paths: [String], _ parts: [BringCandidate.Part], reason: String? = nil) -> BringCandidate {
+            BringCandidate(
+                id: id, group: group, kind: kind, why: "", provider: provider, recipes: provider.map { [$0] } ?? [],
+                check: reason.map { .init(recipe: provider ?? "", result: "no_result", reason: $0, tried: []) }, server: nil,
+                origins: paths.map { .init(path: $0, area: $0.contains("/code/") ? "project" : "home", bytes: 1, modified: 1, parts: parts) },
+                duplicate: paths.count > 1, from_project: paths.contains { $0.contains("/code/") },
+                suggested: group == .works ? "seal" : group == .doubtful ? "decide" : "skip")
+        }
+        let candidates = [
+            key(1, .works, "key", "github", ["/Users/demo/.config/gh/hosts.yml"], [part("oauth_token", line: 2)]),
+            key(2, .works, "key", "aws", ["/Users/demo/.aws/credentials"], [part("aws_access_key_id", line: 2), part("aws_secret_access_key", line: 3)]),
+            key(3, .works, "key", "openai", ["/Users/demo/.zshrc", "/Users/demo/code/shop/.env"], [part("OPENAI_API_KEY", line: 4)]),
+            key(4, .doubtful, "key", nil, ["/Users/demo/.ssh/id_ed25519"], [part(nil, line: 1, whole: true)]),
+            key(5, .doubtful, "login", nil, ["/Users/demo/.netrc"], [part("login", line: 2), part("password", line: 3)]),
+            key(6, .doubtful, "key", "r2", ["/Users/demo/code/shop/.env"], [part("R2_ACCESS_KEY_ID", line: 5), part("R2_SECRET_ACCESS_KEY", line: 6)], reason: "its server is not approved yet"),
+            key(7, .dead, "key", "telegram", ["/Users/demo/code/bot/.env"], [part("TELEGRAM_BOT_TOKEN", line: 1)]),
+            key(8, .other, "configuration", nil, ["/Users/demo/code/bot/.env"], [part("TELEGRAM_CHAT_ID", line: 2)]),
+            key(9, .other, "public", nil, ["/Users/demo/.ssh/id_ed25519.pub"], [part(nil, line: 1, whole: true)]),
+        ]
+        return BringReport(
+            schema: 1, scope: "places", roots: [], suggested_projects: [], files: 9, checked: true, skipped: .init(),
+            summary: .init(works: 3, doubtful: 3, other: 2, dead: 1, duplicates: 1), candidates: candidates)
+    }()
 
     func render<V: View>(_ view: V, named name: String, appearance: NSAppearance.Name) throws {
         let host = NSHostingView(rootView: view.frame(width: 1000, height: 560))
@@ -104,6 +132,17 @@ struct RenderTests {
             try render(detail, named: "detail-\(code)", appearance: .aqua)
             try render(MainView(model: model, initial: .all), named: "list-\(code)", appearance: .darkAqua)
             try render(WelcomeView(choose: {}), named: "welcome-\(code)", appearance: .aqua)
+            try render(WelcomeView(choose: {}, withoutFolder: {}, bringIn: {}), named: "welcome-bring-\(code)", appearance: .aqua)
+            let bring = self.model()
+            bring.bringing = BringState(projects: [URL(fileURLWithPath: "/Users/demo/code"), URL(fileURLWithPath: "/Users/demo/Desktop")])
+            try render(BringSheet(model: bring), named: "bring-choose-\(code)", appearance: .aqua)
+            bring.bringing?.report = Self.bringReport
+            bring.bringing?.decisions = AppModel.firstDecisions(Self.bringReport)
+            bring.bringing?.step = .review
+            try render(BringSheet(model: bring), named: "bring-review-\(code)", appearance: .darkAqua)
+            bring.bringing?.sealed = [("openai", true), ("aws", false)]
+            bring.bringing?.step = .done
+            try render(BringSheet(model: bring), named: "bring-done-\(code)", appearance: .aqua)
             try render(SettingsView(model: model), named: "settings-\(code)", appearance: .aqua)
             try render(LockedView(message: nil, unlock: {}), named: "locked-\(code)", appearance: .aqua)
             try render(MainView(model: model, initial: .providers), named: "providers-\(code)", appearance: .aqua)

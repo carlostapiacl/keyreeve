@@ -76,6 +76,8 @@ public final class AppModel: ObservableObject {
 
     /// A key being pasted into the vault, while its sheet is open.
     @Published public var addingKey: AddKeyDraft?
+    /// Bring in, while its sheet is open: where to look, what was found, and what the person chose.
+    @Published public var bringing: BringState?
     /// The requests file as last read, so an unchanged file is not read again.
     var requestsStamp = ""
     @Published public var keyIndex = KeyIndex()

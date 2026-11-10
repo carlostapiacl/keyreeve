@@ -162,7 +162,9 @@ Every way in leaves the same trace: the app's **+**, Bring in, **Seal**, a reque
 terminal `add`, `put` and `reseal`. Each key gets a record in `keys.toml`, made from its name (`added/openai-prod` is
 `openai-prod`, with a number when that is taken), with `added_by` and `added_at`. It is not offered to agents, so `list_keys` and
 `keyreeve-vault list` do not show it. The usage log names who added it as it names every other event: the program and its parents
-as the system reports them, and the agent when the process tree or `KEYREEVE_AGENT` names one.
+as the system reports them, and the agent when the process tree or `KEYREEVE_AGENT` names one. The app and `keyreeve-vault` write
+`keys.toml` under one lock, each reading it as it is and writing only its own change, so a key an agent adds while the window is
+open is never lost to an edit in the app, and the window shows it within a few seconds.
 
 ```bash
 pbpaste | keyreeve-vault add added/openai-prod --description "OpenAI, production" --tags work,ai

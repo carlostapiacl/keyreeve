@@ -169,7 +169,9 @@ Toda entrada deja el mismo rastro: el **+** de la app, Traer, **Sellar**, una pe
 terminal `add`, `put` y `reseal`. Cada clave recibe un registro en `keys.toml`, hecho a partir de su nombre (`added/openai-prod` es
 `openai-prod`, con un número si ya está tomado), con `added_by` y `added_at`. No se ofrece a los agentes, así que `list_keys` y
 `keyreeve-vault list` no la muestran. El registro de uso nombra a quien la agregó como nombra cualquier otro evento: el programa y sus
-padres según el sistema, y el agente cuando el árbol de procesos o `KEYREEVE_AGENT` lo nombran.
+padres según el sistema, y el agente cuando el árbol de procesos o `KEYREEVE_AGENT` lo nombran. La app y `keyreeve-vault` escriben
+`keys.toml` con un mismo candado, y cada uno lo lee como está y escribe solo su propio cambio, así que una clave que un agente agrega
+con la ventana abierta nunca se pierde por una edición en la app, y la ventana la muestra en pocos segundos.
 
 ```bash
 pbpaste | keyreeve-vault add added/openai-prod --description "OpenAI, producción" --tags trabajo,ia

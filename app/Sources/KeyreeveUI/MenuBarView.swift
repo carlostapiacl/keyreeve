@@ -173,7 +173,10 @@ public struct MenuBarLabel: View {
     public init(model: AppModel) { self.model = model }
 
     public var body: some View {
-        icon.onReceive(ticker) { _ in model.reloadRequests() }
+        icon.onReceive(ticker) { _ in
+            model.reloadRequests()
+            model.reloadIfIndexChanged()
+        }
     }
 
     @ViewBuilder private var icon: some View {

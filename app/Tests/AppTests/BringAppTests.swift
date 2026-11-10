@@ -142,6 +142,8 @@ struct BringAppTests {
         var index = KeyIndex()
         try index.addUnoffered(.init(id: "openai", source: "added/openai"))
         try index.addUnoffered(.init(id: "netrc", source: "added/netrc"))
+        // As Bring in left them: on disk, and read by the window. An edit writes only its change onto the file.
+        try model.files.writePrivate(Data(index.toml.utf8), to: model.files.keyIndex)
         model.keyIndex = index
         var state = BringState()
         state.sealed = [("openai", true), ("netrc", false)]

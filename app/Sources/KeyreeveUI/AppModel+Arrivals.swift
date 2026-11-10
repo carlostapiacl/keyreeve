@@ -88,42 +88,48 @@ extension AppModel {
     /// A file the person sealed in the app gets its record too, reviewed and not offered to agents, so no key is in
     /// the vault with no identifier.
     func recordSealed(_ sealed: [CatalogItem]) {
-        guard !sealed.isEmpty, var index = try? currentIndex() else { return }
-        var made = 0
-        for item in sealed where index.allKeys(forSource: item.path).isEmpty {
-            var key = KeyIndex.Key(
-                id: index.suggestion(provider: item.recipes.first, project: nil, source: item.path), source: item.path,
-                field: item.field.isEmpty ? nil : item.field, provider: item.recipes.first)
-            (key.more.addedBy, key.more.addedAt) = (KeyArrival.byPerson, KeyArrival.stamp())
-            if (try? index.addUnoffered(key)) != nil { made += 1 }
-        }
-        guard made > 0, (try? files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)) != nil else { return }
-        keyIndex = index
+        guard !sealed.isEmpty else { return }
+        // Read and written under the lock keyreeve-vault takes too, so a record an agent just added stays.
+        guard let changed = try? KeyIndex.change(at: files.keyIndex, { index in
+            for item in sealed where index.allKeys(forSource: item.path).isEmpty {
+                var key = KeyIndex.Key(
+                    id: index.suggestion(provider: item.recipes.first, project: nil, source: item.path), source: item.path,
+                    field: item.field.isEmpty ? nil : item.field, provider: item.recipes.first)
+                (key.more.addedBy, key.more.addedAt) = (KeyArrival.byPerson, KeyArrival.stamp())
+                try? index.addUnoffered(key)
+            }
+        }) else { return }
+        keyIndex = changed.index
+    }
+
+    /// Reads the list again when keys.toml changed on disk since it was read: a key an agent added shows up with no
+    /// restart. Called on focus and by the menu bar's ticker; a stat, and nothing more, while nothing changed.
+    public func reloadIfIndexChanged() {
+        guard unlocked, !settling else { return }
+        let now = KeyIndex.stamp(of: files.keyIndex)
+        guard now != indexStamp else { return }
+        indexStamp = now
+        load()
     }
 
     /// Brings the window to the new keys.
     public func showNewKeysNow() { showNewKeys &+= 1 }
 
-    /// keys.toml as it is on disk now: another program may have added to it since the window read it. One that is
-    /// there and cannot be read stops the change, since writing it from memory could lose keys.
-    private func currentIndex() throws -> KeyIndex {
-        FileManager.default.fileExists(atPath: files.keyIndex.path) ? try KeyIndex.load(from: files.keyIndex) : keyIndex
-    }
-
     /// The person looked at these keys. Nothing is offered by this: offering stays its own choice.
     public func markReviewed(_ chosen: [CatalogItem]) {
         do {
-            var index = try currentIndex()
-            var changed: [(key: String, detail: String)] = []
-            for item in chosen {
-                for key in index.allKeys(forSource: item.path) where !key.more.reviewed {
-                    index.update(id: key.id) { $0.more.reviewed = true }
-                    changed.append((key.id, "reviewed, added by \(key.more.addedBy ?? "unknown")"))
+            let (index, changed) = try KeyIndex.change(at: files.keyIndex) { index -> [(key: String, detail: String)] in
+                var changed: [(key: String, detail: String)] = []
+                for item in chosen {
+                    for key in index.allKeys(forSource: item.path) where !key.more.reviewed {
+                        index.update(id: key.id) { $0.more.reviewed = true }
+                        changed.append((key.id, "reviewed, added by \(key.more.addedBy ?? "unknown")"))
+                    }
                 }
+                return changed
             }
-            guard !changed.isEmpty else { return }
-            try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
             keyIndex = index
+            guard !changed.isEmpty else { return }
             audit(changed, event: "reviewed")
             message = changed.count == 1 ? T("1 key reviewed. It is still not offered to agents.") : T("%d keys reviewed. They are still not offered to agents.", changed.count)
         } catch {
@@ -136,7 +142,7 @@ extension AppModel {
     public func giveRecord(to item: CatalogItem) {
         do {
             let made = try KeyArrival.giveRecords(to: [item.path], addedBy: nil, reviewed: true, index: files.keyIndex)
-            keyIndex = try currentIndex()
+            keyIndex = try KeyIndex.load(from: files.keyIndex)
             audit(made.map { ($0.id, "identifier given to \(item.path), sealed with no record; not offered to agents") }, event: "policy")
             if let id = made.first?.id { message = T("%@ has an identifier now. It is not offered to agents.", id) }
         } catch {

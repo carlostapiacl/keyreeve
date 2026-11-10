@@ -77,11 +77,9 @@ public enum KeyArrival {
         _ name: String, addedBy: String?, reviewed: Bool, description: String? = nil, tags: [String]? = nil,
         index indexURL: URL, now: Date
     ) throws -> KeyIndex.Key {
-        var index = try KeyIndex.load(from: indexURL)
-        if let existing = index.allKeys(forSource: name).first { return existing }
-        let key = try record(name, in: &index, addedBy: addedBy, reviewed: reviewed, now: now, description: description, tags: tags)
-        try PrivateFile.write(Data(index.toml.utf8), to: indexURL)
-        return key
+        try KeyIndex.change(at: indexURL) { index in
+            try record(name, in: &index, addedBy: addedBy, reviewed: reviewed, now: now, description: description, tags: tags)
+        }.result
     }
 
     /// Gives a record to each of these vault entries that has none. For `reseal`, and for the app's button on a key
@@ -89,13 +87,13 @@ public enum KeyArrival {
     public static func giveRecords(
         to names: [String], addedBy: String?, reviewed: Bool, index indexURL: URL, now: Date = Date()
     ) throws -> [KeyIndex.Key] {
-        var index = try KeyIndex.load(from: indexURL)
-        var made: [KeyIndex.Key] = []
-        for name in names where index.allKeys(forSource: name).isEmpty && !VaultFile.isTemporary(name) {
-            made.append(try record(name, in: &index, addedBy: addedBy, reviewed: reviewed, now: now))
-        }
-        if !made.isEmpty { try PrivateFile.write(Data(index.toml.utf8), to: indexURL) }
-        return made
+        try KeyIndex.change(at: indexURL) { index in
+            var made: [KeyIndex.Key] = []
+            for name in names where index.allKeys(forSource: name).isEmpty && !VaultFile.isTemporary(name) {
+                made.append(try record(name, in: &index, addedBy: addedBy, reviewed: reviewed, now: now))
+            }
+            return made
+        }.result
     }
 
     /// Vault entries with no record in keys.toml, such as keys an older version sealed. In a book of every key

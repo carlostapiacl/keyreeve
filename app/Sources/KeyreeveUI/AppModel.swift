@@ -82,6 +82,8 @@ public final class AppModel: ObservableObject {
     @Published public var showNewKeys = 0
     /// The requests file as last read, so an unchanged file is not read again.
     var requestsStamp = ""
+    /// keys.toml as the list on screen read it, so a change from elsewhere, such as an agent's add, shows up.
+    var indexStamp = ""
     @Published public var keyIndex = KeyIndex()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
@@ -181,7 +183,10 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    public func windowGotFocus() { lockTask?.cancel() }
+    public func windowGotFocus() {
+        lockTask?.cancel()
+        reloadIfIndexChanged()
+    }
 
     func confirm(reason: String, then: @escaping @MainActor (Bool) -> Void) {
         let epoch = lockEpoch
@@ -260,6 +265,7 @@ public final class AppModel: ObservableObject {
         agentPolicy = snapshot.agentPolicy
         unattendedSources = snapshot.unattendedSources
         keyIndex = snapshot.keyIndex
+        indexStamp = snapshot.indexStamp
         usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
@@ -375,6 +381,8 @@ struct Snapshot: Sendable {
     let places: [String: KeyPlaces]
     let agentPolicy: AgentPolicy
     let keyIndex: KeyIndex
+    /// Taken before keys.toml is read, so a write in between is seen as a change next time.
+    let indexStamp: String
     let usage: UsageSnapshot
     /// Files that are there and could not be read. Each would otherwise look empty, which is a different thing.
     let problems: [String]
@@ -385,6 +393,7 @@ struct Snapshot: Sendable {
 
     init(reading source: Source) {
         let files = source.files
+        indexStamp = KeyIndex.stamp(of: files.keyIndex)
         files.tightenFolders()
         let ignored = files.ignoredKeys()
         let details = files.allDetails()

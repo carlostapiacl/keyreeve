@@ -303,9 +303,10 @@ extension AppModel {
         setOffered(true, id: id)
     }
 
-    private func saveIndex(_ index: KeyIndex) throws {
-        try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
-        keyIndex = index
+    /// Writes only what this edit changed, from the copy on screen, onto keys.toml as it is now, under the lock
+    /// keyreeve-vault takes too: a record an agent added since the window read the file stays.
+    func saveIndex(_ index: KeyIndex) throws {
+        keyIndex = try KeyIndex.save(index, from: keyIndex, at: files.keyIndex)
     }
 
     public func allow(program: String, for item: CatalogItem) {

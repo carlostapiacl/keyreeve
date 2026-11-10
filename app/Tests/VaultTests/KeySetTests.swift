@@ -20,7 +20,8 @@ final class SetFixture: @unchecked Sendable {
     var files: [String: String] = ["/usr/bin/python3": "py-1", "/w/report.py": "script-1"]
     var running: Set<Int32> = [42]
     var unattended: Set<String> = []
-    var gather: TimeInterval = 0
+    /// Whether single uses share a window, and how many the window waits for before it closes. No clock is involved.
+    var gatherUntil: Int?
     let lock = NSLock()
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     static let index = """
@@ -90,7 +91,11 @@ final class SetFixture: @unchecked Sendable {
             openStanding: { source in self.unattended.contains(source) ? value(source) : nil },
             fingerprint: { self.files[$0] },
             isRunning: { self.running.contains($0) },
-            gather: gather)
+            gather: gatherUntil.map { until in
+                KeyService.Gather { joined in
+                    while joined() < until { usleep(1000) }
+                }
+            } ?? .never)
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/usr/local/bin/keyreeve-vault", chain: ["keyreeve-vault", "zsh"])
 
@@ -236,32 +241,48 @@ struct KeySetTests {
         #expect(f.proxy.removed.count == 1)
     }
 
-    /// A script that asks for ten keys one by one sees one window, and one fingerprint opens them all.
-    @Test func singleUsesCloseTogetherShareOneWindow() async throws {
+    /// A script that asks for ten keys one by one sees one window, and one fingerprint opens them all. The window
+    /// stays open until all three have joined, however slow the machine, and closes then.
+    @Test func singleUsesCloseTogetherShareOneWindow() throws {
         let f = SetFixture()
-        f.gather = 0.5
+        f.gatherUntil = 3
         let service = f.service
         let caller = f.caller
-        let answers = await withTaskGroup(of: KeyService.Response.self) { group in
-            for key in ["meta-ads", "calcom", "sentry"] {
-                group.addTask {
-                    service.handle(
-                        KeyService.Request(op: "use", key: key, program: "python3", arguments: 1, reason: "report", cwd: "/w"),
-                        caller: caller)
-                }
-            }
-            var out: [KeyService.Response] = []
-            for await answer in group { out.append(answer) }
-            return out
+        // A thread of its own for each use, as each caller is its own connection: the first one holds its window,
+        // so they cannot share the few threads Swift's tasks run on.
+        let keys = ["meta-ads", "calcom", "sentry"]
+        let lock = NSLock()
+        var answers: [KeyService.Response] = []
+        let done = DispatchGroup()
+        for key in keys {
+            done.enter()
+            Thread {
+                let answer = service.handle(
+                    KeyService.Request(op: "use", key: key, program: "python3", arguments: 1, reason: "report", cwd: "/w"),
+                    caller: caller)
+                lock.withLock { answers.append(answer) }
+                done.leave()
+            }.start()
         }
+        done.wait()
+        #expect(answers.count == 3)
         #expect(answers.allSatisfy { $0.ok })
         #expect(f.windows.count == 1 && Set(f.windows[0].items.map(\.key)) == ["meta-ads", "calcom", "sentry"])
         #expect(f.fingerprints.count == 1)
-        // One by one still works: a single use alone is asked as before, with no window.
-        _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
+    }
+
+    /// One by one still works: a use alone in its window is asked as before, with its own fingerprint and no list.
+    @Test func aLoneUseIsAskedOnItsOwn() throws {
+        let f = SetFixture()
+        f.gatherUntil = 1
         let alone = f.service.handle(
             KeyService.Request(op: "use", key: "calcom", program: "python3", arguments: 1, cwd: "/w"), caller: f.caller)
-        #expect(alone.ok && f.windows.count == 1 && f.fingerprints.count == 2)
+        #expect(alone.ok && f.windows.isEmpty && f.fingerprints.count == 1)
+        // The next one, after the window closed, gets a window of its own: never dropped, never asked twice.
+        let next = f.service.handle(
+            KeyService.Request(op: "use", key: "sentry", program: "python3", arguments: 1, cwd: "/w"), caller: f.caller)
+        #expect(next.ok && f.windows.isEmpty && f.fingerprints.count == 2)
+        #expect(f.granted == ["calcom", "sentry"])
     }
 
     @Test func theFileRoundTripsAndADamagedOneIsAnError() throws {

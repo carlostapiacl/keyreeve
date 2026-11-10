@@ -14,6 +14,25 @@ extension KeyService {
         let caller: AuditLog.Observed?
     }
 
+    /// How long the first use that needs the person holds its window open for others from the same caller. In use, a
+    /// time: `gather: 2` is two seconds. A test holds it until the uses it sends have joined, so no clock decides.
+    public struct Gather: ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral, Sendable {
+        /// Blocks the first use while others join. `joined` says how many are in its window so far. Nil asks each alone.
+        let hold: (@Sendable (_ joined: @Sendable () -> Int) -> Void)?
+
+        public init(hold: (@Sendable (_ joined: @Sendable () -> Int) -> Void)?) { self.hold = hold }
+
+        /// Each use asked alone, with no window shared.
+        public static let never = Gather(hold: nil)
+
+        public static func seconds(_ seconds: TimeInterval) -> Gather {
+            seconds > 0 ? Gather { _ in Thread.sleep(forTimeInterval: seconds) } : .never
+        }
+
+        public init(integerLiteral value: Int) { self = .seconds(TimeInterval(value)) }
+        public init(floatLiteral value: Double) { self = .seconds(value) }
+    }
+
     /// Single uses that wait together for one window.
     final class Gathering: @unchecked Sendable {
         var asks: [Ask]
@@ -134,7 +153,10 @@ extension KeyService {
         let gathering = Gathering(ask)
         gatherings[group] = gathering
         lock.unlock()
-        Thread.sleep(forTimeInterval: gather)
+        let lock = self.lock
+        gather.hold? { lock.withLock { gathering.asks.count } }
+        // The window closes under the lock: a use that comes after this starts a window of its own, and one that came
+        // before is in `asks`, so none is dropped and none is asked twice.
         lock.lock()
         gatherings[group] = nil
         let asks = gathering.asks

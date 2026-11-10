@@ -62,7 +62,7 @@ let help = """
 
     Any other command, such as recipes, check, verify or rotate, goes to keyreeve-cli beside this program.
 
-    KEYREEVE_VAULT sets the folder. The default is ~/.keyreeve/vault.
+    KEYREEVE_VAULT sets the folder. The default is the vault folder in KEYREEVE_HOME, or ~/.keyreeve/vault.
 
     """
 

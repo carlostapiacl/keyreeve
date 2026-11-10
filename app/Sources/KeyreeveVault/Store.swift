@@ -84,8 +84,15 @@ public struct VaultStore: Sendable {
 
     public init(directory: URL) { self.directory = directory }
 
-    public static var defaultDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".keyreeve/vault")
+    public static var defaultDirectory: URL { defaultDirectory() }
+
+    /// The `vault` folder inside `KEYREEVE_HOME` when it is set, as the app and the command line read it, and
+    /// `~/.keyreeve/vault` otherwise.
+    public static func defaultDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        if let home = environment["KEYREEVE_HOME"], !home.isEmpty {
+            return URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent("vault")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".keyreeve/vault")
     }
 
     public var exists: Bool { FileManager.default.fileExists(atPath: vaultURL.path) }

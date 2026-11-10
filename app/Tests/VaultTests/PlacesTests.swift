@@ -262,6 +262,27 @@ struct PlacesTests {
         _ = try vault.open(name: "before.txt", with: chip)
         digests = ValueDigests.load(from: file)
         #expect(digests.compare(PlaceBook.sha256(Data("CANARY-old-value".utf8)), name: "before.txt", field: nil, revision: before, key: key) == .same)
+
+        // One way in: an added key leaves its digest, a put over it waits under #pending with none, and the value
+        // accepted leaves its own, with the one before as earlier. Batch use opens through the same open.
+        let store = VaultStore(directory: home.appendingPathComponent("vault"))
+        try store.create(VaultFile(enclave: chip.publicKey, recovery: Age.X25519Identity().recipient), blob: Data("blob".utf8))
+        let index = home.appendingPathComponent(KeyIndex.fileName)
+        let journal = home.appendingPathComponent("rotations.jsonl")
+        _ = try KeyArrival.add(Data("CANARY-added\n".utf8), as: "added/mail", addedBy: "claude", store: store, index: index)
+        let added = try #require(try store.load().entries["added/mail"]?.revision)
+        digests = ValueDigests.load(from: file)
+        #expect(digests.compare(PlaceBook.sha256(Data("CANARY-added".utf8)), name: "added/mail", field: nil, revision: added, key: key) == .same)
+        let outcome = try KeyArrival.put(
+            Data("CANARY-waiting\n".utf8), as: "added/mail", addedBy: "codex", byEngine: false, journal: journal, store: store, index: index)
+        #expect(outcome == .waiting)
+        #expect(ValueDigests.load(from: file).entries["added/mail#pending"] == nil, "a value that waits is not in force")
+        try KeyArrival.accept("added/mail", with: chip, journal: journal, store: store)
+        let accepted = try #require(try store.load().entries["added/mail"]?.revision)
+        digests = ValueDigests.load(from: file)
+        let waiting = PlaceBook.sha256(Data("CANARY-waiting".utf8))
+        #expect(digests.compare(waiting, name: "added/mail", field: nil, revision: accepted, key: key) == .same)
+        #expect(digests.compare(PlaceBook.sha256(Data("CANARY-added".utf8)), name: "added/mail", field: nil, revision: accepted, key: key) == .old)
     }
 
     /// On a Mac with a chip, the key is made from the chip key that needs no fingerprint, with no prompt, and is

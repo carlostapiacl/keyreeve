@@ -282,9 +282,6 @@ pub fn parts_needed(recipe: &Recipe) -> usize {
     }
 }
 
-/// Up to this many providers are tried for one key, so a scan sends few requests.
-pub const MAX_RECIPES: usize = 3;
-
 /// What is known about a key when guessing its provider.
 #[derive(Default)]
 pub struct Clues<'a> {
@@ -297,55 +294,69 @@ pub struct Clues<'a> {
     pub hint_words: Vec<String>,
     /// Words of the file's name.
     pub file_words: Vec<String>,
-    /// Words of a domain a part ends with, as a Google client id ends with `googleusercontent.com`.
+    /// Words of the domain its client id ends with, as a Google client id ends with `googleusercontent.com`.
     pub domain_words: Vec<String>,
 }
 
-/// The providers that could check a key, best first: one whose prefix the key starts with (the
-/// longest wins), one whose usual variable has this name, then one named in the name or the file,
-/// then one whose name starts a domain the key carries.
-pub fn guess(known: &[Known], clues: &Clues) -> Vec<String> {
+/// Who a key may belong to. A real key only ever travels to its own provider, so it is checked only
+/// with one provider that strong evidence names, and never on a guess.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Owner {
+    /// Providers named by strong evidence: the key's prefix, its variable being exactly the
+    /// provider's, or the domain of its client id. A key is checked only when this holds one.
+    pub strong: Vec<String>,
+    /// How `strong` was found: `prefix`, `variable` or `domain`, in the same order.
+    pub evidence: Vec<&'static str>,
+    /// Providers its name or its file's name mentions. Shown as a guess, never checked.
+    pub guessed: Vec<String>,
+}
+
+impl Owner {
+    fn add_strong(&mut self, id: &str, evidence: &'static str) {
+        if !self.strong.iter().any(|s| s == id) {
+            self.strong.push(id.to_owned());
+            self.evidence.push(evidence);
+        }
+    }
+
+    /// The one provider to check with, if the evidence names exactly one.
+    pub fn to_check(&self) -> Option<&str> {
+        match self.strong.as_slice() {
+            [only] => Some(only),
+            _ => None,
+        }
+    }
+
+    /// Puts together what two places say of the same key. If they name different providers, it is not checked.
+    pub fn join(&mut self, other: Owner) {
+        for (id, evidence) in other.strong.iter().zip(other.evidence) {
+            self.add_strong(id, evidence);
+        }
+        for id in other.guessed {
+            if !self.guessed.contains(&id) {
+                self.guessed.push(id);
+            }
+        }
+    }
+}
+
+/// Who owns a key, from strong evidence alone, with what names suggest kept apart as a guess.
+pub fn guess(known: &[Known], clues: &Clues) -> Owner {
     let fits: Vec<&Known> = known
         .iter()
         .filter(|k| parts_needed(&k.recipe) == clues.parts.max(1))
         .collect();
-    let mut found: Vec<String> = Vec::new();
-    let mut add = |id: &str| {
-        if !found.iter().any(|f| f == id) {
-            found.push(id.to_owned());
-        }
-    };
-    let first = clues.first;
-    let longest = fits
-        .iter()
-        .flat_map(|k| k.recipe.prefixes.iter())
-        .filter(|prefix| first.starts_with(prefix.as_str()))
-        .map(String::len)
-        .max();
-    if let Some(longest) = longest {
-        for k in &fits {
-            if k.recipe
-                .prefixes
-                .iter()
-                .any(|p| p.len() == longest && first.starts_with(p.as_str()))
-            {
-                add(&k.id);
-            }
+    let mut owner = Owner::default();
+    // The prefix, as the rest of keyreeve reads it: the longest one a shipped provider claims.
+    if let Some((id, _)) = providers::longest_prefix(clues.first) {
+        if fits.iter().any(|k| k.id == id) {
+            owner.add_strong(id, "prefix");
         }
     }
-    for k in &fits {
-        if !clues.label.is_empty() && k.recipe.env_var.as_deref() == Some(clues.label) {
-            add(&k.id);
-        }
-    }
-    let plain_id = |k: &Known| k.id.replace('-', "");
-    for words in [&clues.hint_words, &clues.file_words] {
+    if !clues.label.is_empty() {
         for k in &fits {
-            let named = words
-                .iter()
-                .any(|w| *w == plain_id(k) || k.name_words.len() == 1 && *w == k.name_words[0]);
-            if named {
-                add(&k.id);
+            if k.recipe.env_var.as_deref() == Some(clues.label) {
+                owner.add_strong(&k.id, "variable");
             }
         }
     }
@@ -355,11 +366,24 @@ pub fn guess(known: &[Known], clues: &Clues) -> Vec<String> {
             .iter()
             .any(|w| w.len() > 3 && w.starts_with(&plain_id(k)))
         {
-            add(&k.id);
+            owner.add_strong(&k.id, "domain");
         }
     }
-    found.truncate(MAX_RECIPES);
-    found
+    for words in [&clues.hint_words, &clues.file_words] {
+        for k in &fits {
+            let named = words
+                .iter()
+                .any(|w| *w == plain_id(k) || k.name_words.len() == 1 && *w == k.name_words[0]);
+            if named && !owner.strong.contains(&k.id) && !owner.guessed.contains(&k.id) {
+                owner.guessed.push(k.id.clone());
+            }
+        }
+    }
+    owner
+}
+
+fn plain_id(k: &Known) -> String {
+    k.id.replace('-', "")
 }
 
 /// The words of the domain a value ends with, when it reads as one, as in `x.apps.example.com`.
@@ -499,41 +523,62 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn guesses_by_prefix_variable_and_name() {
+    fn only_strong_evidence_names_the_provider_to_check() {
         let known = test_known();
         let one = |first: &'static str| Clues {
             first,
             parts: 1,
             ..Clues::default()
         };
-        assert_eq!(guess(&known, &one("sk-ant-abc")), ["anthropic"]);
+        let strong = |clues: &Clues| guess(&known, clues).to_check().map(str::to_owned);
+        assert_eq!(strong(&one("sk-ant-abc")).as_deref(), Some("anthropic"));
         let telegram = Clues {
             label: "TELEGRAM_BOT_TOKEN",
+            hint_words: words("TELEGRAM_BOT_TOKEN"),
             ..one("123:abc")
         };
-        assert_eq!(guess(&known, &telegram), ["telegram"]);
-        // A prefix of Instagram in a file named for Meta: both are tried, the prefix first.
+        assert_eq!(strong(&telegram).as_deref(), Some("telegram"));
+        // A name that only mentions a provider is a guess: nothing to check.
+        let named = Clues {
+            label: "MY_TELEGRAM_THING",
+            hint_words: words("MY_TELEGRAM_THING"),
+            ..one("123:abc")
+        };
+        let owner = guess(&known, &named);
+        assert_eq!(owner.to_check(), None);
+        assert_eq!(owner.guessed, ["telegram"]);
+        // An Instagram prefix in a file named for Meta: Instagram is checked, Meta only guessed.
         let instagram = Clues {
             file_words: words("meta-shop"),
             ..one("IGAAabc")
         };
-        assert_eq!(guess(&known, &instagram), ["instagram", "meta"]);
+        let owner = guess(&known, &instagram);
+        assert_eq!(owner.to_check(), Some("instagram"));
+        assert_eq!(owner.guessed, ["meta"]);
         // The longest prefix wins over a shorter one another provider claims.
-        assert_eq!(guess(&known, &one("sk_live_abc")), ["stripe"]);
-        // A key of two parts is only offered to providers whose key has two.
+        assert_eq!(strong(&one("sk_live_abc")).as_deref(), Some("stripe"));
+        // The prefix says one provider and the variable another: not checked.
+        let disagree = Clues {
+            label: "OPENAI_API_KEY",
+            ..one("sk-ant-abc")
+        };
+        let owner = guess(&known, &disagree);
+        assert_eq!(owner.strong, ["anthropic", "openai"]);
+        assert_eq!(owner.to_check(), None);
+        // A key of two parts is only for providers whose key has two.
         let two = Clues {
             parts: 2,
             ..one("AKIAabc")
         };
-        assert_eq!(guess(&known, &two), ["aws"]);
-        assert!(guess(&known, &one("AKIAabc")).is_empty());
+        assert_eq!(strong(&two).as_deref(), Some("aws"));
+        assert_eq!(strong(&one("AKIAabc")), None);
         // A client id that ends with Google's domain, with its secret and refresh token.
         let three = Clues {
             parts: 3,
             domain_words: domain_words("123-abc.apps.googleusercontent.com"),
             ..one("123-abc.apps.googleusercontent.com")
         };
-        assert_eq!(guess(&known, &three), ["google"]);
+        assert_eq!(strong(&three).as_deref(), Some("google"));
         assert!(domain_words("not a domain").is_empty());
         assert!(domain_words("1.5").is_empty());
     }

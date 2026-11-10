@@ -39,8 +39,9 @@ Usage:
       Find keys in the places tools keep them on this Mac (and in .env files under the project
       folders you name), or in a folder, and say what each is: a key, a setting, a login, a document
       or a public key, its provider, and whether it works. Parts of one key go together, and the same
-      key in two places is one key. Values are never shown, and no file is moved or changed. Each key
-      is checked with one read-only request, except with --dry-run (unless --check).
+      key in two places is one key. Values are never shown, and no file is moved or changed. A key is
+      checked with one read-only request, only by the one provider its prefix, its variable or its
+      client id names; a name alone is only a guess. Nothing is checked with --dry-run (unless --check).
   keyreeve verify <provider|recipe.yaml> --key-file <file> [--field <name>]
   keyreeve verify <provider> --key-stdin [--field <name>]
       Check whether a key still works, with one read-only request.

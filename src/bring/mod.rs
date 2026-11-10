@@ -86,11 +86,16 @@ pub struct Candidate {
     pub class: Class,
     /// Why it was read as its class, in a few words.
     pub why: &'static str,
-    /// The provider: the one that answered, or the likeliest when none was asked.
+    /// The provider strong evidence names: the key's prefix, its variable being exactly the
+    /// provider's, or the domain of its client id. Only this one is ever sent the key.
     pub provider: Option<String>,
-    /// The providers that could check it, best first.
-    pub recipes: Vec<String>,
+    /// `prefix`, `variable` or `domain`: what named the provider.
+    pub evidence: Option<&'static str>,
+    /// Providers only suggested, by a name or by evidence that disagrees. Shown as a guess, never checked.
+    pub guessed: Vec<String>,
     pub check: Option<Check>,
+    /// Why a key was not checked, when it was not.
+    pub unchecked: Option<&'static str>,
     /// A server named with the key: a registry, a `.netrc` machine, an S3 endpoint.
     pub server: Option<String>,
     /// Every place this key was found. Two or more is one key found twice.
@@ -109,7 +114,6 @@ pub struct Check {
     /// `works`, `rejected`, `forbidden` or `no_result`.
     pub result: &'static str,
     pub reason: Option<String>,
-    pub tried: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -161,7 +165,7 @@ struct Draft {
     class: Class,
     why: &'static str,
     value: Secret,
-    recipes: Vec<String>,
+    owner: sort::Owner,
     server: Option<String>,
     origins: Vec<Origin>,
 }
@@ -270,9 +274,21 @@ fn finish(id: usize, draft: Draft, check: Option<Check>) -> Candidate {
         (Some(check), true) if check.result == "rejected" => Group::Dead,
         _ => Group::Doubtful,
     };
-    let provider = match &check {
-        Some(check) if check.result == "works" => Some(check.recipe.clone()),
-        _ => draft.recipes.first().cloned(),
+    let provider = draft.owner.to_check().map(str::to_owned);
+    let evidence = provider.as_ref().map(|_| draft.owner.evidence[0]);
+    let mut guessed = draft.owner.guessed.clone();
+    if provider.is_none() {
+        // Strong evidence that names two providers is no better than a guess.
+        for id in draft.owner.strong.iter().rev() {
+            guessed.insert(0, id.clone());
+        }
+    }
+    let unchecked = match (&check, secret) {
+        (Some(_), _) | (None, false) => None,
+        (None, true) if draft.owner.strong.len() > 1 => Some("two providers could own it"),
+        (None, true) if provider.is_some() => Some("not checked"),
+        (None, true) if !guessed.is_empty() => Some("only its name suggests a provider"),
+        (None, true) => Some("no provider is known for it"),
     };
     let duplicate = draft.origins.len() > 1;
     let from_project = draft.origins.iter().any(|o| o.area == Area::Project);
@@ -282,8 +298,10 @@ fn finish(id: usize, draft: Draft, check: Option<Check>) -> Candidate {
         class: draft.class,
         why: draft.why,
         provider,
-        recipes: draft.recipes,
+        evidence,
+        guessed,
         check,
+        unchecked,
         server: draft.server,
         origins: draft.origins,
         duplicate,
@@ -357,8 +375,8 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
         if let Some(server) = &server {
             hint_words.extend(sort::words(server));
         }
-        let recipes = if kind == PairKind::Login {
-            Vec::new()
+        let owner = if kind == PairKind::Login {
+            sort::Owner::default()
         } else {
             sort::guess(
                 known,
@@ -368,10 +386,13 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
                     label: "",
                     hint_words,
                     file_words: file_words.clone(),
-                    domain_words: parts
-                        .iter()
-                        .flat_map(|p| sort::domain_words(p.value.as_str()))
-                        .collect(),
+                    // Only a client id's domain says whose client it is.
+                    domain_words: match kind {
+                        PairKind::Oauth | PairKind::Client => {
+                            sort::domain_words(parts[0].value.as_str())
+                        }
+                        _ => Vec::new(),
+                    },
                 },
             )
         };
@@ -379,7 +400,7 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
             class,
             why,
             value: Secret::new(value),
-            recipes,
+            owner,
             server,
             origins: vec![Origin {
                 parts: parts.iter().map(|p| Part::of(p)).collect(),
@@ -401,7 +422,7 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
         if let Some(server) = &piece.server {
             hint_words.extend(sort::words(server));
         }
-        let recipes = match class {
+        let owner = match class {
             Class::Key if piece.whole.is_none() => sort::guess(
                 known,
                 &sort::Clues {
@@ -413,7 +434,7 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
                     domain_words: Vec::new(),
                 },
             ),
-            _ => Vec::new(),
+            _ => sort::Owner::default(),
         };
         let value = if piece.whole.is_some() {
             // A whole file is not read here, so it is told apart by its place alone.
@@ -425,7 +446,7 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
             class,
             why,
             value,
-            recipes,
+            owner,
             server: piece.server.clone(),
             origins: vec![Origin {
                 parts: vec![Part::of(&piece)],
@@ -551,11 +572,8 @@ fn join_duplicates(drafts: Vec<Draft>) -> Vec<Draft> {
             Some(&at) => {
                 let first = &mut joined[at];
                 first.origins.extend(draft.origins);
-                for recipe in draft.recipes {
-                    if !first.recipes.contains(&recipe) && first.recipes.len() < sort::MAX_RECIPES {
-                        first.recipes.push(recipe);
-                    }
-                }
+                // Two places that name different providers leave the key unchecked.
+                first.owner.join(draft.owner);
                 if first.server.is_none() {
                     first.server = draft.server;
                 }
@@ -592,46 +610,29 @@ fn check_all(drafts: &[Draft], setup: &Setup, checker: &Checker<'_>) -> Vec<Opti
         .collect()
 }
 
-/// Tries each provider in turn until one says the key works. A key all of them turn down is dead.
+/// Sends the key to the one provider strong evidence names, and to no other. A key with none, or with
+/// two, is not sent anywhere.
 fn check_one(draft: &Draft, setup: &Setup, checker: &Checker<'_>) -> Option<Check> {
-    if !matches!(draft.class, Class::Key | Class::Login) || draft.recipes.is_empty() {
+    if !matches!(draft.class, Class::Key | Class::Login) {
         return None;
     }
-    let mut results: Vec<(String, Verdict)> = Vec::new();
-    for id in &draft.recipes {
-        let Some(found) = setup.known.iter().find(|k| &k.id == id) else {
-            continue;
-        };
-        let verdict = if found.recipe.self_hosted {
-            match &draft.server {
-                Some(host) if (setup.host_approved)(id, host) => {
-                    checker(&found.recipe.at_host(host), &draft.value)
-                }
-                Some(_) => Verdict::NoResult("its server is not approved yet".into()),
-                None => Verdict::NoResult("it needs the address of your server".into()),
+    let id = draft.owner.to_check()?;
+    let found = setup.known.iter().find(|k| k.id == id)?;
+    let verdict = if found.recipe.self_hosted {
+        match &draft.server {
+            Some(host) if (setup.host_approved)(id, host) => {
+                checker(&found.recipe.at_host(host), &draft.value)
             }
-        } else {
-            checker(&found.recipe, &draft.value)
-        };
-        let works = verdict.works();
-        results.push((id.clone(), verdict));
-        if works {
-            break;
+            Some(_) => Verdict::NoResult("its server is not approved yet".into()),
+            None => Verdict::NoResult("it needs the address of your server".into()),
         }
-    }
-    let tried: Vec<String> = results.iter().map(|(id, _)| id.clone()).collect();
-    let rank = |verdict: &Verdict| match verdict {
-        Verdict::Works { .. } => 0,
-        Verdict::Forbidden => 1,
-        Verdict::NoResult(_) => 2,
-        Verdict::Rejected => 3,
+    } else {
+        checker(&found.recipe, &draft.value)
     };
-    let (recipe, verdict) = results.into_iter().min_by_key(|(_, v)| rank(v))?;
     Some(Check {
-        recipe,
+        recipe: id.to_owned(),
         result: verdict.code(),
         reason: verdict.reason(),
-        tried,
     })
 }
 
@@ -680,6 +681,11 @@ pub fn lines(report: &Report, home: Option<&Path>) -> Vec<String> {
             );
             if let Some(provider) = &c.provider {
                 line.push_str(&format!(" · {provider}"));
+            } else if !c.guessed.is_empty() {
+                line.push_str(&format!(" · maybe {}", c.guessed.join(" or ")));
+            }
+            if let Some(why) = c.unchecked {
+                line.push_str(&format!(" · {why}"));
             }
             if let Some(check) = &c.check {
                 line.push_str(&format!(" · {}", check.result));

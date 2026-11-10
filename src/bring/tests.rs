@@ -208,7 +208,8 @@ fn a_dry_run_finds_the_usual_places_and_shows_no_value() {
     // gcloud's sign-in: Google's three parts, named only by the domain of its client id.
     let adc = find(&report, "refresh_token");
     assert_eq!(names(adc), ["client_id", "client_secret", "refresh_token"]);
-    assert_eq!(adc.recipes, ["google"]);
+    assert_eq!(adc.provider.as_deref(), Some("google"));
+    assert_eq!(adc.evidence, Some("domain"));
     assert!(adc.origins[0].parts.iter().all(|p| p.json.is_some()));
 
     let gh = find(&report, "oauth_token");
@@ -315,7 +316,9 @@ fn parts_of_one_key_go_together() {
         r2.server.as_deref(),
         Some("abc123.r2.cloudflarestorage.com")
     );
-    assert_eq!(r2.recipes, ["r2"]);
+    // Only the names say R2, so it is a guess, and nothing names it strongly enough to check.
+    assert_eq!(r2.provider, None);
+    assert_eq!(r2.guessed, ["r2"]);
     // The endpoint went with the key, so it is not listed apart.
     assert!(report
         .candidates
@@ -331,10 +334,11 @@ fn parts_of_one_key_go_together() {
             "GOOGLE_REFRESH_TOKEN"
         ]
     );
-    assert_eq!(google.recipes, ["google"]);
+    assert_eq!(google.provider.as_deref(), Some("google"));
 
     let telegram = find(&report, "TELEGRAM_BOT_TOKEN");
-    assert_eq!(telegram.recipes, ["telegram"]);
+    assert_eq!(telegram.provider.as_deref(), Some("telegram"));
+    assert_eq!(telegram.evidence, Some("variable"));
     assert_eq!(
         find(&report, "TELEGRAM_CHAT_ID").class,
         Class::Configuration
@@ -393,13 +397,11 @@ fn checks_decide_the_group_and_the_provider() {
     assert_eq!(telegram.suggested, "skip");
     let google = find(&report, "GOOGLE_CLIENT_ID");
     assert_eq!(google.group, Group::Works);
-    // R2 needs your server approved before a key is sent there.
+    // R2 is only named by its variables' names: a guess, so the key went nowhere.
     let r2 = find(&report, "R2_ACCESS_KEY_ID");
     assert_eq!(r2.group, Group::Doubtful);
-    assert_eq!(
-        r2.check.as_ref().unwrap().reason.as_deref(),
-        Some("its server is not approved yet")
-    );
+    assert!(r2.check.is_none());
+    assert_eq!(r2.unchecked, Some("only its name suggests a provider"));
     // Logins and keys no provider claims are for the person to decide.
     let netrc = report
         .candidates
@@ -412,26 +414,112 @@ fn checks_decide_the_group_and_the_provider() {
 }
 
 #[test]
-fn the_provider_that_answers_wins() {
-    let folder = Temp::new("wins");
+fn the_prefix_names_the_provider_and_a_file_name_only_guesses() {
+    let folder = Temp::new("prefix");
     folder.write("meta-shop.txt", "IGAACANARYinstagram000000000000\n");
     let calls = AtomicUsize::new(0);
     let checker = fake_checker(&calls);
     let report = bring_with(&Scope::Folder(folder.0.clone()), &setup(), Some(&checker));
     assert_eq!(report.candidates.len(), 1);
     let token = &report.candidates[0];
-    assert_eq!(token.recipes, ["instagram", "meta"]);
     assert_eq!(token.provider.as_deref(), Some("instagram"));
+    assert_eq!(token.evidence, Some("prefix"));
+    assert_eq!(token.guessed, ["meta"]);
     assert_eq!(token.group, Group::Works);
-    // Instagram answered first, so Meta was not asked.
-    assert_eq!(token.check.as_ref().unwrap().tried, ["instagram"]);
+    // Sent to Instagram alone: the file's name never sends it to Meta.
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     // A Meta token that Meta turns down is dead.
     folder.write("meta-shop.txt", "EAACANARYmeta0000000000000000\n");
     let report = bring_with(&Scope::Folder(folder.0.clone()), &setup(), Some(&checker));
     assert_eq!(report.candidates[0].group, Group::Dead);
-    assert_eq!(report.candidates[0].check.as_ref().unwrap().tried, ["meta"]);
+    assert_eq!(report.candidates[0].check.as_ref().unwrap().recipe, "meta");
+}
+
+#[test]
+fn a_name_alone_sends_nothing_to_the_network() {
+    let folder = Temp::new("names");
+    folder.write(
+        "telegram-bot.env",
+        "MY_TELEGRAM_THING=123456789:CANARYname000000000000000\nOPENAI_SECRET_STUFF=CANARYopenaiName0000000000\n",
+    );
+    folder.write("stripe-notes.txt", "aB3dE5fG7hJ9kL1mN3pQ5rSCANARY\n");
+    folder.write(
+        "paypal.json",
+        r#"{"client_id":"CANARYpaypalId000000000000","client_secret":"CANARYpaypalSecret0000000000"}"#,
+    );
+    let calls = AtomicUsize::new(0);
+    let checker = fake_checker(&calls);
+    let report = bring_with(&Scope::Folder(folder.0.clone()), &setup(), Some(&checker));
+    assert_no_value(&report);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "a key went out on a guess");
+    assert!(!report.candidates.is_empty());
+    for candidate in &report.candidates {
+        assert!(candidate.check.is_none());
+        assert_eq!(candidate.provider, None);
+        assert_eq!(candidate.group, Group::Doubtful);
+        assert_eq!(
+            candidate.unchecked,
+            Some("only its name suggests a provider")
+        );
+    }
+    assert_eq!(find(&report, "client_id").guessed, ["paypal"]);
+}
+
+#[test]
+fn evidence_that_disagrees_sends_nothing() {
+    let folder = Temp::new("disagree");
+    // The prefix says Anthropic and the variable says OpenAI.
+    folder.write("a.env", "OPENAI_API_KEY=sk-ant-CANARYdisagree0000000000\n");
+    // The same value under GitHub's variable in one file and OpenAI's in another.
+    folder.write("b.env", "GH_TOKEN=CANARYsameValue000000000000\n");
+    folder.write("c.env", "OPENAI_API_KEY=CANARYsameValue000000000000\n");
+    let calls = AtomicUsize::new(0);
+    let checker = fake_checker(&calls);
+    let report = bring_with(&Scope::Folder(folder.0.clone()), &setup(), Some(&checker));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(report.candidates.len(), 2);
+    for candidate in &report.candidates {
+        assert_eq!(candidate.provider, None);
+        assert_eq!(candidate.unchecked, Some("two providers could own it"));
+        assert_eq!(candidate.group, Group::Doubtful);
+    }
+    let mut first = report.candidates[0].guessed.clone();
+    first.sort();
+    assert_eq!(first, ["anthropic", "openai"]);
+    let mut second = report.candidates[1].guessed.clone();
+    second.sort();
+    assert_eq!(second, ["github", "openai"]);
+}
+
+#[test]
+fn each_key_goes_to_at_most_one_provider() {
+    let home = fake_home();
+    let sent: Mutex<Vec<(String, [u8; 32])>> = Mutex::new(Vec::new());
+    let checker = |recipe: &Recipe, key: &Secret| {
+        let digest: [u8; 32] = Sha256::digest(key.expose().as_bytes()).into();
+        sent.lock().unwrap().push((recipe.provider.clone(), digest));
+        Verdict::Rejected
+    };
+    let report = bring_with(&places(&home), &setup(), Some(&checker));
+    let sent = sent.into_inner().unwrap();
+    let mut keys: Vec<[u8; 32]> = sent.iter().map(|(_, d)| *d).collect();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), sent.len(), "a key was sent twice");
+    // Every key sent went to the provider its report names, and that one is strongly named.
+    let checked: Vec<&Candidate> = report
+        .candidates
+        .iter()
+        .filter(|c| c.check.is_some())
+        .collect();
+    assert_eq!(checked.len(), sent.len());
+    for candidate in checked {
+        let provider = candidate.provider.as_deref().unwrap();
+        assert_eq!(candidate.check.as_ref().unwrap().recipe, provider);
+        assert!(candidate.evidence.is_some());
+        assert!(sent.iter().any(|(p, _)| p == provider));
+    }
 }
 
 #[test]
@@ -468,7 +556,8 @@ fn a_chosen_folder_of_loose_files() {
 
     let paypal = find(&report, "client_id");
     assert_eq!(names(paypal), ["client_id", "client_secret"]);
-    assert_eq!(paypal.recipes, ["paypal"]);
+    assert_eq!(paypal.provider, None);
+    assert_eq!(paypal.guessed, ["paypal"]);
     assert_eq!(
         paypal.origins[0].parts[1].json.as_deref(),
         Some(&["client_secret".to_owned()][..])

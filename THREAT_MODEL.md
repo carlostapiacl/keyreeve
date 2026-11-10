@@ -91,6 +91,18 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **A rotation writes where you pointed it.** `places.json` names files and buttons that receive the new key, and a program
   running as you could add one. A file must already hold the key, and a button must come from a file you approved, but a
   program that can edit your files could meet both.
+- **A place receives the real key.** A procedure in `key-places.json` gets the value on stdin when you press Update or rotate, so a
+  malicious one could send it anywhere. Each place is pinned to the SHA-256 of the procedure you approved with your fingerprint, the
+  engine runs a private copy of the exact bytes it hashed, and a procedure that changed by a byte does not run until you approve it
+  again. Read a procedure before approving it: an agent may have written it. A procedure is checked by its file, not the programs it
+  calls, such as `ssh` or `gh`. The pin lives in a file you own, so another program running as you could change it, as with any pin.
+- **A check reveals a hash.** `check` runs with no fingerprint and gives the app the SHA-256 of the value in a place, which keyreeve
+  compares with the hash of the key in the vault, kept in `value-digests.json` after you open it once. The SHA-256 of a random API key
+  tells nothing of it; that of a short password could be guessed. Neither the hash nor a value reaches an agent or the log: they get
+  the result in a word. A procedure that answers anything but a hash, `absent` or `present` is an error, and is not shown.
+- **An agent's place is only words until you approve it.** `propose_places` leaves a list under Agents, and nothing is added without
+  your fingerprint. `list_places` shows places of keys offered to agents, and only a count for the rest. Parameters such as a host
+  or a path are in plain text in `key-places.json`.
 - **A moved original is still a key.** It stays in plain text in `~/.keyreeve/originals` until you delete it, and a rotation does
   not update it.
 - **Replacing keeps the old value.** Old copies stay sealed in the vault, including keys already revoked.

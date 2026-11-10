@@ -5,9 +5,10 @@ import KeyreeveVault
 // Handing a program the real value, which `use` avoids when it can.
 
 func runWithKey() throws {
-    guard arguments.count >= 6, arguments[2] == "--as", arguments[4] == "--" else {
+    guard arguments.count >= 6, arguments[2] == "--as" || arguments[2] == "--as-file", arguments[4] == "--" else {
         fail(help, code: 2)
     }
+    if arguments[2] == "--as-file" { return try runWithKeyFile() }
     let vault = try store.load()
     let recipient = try EnclaveRecipient.load(
         blob: try store.loadBlob(), reason: "use the key \(arguments[1])")
@@ -20,6 +21,47 @@ func runWithKey() throws {
     var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
     execvp(command[0], &pointers)
     fail("could not run \(command[0])")
+}
+
+/// `run <name> --as-file VAR -- command`: for a key that is a file, such as a keystore or a certificate. The
+/// sealed bytes go, as they are, into a file only this user can read, in a folder of its own; the variable holds
+/// its path. The command runs as a child, so the file is removed when it ends, also on Ctrl-C.
+func runWithKeyFile() throws {
+    let name = arguments[1], variable = arguments[3]
+    let command = Array(arguments[5...])
+    let vault = try store.load()
+    let recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), reason: "use the key \(name)")
+    let value = try vault.open(name: name, with: recipient)
+    var template = Array((NSTemporaryDirectory() + "keyreeve-file.XXXXXX").utf8CString)
+    guard let made = mkdtemp(&template) else { fail("could not make a private folder for the key") }
+    let folder = URL(fileURLWithPath: String(cString: made), isDirectory: true)
+    let base = (name as NSString).lastPathComponent
+    let file = folder.appendingPathComponent(base.isEmpty || base.hasPrefix(".") ? "key" : base)
+    let removeAll = { try? FileManager.default.removeItem(at: folder) }
+    guard FileManager.default.createFile(atPath: file.path, contents: value, attributes: [.posixPermissions: 0o600]) else {
+        removeAll()
+        fail("could not write the key's file")
+    }
+    // The terminal's Ctrl-C reaches the command too; this process stays alive to clean up after it.
+    signal(SIGINT) { _ in }
+    signal(SIGTERM) { _ in }
+    signal(SIGHUP) { _ in }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = command
+    var environment = ProcessInfo.processInfo.environment
+    environment[variable] = file.path
+    process.environment = environment
+    store.recordUse(of: name, by: command[0])
+    do {
+        try process.run()
+    } catch {
+        removeAll()
+        fail("could not run \(command[0])")
+    }
+    process.waitUntilExit()
+    removeAll()
+    exit(process.terminationReason == .exit ? process.terminationStatus : 128 + process.terminationStatus)
 }
 
 func runWithEnv() throws {

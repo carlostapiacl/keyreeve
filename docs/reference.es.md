@@ -160,6 +160,9 @@ app/dist/keyreeve-vault add hosting-token
 app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
 
+`run <nombre> --as-file VAR -- <comando>` es para una clave que es un archivo, como un keystore `.jks` o un certificado `.pfx`:
+`VAR` tiene la ruta de una copia byte a byte que solo tú puedes leer, en una carpeta propia, y se borra cuando el comando termina.
+
 `put <name>` agrega una clave, o para una que ya está deja un valor nuevo esperando ([más abajo](#cómo-entran-las-claves)), y
 `reseal <name>` vuelve a sellar el archivo de una clave tal como está ahora, desde la carpeta de donde se selló, para un archivo que cambió un script. Agregar una clave no pide huella, así que un agente
 puede guardar una clave que después no puede leer. Usarla pide tu dedo. `init` se niega a correr fuera de una terminal para que la clave

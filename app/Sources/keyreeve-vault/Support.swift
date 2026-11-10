@@ -28,6 +28,9 @@ let help = """
       keyreeve-vault run <name> --as <VARIABLE> -- <command> [args...]
           Run a command with the key in one variable. Asks for a fingerprint.
           The command's own output is not filtered, so choose a command that does not print it.
+      keyreeve-vault run <name> --as-file <VARIABLE> -- <command> [args...]
+          For a key that is a file, such as a .jks keystore or a .pfx certificate: the variable holds the path
+          of a copy only you can read, byte for byte, removed when the command ends. Asks for a fingerprint.
       keyreeve-vault use <id> [--as VAR] [--for 5m] [--agent NAME] [--reason TEXT] [--real] -- <command> [args...]
           Run a command with a key, by its identifier. The command holds a stand-in, and a local proxy
           puts the real key on requests to that provider's hosts. Asks for your finger once for this key

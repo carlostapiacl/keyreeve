@@ -9,7 +9,7 @@
 mod read;
 mod sort;
 
-pub use read::{suggested_projects, Area, Skipped};
+pub use read::{suggested_projects, Area, Budget, Skipped};
 pub use sort::Class;
 
 use crate::providers;
@@ -35,6 +35,9 @@ pub enum Scope {
     },
     /// Every file under a folder the person chose.
     Folder(PathBuf),
+    /// The whole home folder, or the folders given, walked for `.env` files and files that hold keys,
+    /// within a budget. With no folders, the usual places too.
+    Everywhere { home: PathBuf, under: Vec<PathBuf> },
 }
 
 /// Checks one key with one provider. The command sends one real request; tests answer for it.
@@ -51,6 +54,8 @@ pub struct Report {
     pub files: usize,
     pub checked: bool,
     pub skipped: Skipped,
+    /// Folders a walk of everywhere did not finish before its budget ran out. Searching them alone goes on.
+    pub unfinished: Vec<String>,
     pub summary: Summary,
     pub candidates: Vec<Candidate>,
 }
@@ -176,6 +181,7 @@ pub struct Setup<'a> {
     known: Vec<Known>,
     host_approved: &'a (dyn Fn(&str, &str) -> bool + Sync),
     avoid: Vec<PathBuf>,
+    budget: Budget,
 }
 
 impl Setup<'static> {
@@ -185,6 +191,7 @@ impl Setup<'static> {
             known: sort::known(),
             host_approved: &providers::host_approved,
             avoid: vec![providers::home()],
+            budget: Budget::EVERYWHERE,
         }
     }
 }
@@ -197,6 +204,7 @@ pub fn bring(scope: &Scope, checker: Option<&Checker>) -> Report {
 pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Report {
     let known = &setup.known;
     let mut skipped = Skipped::default();
+    let mut unfinished = Vec::new();
     let (files, roots, suggested, scope_name) = match scope {
         Scope::Places { home, projects } => {
             let mut files = read::home_files(home);
@@ -224,6 +232,29 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
                 &mut skipped,
             );
             (files, vec![folder.clone()], Vec::new(), "folder")
+        }
+        Scope::Everywhere { home, under } => {
+            let roots = if under.is_empty() {
+                vec![home.clone()]
+            } else {
+                under.clone()
+            };
+            let walked = read::walk_everywhere(&roots, &setup.avoid, setup.budget, &mut skipped);
+            let mut files = if under.is_empty() {
+                read::home_files(home)
+            } else {
+                Vec::new()
+            };
+            // A tool's file found again by the walk is read once, as the tool's.
+            let known: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
+            files.extend(
+                walked
+                    .files
+                    .into_iter()
+                    .filter(|f| !known.contains(&f.path)),
+            );
+            unfinished = walked.unfinished;
+            (files, roots, Vec::new(), "everywhere")
         }
     };
     let mut drafts: Vec<Draft> = Vec::new();
@@ -261,6 +292,7 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
         files: files.len(),
         checked: checker.is_some(),
         skipped,
+        unfinished: shown(&unfinished),
         summary,
         candidates,
     }

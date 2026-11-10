@@ -303,9 +303,10 @@ extension AppModel {
         setOffered(true, id: id)
     }
 
-    private func saveIndex(_ index: KeyIndex) throws {
-        try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
-        keyIndex = index
+    /// Writes only what this edit changed, from the copy on screen, onto keys.toml as it is now, under the lock
+    /// keyreeve-vault takes too: a record an agent added since the window read the file stays.
+    func saveIndex(_ index: KeyIndex) throws {
+        keyIndex = try KeyIndex.save(index, from: keyIndex, at: files.keyIndex)
     }
 
     public func allow(program: String, for item: CatalogItem) {
@@ -340,8 +341,9 @@ extension AppModel {
         if level != nil { offerIfWaiting(id) }
         // "Always" needs a copy sealed to the chip's key that asks nothing, made with this fingerprint once.
         if level == .always { return markAlways(id) }
-        // Off "always", the copy goes: nothing can open the key with no fingerprint any more.
-        if agentPolicy.levels[id] == .always, let key = keyIndex.key(id) {
+        // Off "always", the copy goes: nothing can open the key with no fingerprint any more. A key a standing
+        // permission still names keeps it, until that permission is removed under Key sets.
+        if agentPolicy.levels[id] == .always, let key = keyIndex.key(id), !loadSets().standingKeys.contains(id) {
             try? vaultStore.update { $0.dropUnattended(name: key.source) }
         }
         applyLevel(level, for: id)

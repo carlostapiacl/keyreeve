@@ -32,8 +32,8 @@ pub struct BookKey {
     /// the first version wrote them joined with `+` in `field`; they are read into here.
     pub parts: Option<Vec<String>>,
     /// How the key is used: `static` (the default, a value sent as it is) or `oauth` (a client and a
-    /// refresh token kept sealed, from which a short access token is made for each use). Only `static`
-    /// works today; `oauth` is kept here so a book need not change again when it does.
+    /// refresh token kept sealed, from which the proxy gets a short access token for each use). The
+    /// provider's file decides which, and this says it for a person reading the book.
     pub auth: Option<Auth>,
     /// `reauthorize` when the provider no longer accepts the grant and a person must sign in again.
     pub state: Option<KeyState>,
@@ -58,6 +58,12 @@ pub struct BookKey {
     pub archived: bool,
     /// False until a person gives the key to agents. The app lists only keys offered to agents.
     pub offered: bool,
+    /// Who sealed it: an agent, a program and its parents, or the person in the app.
+    pub added_by: Option<String>,
+    /// When it arrived, ISO 8601.
+    pub added_at: Option<String>,
+    /// False while a key that something other than the person in the app added waits for a look.
+    pub reviewed: bool,
 }
 
 impl BookKey {
@@ -84,6 +90,9 @@ impl BookKey {
             criticality: None,
             archived: false,
             offered: true,
+            added_by: None,
+            added_at: None,
+            reviewed: true,
         }
     }
 }
@@ -143,6 +152,9 @@ const NAMES: &[&str] = &[
     "criticality",
     "archived",
     "offered",
+    "added_by",
+    "added_at",
+    "reviewed",
 ];
 
 enum Value {
@@ -281,6 +293,11 @@ impl KeyBook {
             if key.archived {
                 out.push_str("archived = true\n");
             }
+            text(&mut out, "added_by", key.added_by.as_ref());
+            text(&mut out, "added_at", key.added_at.as_ref());
+            if !key.reviewed {
+                out.push_str("reviewed = false\n");
+            }
             if !key.offered {
                 out.push_str("offered = false\n");
             }
@@ -326,6 +343,9 @@ fn set(key: &mut BookKey, name: &str, value: Value) -> Option<()> {
         ("criticality", Value::Number(v)) => key.criticality = Some(u8::try_from(v).ok()?.min(5)),
         ("archived", Value::Flag(v)) => key.archived = v,
         ("offered", Value::Flag(v)) => key.offered = v,
+        ("added_by", Value::Text(v)) => key.added_by = Some(v),
+        ("added_at", Value::Text(v)) => key.added_at = Some(v),
+        ("reviewed", Value::Flag(v)) => key.reviewed = v,
         _ => return None,
     }
     Some(())
@@ -520,6 +540,9 @@ field = "client_id+client_secret+refresh_token"
         key.criticality = Some(5);
         key.archived = true;
         key.offered = false;
+        key.added_by = Some("claude".into());
+        key.added_at = Some("2026-11-09T23:10:00Z".into());
+        key.reviewed = false;
         let book = KeyBook {
             schema: SCHEMA,
             keys: vec![key],

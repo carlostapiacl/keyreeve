@@ -66,6 +66,7 @@ extension AppModel {
                 for path in report.sealed { note("sealed", path: path, detail: "requested by \(request.agent)") }
             }
             var index = (try? KeyIndex.load(from: files.keyIndex)) ?? keyIndex
+            let base = index
             let id: String
             if let existing = index.keys(forSource: item.path).first {
                 id = existing.id
@@ -73,8 +74,7 @@ extension AppModel {
                 // Answering the request is the person offering the key: it keeps the identifier it had.
                 id = waiting.id
                 index.offer(id: id)
-                try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
-                keyIndex = index
+                keyIndex = try KeyIndex.save(index, from: base, at: files.keyIndex)
             } else {
                 id = suggestedIdentifier(for: item)
                 let provider = providers.all.first { $0.id == request.provider }
@@ -83,8 +83,7 @@ extension AppModel {
                         id: id, source: item.path, field: item.field.isEmpty ? nil : item.field, provider: request.provider,
                         account: account(of: item), description: item.description.isEmpty ? nil : item.description,
                         variable: provider?.env_var))
-                try files.writePrivate(Data(index.toml.utf8), to: files.keyIndex)
-                keyIndex = index
+                keyIndex = try KeyIndex.save(index, from: base, at: files.keyIndex)
             }
             try openToAgent(id, for: request, hours: hours)
             message = T("%@ is saved and open to %@", id, request.agent)

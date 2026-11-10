@@ -87,8 +87,12 @@ elijas, en una sola pantalla:
 
 - **Dónde buscar.** *Lugares típicos de este Mac*: `~/.aws`, GitHub CLI, gcloud, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, Docker, las
   líneas `export` de los archivos de inicio de tu shell y tus llaves SSH (solo se lee su primera línea), más los `.env` de las
-  carpetas de proyectos que marques. O *Elegir una carpeta*. Se salta `node_modules`, `.git`, compilaciones y cachés, y no necesita
-  Acceso total al disco.
+  carpetas de proyectos que marques. *En toda mi carpeta de inicio*: toda, buscando archivos `.env` y archivos cuyo nombre o inicio
+  dice que tienen una clave (`.pem`, `.p12`, `.key`, notas llamadas `api-key.txt`, un `.txt` o `.json` que parte con el prefijo de un
+  proveedor); los demás archivos no se abren. Se salta Librería, la Papelera, las bibliotecas de fotos y música, iCloud Drive, las
+  apps y los archivos grandes, se detiene a los dos minutos y te dice qué carpetas no terminó, con **Buscar en esas** para seguir.
+  macOS puede pedirte permiso antes de leer Escritorio, Documentos y Descargas. O *Elegir una carpeta*. Se salta `node_modules`,
+  `.git`, compilaciones y cachés, y no necesita Acceso total al disco.
 - **Qué hace.** Separa cada archivo en piezas, dice qué es cada una (clave, configuración, usuario y clave, documento o llave
   pública), junta las partes de una clave (client id y secreto, las tres de Google, una access key con su secreto y el endpoint como
   servidor) y une la misma clave encontrada en dos lugares. Una clave solo se prueba con el único proveedor que indica su
@@ -155,13 +159,43 @@ app/dist/keyreeve-vault add hosting-token
 app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
 
-`put <name>` agrega o reemplaza una clave y deja la antigua sellada, y `reseal <name>` vuelve a sellar el archivo de una clave tal como
-está ahora, desde la carpeta de donde se selló, para un archivo que cambió un script. Agregar una clave no pide huella, así que un agente
+`put <name>` agrega una clave, o para una que ya está deja un valor nuevo esperando ([más abajo](#cómo-entran-las-claves)), y
+`reseal <name>` vuelve a sellar el archivo de una clave tal como está ahora, desde la carpeta de donde se selló, para un archivo que cambió un script. Agregar una clave no pide huella, así que un agente
 puede guardar una clave que después no puede leer. Usarla pide tu dedo. `init` se niega a correr fuera de una terminal para que la clave
 de recuperación no termine en un log. Ningún comando imprime una clave, y la app copia una solo cuando aprietas su botón.
 
 Una copia sellada desde la app guarda el archivo completo, así que `run` le entrega a un programa todo lo que contiene. Para un archivo
 con varios valores, usa `env` (más abajo) y nombra el campo.
+
+### Cómo entran las claves
+
+Toda entrada deja el mismo rastro: el **+** de la app, Traer, **Sellar**, una petición respondida con **Guardar y permitir**, y desde una
+terminal `add`, `put` y `reseal`. Cada clave recibe un registro en `keys.toml`, hecho a partir de su nombre (`added/openai-prod` es
+`openai-prod`, con un número si ya está tomado), con `added_by` y `added_at`. No se ofrece a los agentes, así que `list_keys` y
+`keyreeve-vault list` no la muestran. El registro de uso nombra a quien la agregó como nombra cualquier otro evento: el programa y sus
+padres según el sistema, y el agente cuando el árbol de procesos o `KEYREEVE_AGENT` lo nombran. La app y `keyreeve-vault` escriben
+`keys.toml` con un mismo candado, y cada uno lo lee como está y escribe solo su propio cambio, así que una clave que un agente agrega
+con la ventana abierta nunca se pierde por una edición en la app, y la ventana la muestra en pocos segundos.
+
+```bash
+pbpaste | keyreeve-vault add added/openai-prod --description "OpenAI, producción" --tags trabajo,ia
+keyreeve-vault orphans    # nombres de la bóveda sin registro en keys.toml
+```
+
+Una clave que agregó algo distinto de ti en la app lleva `reviewed = false`. **Mis claves** la muestra bajo **Nuevas, sin revisar**,
+y la barra de menús y **Agentes** dicen "claude agregó 21 claves". En la página de la clave la miras, la nombras y aprietas **Marcar
+como revisada**. Nada de eso la ofrece: eso sigue siendo **Ofrecida a los agentes**, en **Uso**.
+
+`put` sobre una clave que ya está sella el valor nuevo como `<name>#pending`, el mismo nombre que usa una rotación para su clave nueva,
+y la clave conserva el valor que tenía. La app dice "Hay un valor nuevo para X esperando, de claude". **Aceptar el valor nuevo** pide tu
+huella y deja el valor anterior sellado como historial; **Descartarlo** bota el nuevo. Un `put` más nuevo reemplaza a un valor que
+todavía espera. Mientras una rotación de esa clave está abierta, se rechaza el `put` de cualquier otro, y el motor, que corre como
+`keyreeve-cli rotate`, sigue escribiendo sus copias y dejando la clave nueva en su lugar como antes. Una rotación no parte mientras un
+valor espera.
+
+Una entrada de la bóveda sin registro, como una que selló una versión anterior, aparece como **Sellada sin registro**, con **Darle un
+identificador**, sin ofrecer. En un `keys.toml` escrito por `keyreeve migrate` (schema 2) eso es cualquier entrada; antes, solo las
+claves sin archivo en la carpeta de claves, porque un archivo de ahí tiene su propia línea en la lista.
 
 ### Tus claves no dependen de esta herramienta
 
@@ -263,6 +297,20 @@ configuración.
 que no es SSH lleva `--program`, ya que su permiso es para un programa. La app hace lo mismo desde la página de una clave, muestra lo
 que está vigente y el uso reciente de la clave, y puede terminarlo.
 
+Una credencial OAuth, como el archivo `authorized_user` de Google con un client id, un client secret y un refresh token, funciona
+igual. Su variable tiene la ruta de una copia privada del archivo con reemplazos para el secreto y el refresh token, y el client id
+real, que no es secreto (`GOOGLE_APPLICATION_CREDENTIALS` para Google). Cuando la biblioteca del comando le pide un token de acceso
+al host de tokens, el proxy le responde por su cuenta, con un reemplazo, y nunca reenvía esa consulta. Consigue el token de acceso
+real del proveedor por su cuenta, lo guarda hasta poco antes de que venza y lo pone en las consultas a los hosts de la receta que
+llevan el reemplazo. Una consulta de token con cualquier otra cosa se rechaza. Si el proveedor responde `invalid_grant`, no se
+vuelve a intentar, y la app muestra la clave como que hay que autorizarla de nuevo, como una clave vencida, hasta que la
+reemplaces. Así funcionan las bibliotecas que hablan HTTP/1.1 por `HTTPS_PROXY`, como google-auth de Python y el cliente de APIs de
+Google. Los clientes gRPC no.
+
+```bash
+keyreeve-vault use search-console --as GOOGLE_APPLICATION_CREDENTIALS -- python3 informe_semanal.py
+```
+
 `--real` le entrega al comando la clave real, para lo que no puede usar un reemplazo, como un proveedor que firma las consultas o un
 script tuyo. Pide tu dedo cada vez y queda registrado aparte. Un comando que manda un reemplazo saltándose el proxy, o que ignora sus
 variables, simplemente no logra autenticarse.
@@ -286,6 +334,27 @@ keyreeve-vault env app.env -- ./deploy.sh
 ```
 
 Una huella las abre todas para ese comando.
+
+### Varias claves a la vez
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 reporte.py
+keyreeve-vault use --set reporte-semanal --as calcom=CAL_KEY -- python3 reporte.py
+```
+
+Cada clave va en su propia variable. Una ventana las muestra con el programa, la carpeta y el motivo: desmarcas las que no quieras,
+eliges 5 minutos, hasta que termine, un día, o siempre para este programa en esta carpeta, y pones una huella. Los usos sueltos de un
+mismo script que llegan dentro de dos segundos comparten esa ventana.
+
+*Siempre* queda atado a la ruta y el SHA-256 del programa, al script que corre cuando su primer argumento es un archivo, y a la
+carpeta. Se sella una copia de cada clave para la llave del chip que no pide nada, como en *Siempre, sin huella*, así un script que
+corre el lunes a las 9:00 no necesita a nadie. Un programa o script cambiado, otra carpeta o una clave agregada después vuelve a
+preguntar. Se quita en **Agentes**, en **Conjuntos de claves**.
+
+Un conjunto es un nombre para una lista de claves, que se arma en la app en **Agentes**: a mano, o con **Armar un conjunto con lo que
+usó este proyecto**, que sugiere las claves que usó una carpeta y un programa en la última hora. Los conjuntos viven en
+`~/.keyreeve/sets.toml`. Un conjunto por sí solo no permite nada y solo lista claves ofrecidas a agentes. Ninguna herramienta de los
+agentes crea uno.
 
 ### Agentes por MCP
 
@@ -315,6 +384,8 @@ Las herramientas que recibe un agente:
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios para muchos archivos, cuando lo activas |
 | `list_places`, `propose_places` | dónde viven las claves ofrecidas, y lugares nuevos para que los apruebes ([abajo](#dónde-vive-una-clave)) |
+| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
+| `propose_bring` | propone cuáles sellar de las encontradas, para que la revises en Traer y selles con una sola huella |
 
 `use_key` funciona con cualquier comando, incluido `curl`. Una clave SSH inicia sesión a través de keyreeve. Una clave sin proveedor
 solo puede ir a un programa que permitas con `run_with_key`: si el archivo cambia, se rechaza hasta que lo vuelvas a permitir. Las
@@ -338,6 +409,9 @@ Con `request_access` el agente pide una clave, dice para qué y sugiere por cuá
 4, 8 o 24 horas o siempre, o **No permitir**. Después de un sí, la clave queda libre para ese agente solamente, con una huella y sin más
 preguntas, hasta que se cumpla el plazo. Un no hace que ese agente no vuelva a pedirla en su sesión. Una clave ya abierta a otro agente
 no se vuelve a abrir con condiciones nuevas: agregas el segundo agente en **Agentes**.
+
+Un agente que necesita varias claves manda `keys` en vez de `key`. Las ves en una sola ventana, desmarcas las que no quieras y una
+huella abre el resto, así su siguiente `use_key` no pregunta nada.
 
 Cuando el agente pide un proveedor cuya clave no está guardada, la solicitud espera en la app. Elige el archivo que la tiene y aprieta
 **Guardar y permitir**: se sella, se nombra y se abre a ese agente en un solo paso. Sin archivo, **Pegar una nueva** recibe una clave
@@ -366,6 +440,24 @@ probadas y selladas, que tus agentes usan con `use_key`.
 Un servidor que sugiere un agente se guarda pero no queda aprobado. La página de la clave lo dice, y **Aprobar … y probar** lo aprueba
 después de que confirmas y prueba la clave ahí.
 
+### Cuando un agente trae tus claves
+
+Pídele a un agente "busca todas mis claves y sella las que corresponda". Con `find_keys` corre lo mismo que [Traer](#traer), sin
+probar nada. `where` es `everywhere` (toda la carpeta de inicio), `places` (los lugares típicos, y los `.env` de las carpetas
+`projects` que indique) o `folders` (solo esas, igual que en todas partes). Si a `everywhere` se le acaba el tiempo, `unfinished`
+nombra las carpetas que faltan y el agente sigue con `where: "folders"`. Recibe cada clave
+y cada usuario con clave por número, con su archivo y línea, los nombres que tiene, su proveedor (solo con evidencia fuerte) o una
+sugerencia, si apareció dos veces y si parece ya sellada, según el lugar y nunca según el valor. La configuración, los documentos y
+las llaves públicas solo se cuentan. Ningún valor y ninguna consulta a un proveedor.
+
+Con `propose_bring` indica los números que hay que sellar, con un identificador, una descripción y etiquetas si quiere, y los que hay
+que omitir con un motivo. Un número que no salió de una búsqueda, o un proveedor que keyreeve no conoce, rechaza la propuesta entera.
+La propuesta espera en **Agentes**. **Revisar** busca de nuevo donde buscó el agente, prueba cada clave con su propio proveedor como
+lo hace Traer y abre la revisión con lo que eligió el agente marcado. Cambia lo que quieras, o desactiva sus nombres, y **Sellar** con
+una sola huella. El proveedor que nombra el agente solo se muestra: la clave se guarda con el proveedor que indica su propia
+evidencia. Las claves selladas reciben identificador y no se ofrecen a los agentes, así que el agente no las ve en `list_keys` y
+solo tú puedes ofrecerlas. El agente sabe cuántas se sellaron, nunca cuáles.
+
 ### Un registro para todo
 
 ```bash
@@ -375,7 +467,8 @@ keyreeve-vault log --key resend --csv    # para una planilla
 
 Junta el registro de uso, lo que corrieron los agentes, cada prueba de una clave y tus propios usos, con nombres en lugar de rutas de
 archivo. Cada decisión que tomas en la app también queda ahí: un nivel cambiado, una solicitud respondida, una pausa. Ninguno guarda
-valores.
+valores. En el **Registro** de la app, una consulta o un uso que se repite, como un bot que consulta cada treinta segundos, es una
+sola fila con la cuenta; el archivo guarda cada línea.
 
 ### Con seisin
 
@@ -410,6 +503,8 @@ valor ni un cambio a un archivo. Una clave solo se envía al único proveedor qu
 ```bash
 keyreeve bring --places --projects ~/code --dry-run   # busca, no prueba nada
 keyreeve bring --folder ~/mis-claves                  # busca y prueba cada clave con una consulta de solo lectura
+keyreeve bring --everywhere --dry-run                 # toda la carpeta de inicio, en dos minutos como máximo
+keyreeve bring --everywhere --under ~/code --dry-run  # sigue en una carpeta que no terminó
 ```
 
 Con `--json` sale el informe que lee la app: rutas, nombres, líneas y dónde está cada valor en su archivo.
@@ -506,7 +601,7 @@ Un archivo también puede declarar:
 | `auth: { header }` | manda la clave en un encabezado. El caso habitual |
 | `auth: { type: url }` | pone `{key}` en la dirección, para proveedores sin otra forma, como Telegram |
 | `auth: { type: basic }` | HTTP Basic |
-| `auth: { type: oauth_token }` | cambia dos o tres campos por un token de corta duración, como Google o PayPal |
+| `auth: { type: oauth_token }` | cambia dos o tres campos por un token de corta duración, como Google o PayPal. `token_host` está en `hosts`, y los otros hosts son las APIs a las que un comando puede llegar con él. `client_id_ends` reconoce un archivo de credenciales pegado |
 | `auth: { type: aws_sigv4 }` | firma cada consulta, así el secreto nunca viaja. AWS y R2 |
 | `auth: { type: ssh }` | saluda a un servidor con una clave SSH a través del `ssh` del sistema, como una deploy key de GitHub |
 | `self_hosted: true` | cada persona indica su propio servidor, aprobado de a uno, siempre por HTTPS |

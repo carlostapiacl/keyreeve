@@ -78,8 +78,12 @@ public final class AppModel: ObservableObject {
     @Published public var addingKey: AddKeyDraft?
     /// Bring in, while its sheet is open: where to look, what was found, and what the person chose.
     @Published public var bringing: BringState?
+    /// Bumped to bring the window to the keys that are new and not reviewed.
+    @Published public var showNewKeys = 0
     /// The requests file as last read, so an unchanged file is not read again.
     var requestsStamp = ""
+    /// keys.toml as the list on screen read it, so a change from elsewhere, such as an agent's add, shows up.
+    var indexStamp = ""
     @Published public var keyIndex = KeyIndex()
     /// Where each key lives, and the procedures that update those places.
     @Published public var placesState = PlacesState()
@@ -181,7 +185,10 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    public func windowGotFocus() { lockTask?.cancel() }
+    public func windowGotFocus() {
+        lockTask?.cancel()
+        reloadIfIndexChanged()
+    }
 
     func confirm(reason: String, then: @escaping @MainActor (Bool) -> Void) {
         let epoch = lockEpoch
@@ -260,6 +267,7 @@ public final class AppModel: ObservableObject {
         agentPolicy = snapshot.agentPolicy
         unattendedSources = snapshot.unattendedSources
         keyIndex = snapshot.keyIndex
+        indexStamp = snapshot.indexStamp
         usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
@@ -375,6 +383,8 @@ struct Snapshot: Sendable {
     let places: [String: KeyPlaces]
     let agentPolicy: AgentPolicy
     let keyIndex: KeyIndex
+    /// Taken before keys.toml and key-state.json are read, so a write in between is seen as a change next time.
+    let indexStamp: String
     let usage: UsageSnapshot
     /// Files that are there and could not be read. Each would otherwise look empty, which is a different thing.
     let problems: [String]
@@ -385,6 +395,7 @@ struct Snapshot: Sendable {
 
     init(reading source: Source) {
         let files = source.files
+        indexStamp = AppModel.indexStamp(of: files)
         files.tightenFolders()
         let ignored = files.ignoredKeys()
         let details = files.allDetails()
@@ -449,6 +460,11 @@ struct Snapshot: Sendable {
             item.originalMoved = true
             parsed.append(item)
         }
+        AppModel.markArrivals(&parsed, vault: vault, index: index, journal: files.rotations)
+        // The service writes what providers said of OAuth keys in a file of its own, never in keys.toml.
+        let marked = KeyStates.needingReauthorization(in: AppModel.keyStates(of: files))
+        let reauthorize = Set((index.keys + index.unoffered).filter { marked.contains($0.id) }.map(\.source))
+        for at in parsed.indices where reauthorize.contains(parsed[at].path) { parsed[at].needsReauthorizing = true }
         items = parsed
         activity = files.activity()
         places = files.allPlaces()

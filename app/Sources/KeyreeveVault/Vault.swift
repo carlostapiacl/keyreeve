@@ -61,6 +61,9 @@ public struct VaultFile: Codable, Equatable {
         public var sealed: Data
         /// The same value sealed only to the key that needs no fingerprint, for a key the person marked so.
         public var unattendedSealed: Data?
+        /// Who put a new value that waits for the person under `<name>#pending`: an agent or a program. Plain text,
+        /// as `source` is. A version from before it drops it, and the value still waits.
+        public var from: String?
 
         /// Which sealing this is. Each seal encrypts afresh, so a replaced value always has a new one.
         public var revision: String { SHA256.hash(data: sealed).prefix(12).map { String(format: "%02x", $0) }.joined() }

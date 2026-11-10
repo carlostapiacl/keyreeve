@@ -69,16 +69,22 @@ extension AppModel {
         do {
             // A keys.toml that is there and cannot be read stops this: written from memory, it could lose keys.
             var index = FileManager.default.fileExists(atPath: files.keyIndex.path) ? try KeyIndex.load(from: files.keyIndex) : keyIndex
+            let base = index
             let id = index.identifier(for: name)
             let entry = Self.addedFolder + id
             // The name is checked before anything is sealed, so a bad one leaves nothing behind.
-            try index.add(KeyIndex.Key(
+            var key = KeyIndex.Key(
                 id: id, source: entry, provider: provider, description: name == id ? nil : name,
-                variable: provider.flatMap { provider in providers.all.first { $0.id == provider }?.env_var }))
-            try Self.savePasted(Data(value.utf8), as: entry, index: index, store: vaultStore) {
-                try self.files.writePrivate($0, to: self.files.keyIndex)
+                variable: provider.flatMap { provider in providers.all.first { $0.id == provider }?.env_var })
+            key.more.addedBy = KeyArrival.byPerson
+            key.more.addedAt = KeyArrival.stamp()
+            try index.add(key)
+            var saved = index
+            // Only this key is written, onto keys.toml as it is now, under the lock keyreeve-vault takes too.
+            try Self.savePasted(Data(value.utf8), as: entry, index: index, store: vaultStore) { _ in
+                saved = try KeyIndex.save(index, from: base, at: self.files.keyIndex)
             }
-            keyIndex = index
+            keyIndex = saved
             audit([(id, "pasted, \(provider ?? "no provider")")], event: "sealed")
             if let request = draft.request { try openToAgent(id, for: request, hours: hours) }
             // The clipboard keeps nothing that was a key.

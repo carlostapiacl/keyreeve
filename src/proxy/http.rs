@@ -71,9 +71,13 @@ pub(super) struct Scrubber {
 
 impl Scrubber {
     pub(super) fn new(real: &str, stand_in: &str) -> Self {
+        // A reply's length was counted with the real value in it. A stand-in of another length, such as one
+        // for an OAuth access token, is cut or filled to that length, so the framing still holds.
+        let mut with = stand_in.as_bytes().to_vec();
+        with.resize(real.len(), b'x');
         Self {
             needle: real.as_bytes().to_vec(),
-            with: stand_in.as_bytes().to_vec(),
+            with,
             held: Vec::new(),
         }
     }

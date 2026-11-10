@@ -8,6 +8,8 @@ public struct AgentBridge {
         var entries: [String: (from: Date, until: Date, opened: Data, revision: String?)] = [:]
         /// Keys the person refused to open in this session, so the agent cannot keep asking.
         var refused: Set<String> = []
+        /// This agent's latest search for keys, which its proposal is checked against.
+        var scan: AgentBringing.Scan?
     }
 
     /// Ends everything agents were approved for a while: the app's lock and `revoke` touch this file, and
@@ -81,6 +83,8 @@ public struct AgentBridge {
     let transcript: (AgentTranscript.Entry) -> Void
     /// Asks the person whether to open a closed key. Nil is a no.
     let decideAccess: (AccessRequest) -> AccessDecision?
+    /// Asks the person about several closed keys in one window. Nil is a no.
+    let decideAccessMany: (AccessBatch) -> AccessBatch.Answer?
     /// Changes the permissions after the person opened a key, under the file's lock.
     let updatePolicy: ((inout AgentPolicy) -> Void) throws -> Void
     /// Providers the person can save a key for in the app, by name only.
@@ -104,6 +108,10 @@ public struct AgentBridge {
     let decideNoFingerprint: (AccessRequest) -> Bool
     /// Opens the key with the person's fingerprint and seals its copy to the chip's key that asks nothing.
     let markUnattended: (_ key: String, _ prompt: String) throws -> Void
+    /// Runs `keyreeve bring` with these arguments, always a dry run, and returns its report. Tests answer for it.
+    let scanKeys: (_ arguments: [String]) throws -> Data
+    /// The files keys in keys.toml and the vault came from, to tell which keys found look sealed. Places only.
+    let sealedSources: () -> Set<String>
     let held = Held()
     /// Where keys live, read again for each request. Set by the server; empty elsewhere.
     public var places: () -> PlaceBook = { PlaceBook() }
@@ -144,6 +152,7 @@ public struct AgentBridge {
         describe: @escaping () -> [String: KeyIndex.Key] = { [:] },
         transcript: @escaping (AgentTranscript.Entry) -> Void = { _ in },
         decideAccess: @escaping (AccessRequest) -> AccessDecision? = { _ in nil },
+        decideAccessMany: @escaping (AccessBatch) -> AccessBatch.Answer? = { _ in nil },
         updatePolicy: @escaping ((inout AgentPolicy) -> Void) throws -> Void = { _ in throw VaultError("permissions cannot be saved here") },
         offered: @escaping () -> [String] = { [] },
         requests: @escaping () -> [AccessRequests.Entry] = { [] },
@@ -157,8 +166,12 @@ public struct AgentBridge {
         decideNoFingerprint: @escaping (AccessRequest) -> Bool = { _ in false },
         markUnattended: @escaping (_ key: String, _ prompt: String) throws -> Void = { _, _ in
             throw VaultError("keys cannot be marked here")
-        }
+        },
+        scanKeys: @escaping (_ arguments: [String]) throws -> Data = { _ in throw VaultError("keys cannot be looked for here") },
+        sealedSources: @escaping () -> Set<String> = { [] }
     ) {
+        self.scanKeys = scanKeys
+        self.sealedSources = sealedSources
         self.decideNoFingerprint = decideNoFingerprint
         self.markUnattended = markUnattended
         self.revision = revision
@@ -179,6 +192,7 @@ public struct AgentBridge {
         self.describe = describe
         self.transcript = transcript
         self.decideAccess = decideAccess
+        self.decideAccessMany = decideAccessMany
         self.updatePolicy = updatePolicy
         self.offered = offered
         self.requests = requests
@@ -362,6 +376,10 @@ public struct AgentBridge {
             return try listPlaces(arguments)
         case "propose_places":
             return try proposePlaces(arguments)
+        case "find_keys":
+            return try findKeys(arguments)
+        case "propose_bring":
+            return try proposeBring(arguments)
         default:
             throw VaultError("no such tool")
         }
@@ -643,6 +661,43 @@ public struct AgentBridge {
             ],
         ],
         [
+            "name": "find_keys",
+            "description":
+                "Find keys on this Mac, read-only. where: everywhere (the whole home folder: .env files and files that hold keys, within a time budget), places (where tools keep keys, plus .env files under projects), or folders (only those, as everywhere). Lists each key or login by number n, with its file, the names in it, its provider (strong evidence) or a guess, duplicates, and whether it looks sealed already. Never a value, and nothing is sent to a provider. Configuration, documents and public keys are only counted. If unfinished comes back, call again with where = folders and those folders. Then call propose_bring.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "where": ["type": "string", "enum": ["everywhere", "places", "folders"], "description": "places if left out"],
+                    "folders": ["type": "array", "items": ["type": "string"], "description": "With where = folders: full paths or ~/paths"],
+                    "projects": ["type": "array", "items": ["type": "string"], "description": "With where = places: folders to search for .env files"],
+                    "offset": ["type": "integer", "description": "Where the page starts; next_offset says. Pages reuse the same search"],
+                    "limit": ["type": "integer", "description": "At most 300 keys a page, 100 if left out"],
+                ],
+            ],
+        ],
+        [
+            "name": "propose_bring",
+            "description":
+                "Propose which keys from your last find_keys to seal in the vault. Nothing is sealed: the proposal waits in Keyreeve, the person reviews and changes it, and seals with one fingerprint. Sealed keys get identifiers but are not offered to agents, so list_keys does not show them until the person offers them.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "reason": ["type": "string", "description": "What this does, in a sentence, shown to the person"],
+                    "seal": [
+                        "type": "array",
+                        "description": "Keys to seal: {\"candidates\": [n], \"id\": optional identifier (one candidate only), \"provider\": optional id from known_providers, \"description\": optional, \"tags\": optional list}",
+                        "items": ["type": "object"],
+                    ],
+                    "skip": [
+                        "type": "array",
+                        "description": "Keys not to seal: {\"candidates\": [n], \"reason\": why}",
+                        "items": ["type": "object"],
+                    ],
+                ],
+                "required": ["reason"],
+            ],
+        ],
+        [
             "name": "rotate_key",
             "description":
                 "Ask the person to rotate a key in the vault: a new key replaces it where it is used, and the old one is revoked. Use it when a key has leaked, is old, or the person asks. They decide in Keyreeve with their fingerprint, and you never see either key. Call it again later to learn how it went.",
@@ -658,11 +713,12 @@ public struct AgentBridge {
         [
             "name": "request_access",
             "description":
-                "Ask the person to open a closed key, one that list_keys shows as closed, or to save one for a provider that list_keys shows as not saved yet (give the provider as key). Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they quit Keyreeve, with one fingerprint and no more questions. Nothing is opened until they decide.",
+                "Ask the person to open a closed key, one that list_keys shows as closed, or to save one for a provider that list_keys shows as not saved yet (give the provider as key). Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they quit Keyreeve, with one fingerprint and no more questions. Nothing is opened until they decide. A task that needs several keys asks for all of them at once with keys: the person sees one window and gives one fingerprint.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "key": ["type": "string"],
+                    "keys": ["type": "array", "items": ["type": "string"], "description": "Several saved keys at once, in place of key"],
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
                     "account": [
                         "type": "string",
@@ -673,7 +729,7 @@ public struct AgentBridge {
                         "description": "What you suggest, 1h if left out. always only for a key used every day. no-fingerprint asks the person to mark a saved key so agents use it with no fingerprint at all, through the proxy, even after Keyreeve restarts: only for a key used all the time that can do little harm, and they decide with their own click and finger",
                     ],
                 ],
-                "required": ["key", "reason"],
+                "required": ["reason"],
             ],
         ],
         [

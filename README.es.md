@@ -63,6 +63,15 @@ comando corre con el reemplazo. Desde una terminal funciona igual:
 keyreeve-vault use github --reason "listar repos" -- gh repo list
 ```
 
+Un proyecto que necesita varias claves las pide juntas: una ventana las muestra todas, desmarcas las que no quieras y una huella
+abre el resto, por 5 minutos, hasta que termine el comando, un día, o siempre para ese programa en esa carpeta. Guarda la lista
+como conjunto en **Agentes**.
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 reporte.py
+keyreeve-vault use --set reporte-semanal -- python3 reporte.py
+```
+
 ![La página de una clave, en la pestaña Uso, ofrecida a los agentes](docs/img/es/key-usage.png)
 
 ## Ofrecida o no
@@ -71,6 +80,26 @@ Los agentes solo ven las claves que tú les ofreces. Una clave no ofrecida no ap
 puede usar, ni por un agente ni con `keyreeve-vault use`. Los identificadores que se dan en bloque, con **Darles identificador**
 en **Agentes** o con `keyreeve migrate`, parten sin ofrecer. Si dejas de ofrecer una clave, también se cierra: se van su nivel, sus agentes y sus programas
 permitidos.
+
+## Cómo entran las claves
+
+Toda entrada a la bóveda deja el mismo rastro. Una clave sellada con **+**, **Trae tus claves** o **Sellar**, o desde una
+terminal o un agente con `keyreeve-vault add`, recibe un identificador en `keys.toml` que dice quién la agregó y cuándo. Agregar
+no pide huella y no permite leer nada de vuelta:
+
+```bash
+pbpaste | keyreeve-vault add added/hosting --description "Hosting, producción" --tags trabajo
+```
+
+Una clave que agregó algo distinto de ti en la app no se ofrece a los agentes y espera en **Mis claves** bajo **Nuevas, sin
+revisar**, con un aviso en la barra de menús y en **Agentes**, como "claude agregó 21 claves". Revisar es mirarla, nombrarla y
+apretar **Marcar como revisada**, y no ofrece nada.
+
+`keyreeve-vault put` sobre una clave que ya está no la reemplaza. El valor nuevo espera al lado, la clave conserva el que tenía,
+y la app dice "Hay un valor nuevo para hosting esperando, de claude". Lo aceptas con tu huella, y el valor anterior queda
+sellado, o lo descartas. Solo la rotación de la propia clave la reemplaza directo. Una clave en la bóveda sin identificador,
+como una que selló una versión anterior, aparece como **Sellada sin registro** con un botón para darle uno, y `keyreeve-vault
+orphans` las lista.
 
 ## Niveles
 
@@ -86,6 +115,10 @@ Cada clave ofrecida tiene un nivel, que eliges en la app.
 La clave real (`keyreeve-vault get`, `--real`, `run_with_key`) pide tu huella cada vez. Cerrar Keyreeve, **Bloquear todo** en
 la barra de menú o `keyreeve-vault revoke` terminan todos los permisos.
 
+Una credencial OAuth, como un inicio de sesión de Google con refresh token, toma los mismos niveles. keyreeve guarda el refresh
+token y pide los tokens de acceso por su cuenta, así una tarea sin nadie al lado puede leer Search Console cada lunes sin tener
+ninguno de los dos.
+
 ![La sección Agentes, con las claves ofrecidas y sus niveles](docs/img/es/agents.png)
 
 ## Cómo la usan los agentes
@@ -97,11 +130,13 @@ valor de una clave.
 |---|---|
 | `list_keys` | las claves ofrecidas que este agente puede usar, las que tiene cerradas y los proveedores sin clave guardada |
 | `use_key` | corre un comando con el reemplazo, a través del proxy local |
-| `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |
+| `request_access` | te pide abrir una clave cerrada, o varias a la vez con `keys`, o guardar una para un proveedor |
 | `run_with_key` | corre un programa que tú permitiste, fijado por su SHA-256, con la clave real en una variable |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios, solo mientras tú lo permites |
 | `list_places`, `propose_places` | ven dónde viven las claves ofrecidas y proponen lugares nuevos, que apruebas con tu huella |
+| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
+| `propose_bring` | propone cuáles sellar de las encontradas; tú la revisas en Traer y sellas con una sola huella |
 
 Cada sí, cada no y cada uso queda en `~/.keyreeve/audit.jsonl`, sin valores. Cada línea lleva el hash de la anterior, así
 `keyreeve-vault audit --verify` encuentra una edición.

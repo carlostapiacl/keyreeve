@@ -168,6 +168,7 @@ pub(crate) fn load_key(
 /// Like `read_key`, and in a file of notes it also finds the one word that starts with this
 /// provider's prefix. With two candidates it refuses, because guessing could send the wrong key.
 pub fn read_key_for(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<Secret, String> {
+    let field = field.or_else(|| oauth_parts(text, recipe));
     match read_key(text, field) {
         Ok(key) => Ok(key),
         Err(error) if field.is_some() || recipe.prefixes.is_empty() => Err(error),
@@ -187,6 +188,29 @@ pub fn read_key_for(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<
             }
         }
     }
+}
+
+/// The fields of an OAuth credential file, such as Google's `authorized_user` JSON, when the file holds them
+/// all: it is then read whole, with no field to name.
+pub fn oauth_parts(text: &str, recipe: &Recipe) -> Option<&'static str> {
+    if recipe.auth.kind.as_deref() != Some("oauth_token") {
+        return None;
+    }
+    let parts = match recipe.auth.grant.as_deref() {
+        Some("refresh_token") => "client_id+client_secret+refresh_token",
+        Some("client_credentials") => "client_id+client_secret",
+        _ => return None,
+    };
+    let json: serde_json::Value =
+        serde_json::from_str(text.trim().trim_start_matches('\u{FEFF}')).ok()?;
+    parts
+        .split('+')
+        .all(|name| {
+            json.get(name)
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| !value.is_empty())
+        })
+        .then_some(parts)
 }
 
 /// A word is this provider's key when it starts with one of its prefixes and no other provider
@@ -263,6 +287,20 @@ mod swap_tests {
         );
         // Two of them in one file are not guessed between.
         assert!(read_key_for("EAAone\nEAAtwo", None, &meta).is_err());
+    }
+
+    #[test]
+    fn an_oauth_credential_file_is_read_whole_with_no_field() {
+        let google = crate::verify::load_recipe("google").unwrap();
+        let file = r#"{"type":"authorized_user","client_id":"1-a.apps.googleusercontent.com","client_secret":"CANARYsecret","refresh_token":"1//CANARYrefresh"}"#;
+        assert_eq!(
+            read_key_for(file, None, &google).unwrap().expose(),
+            "1-a.apps.googleusercontent.com:CANARYsecret:1//CANARYrefresh"
+        );
+        // A file missing a part is not guessed at.
+        assert!(oauth_parts(r#"{"client_id":"1-a","client_secret":"s"}"#, &google).is_none());
+        let github = crate::verify::load_recipe("github").unwrap();
+        assert!(oauth_parts(file, &github).is_none());
     }
 
     #[test]

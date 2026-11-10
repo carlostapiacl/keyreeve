@@ -8,13 +8,17 @@ let help = """
     Usage:
       keyreeve-vault init
           Create the vault and show its recovery key, once. Needs a terminal.
-      keyreeve-vault add <name>
-          Add a key, read from stdin. Needs no fingerprint.
+      keyreeve-vault add <name> [--description TEXT] [--tags a,b]
+          Add a key, read from stdin. Needs no fingerprint, and cannot read anything back. It gets an identifier
+          in keys.toml, not offered to agents, and Keyreeve shows it as new until you review it.
       keyreeve-vault put <name>
-          Add a key or replace it, read from stdin. The old value stays sealed. Needs no fingerprint.
+          Add a key, read from stdin, as add does. For a key already there, the new value waits as
+          <name>#pending and the current one stays in force until you accept it in Keyreeve, with your finger.
       keyreeve-vault reseal <name> [<name>...]
           Seal a key's file again, exactly as it is now, from the folder it was sealed from. The old copy
           stays sealed. Needs no fingerprint. For a file changed outside the app, such as by a script.
+      keyreeve-vault orphans
+          Show the vault's keys that have no identifier in keys.toml, by name. Keyreeve offers to give them one.
       keyreeve-vault drop <name#pending|name#previous>
           Remove a temporary copy of a rotation. Real keys cannot be removed.
       keyreeve-vault names
@@ -29,6 +33,11 @@ let help = """
           With an SSH key (provider = "ssh"), `ssh`, `scp`, `sftp`, `git` and `rsync` sign through an agent and
           never hold it. A permission covers the first server, or those in `servers` in keys.toml. Others ask.
           --real hands the command the real key, for what cannot use a stand-in. It asks every time.
+      keyreeve-vault use <id>,<id>,... [--as id=VAR,...] [--for 5m] [--reason TEXT] -- <command> [args...]
+      keyreeve-vault use --set <name> [--as id=VAR,...] [--for 5m] [--reason TEXT] -- <command> [args...]
+          Several keys for one command, each in its own variable. One window lists them all: untick what you
+          do not want, choose 5 min, until it finishes, a day, or always for this program in this folder, and
+          give one fingerprint. Sets are made in the app, under Agents, and kept in sets.toml.
       keyreeve-vault get <id> [--reason TEXT]
           Print the real key on stdout, for a tool that takes a key from a command, such as seisin's
           key providers. It asks for your finger every time and is never remembered, so nothing can
@@ -119,7 +128,7 @@ func askService(_ request: KeyService.Request) throws -> KeyService.Response {
     if let answer = try? KeySocket.send(request, path: socketPath) { return answer }
     // It is there and gave no answer. Saying "done" here could be false, and starting another would ask twice.
     if KeySocket.isListening(path: socketPath) { throw VaultError(KeySocket.silence(for: request.op)) }
-    guard request.op == "use" else { return KeyService.Response(ok: true, grants: []) }
+    guard ["use", "use-many"].contains(request.op) else { return KeyService.Response(ok: true, grants: []) }
     let process = Process()
     process.executableURL = ownPath()
     process.arguments = ["serve"]

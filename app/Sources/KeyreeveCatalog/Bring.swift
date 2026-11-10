@@ -28,6 +28,8 @@ public struct BringReport: Codable, Equatable, Sendable {
     public var skipped: Skipped
     public var summary: Summary
     public var candidates: [BringCandidate]
+    /// Folders a search of everywhere did not finish before its time ran out.
+    public var unfinished: [String]? = nil
 }
 
 public struct BringCandidate: Codable, Equatable, Hashable, Sendable, Identifiable {
@@ -98,11 +100,14 @@ public enum BringScope: Equatable, Sendable {
     /// The places tools keep keys in, and `.env` files under these project folders.
     case places(projects: [URL])
     case folder(URL)
+    /// The whole home folder, or only the folders given, for `.env` files and files that hold keys.
+    case everywhere(under: [URL])
 
     public var arguments: [String] {
         switch self {
         case .places(let projects): ["--places"] + projects.flatMap { ["--projects", $0.path] }
         case .folder(let folder): ["--folder", folder.path]
+        case .everywhere(let under): ["--everywhere"] + under.flatMap { ["--under", $0.path] }
         }
     }
 }

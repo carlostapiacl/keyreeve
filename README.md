@@ -62,6 +62,15 @@ and the command runs with a stand-in. The same works from a terminal:
 keyreeve-vault use github --reason "list repos" -- gh repo list
 ```
 
+A project that needs several keys asks for them together: one window lists them all, you untick what you do not want, and
+one fingerprint opens the rest, for 5 minutes, until the command finishes, a day, or always for that program in that folder.
+Save the list as a set under **Agents**.
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 report.py
+keyreeve-vault use --set weekly-report -- python3 report.py
+```
+
 ![A key's page, on the Usage tab, with the key offered to agents](docs/img/key-usage.png)
 
 ## Offered or not
@@ -70,6 +79,26 @@ Agents only see the keys you offer them. A key that is not offered does not appe
 cannot be used, by agents or by `keyreeve-vault use`. Identifiers given in bulk, by **Give them identifiers** in **Agents** or by
 `keyreeve migrate`, start not offered.
 Taking a key back closes it too: its level, agents and allowed programs go.
+
+## How keys get in
+
+Every way into the vault leaves the same trace. A key sealed with **+**, **Bring in your keys** or **Seal**, or from a
+terminal or an agent with `keyreeve-vault add`, gets an identifier in `keys.toml` that says who added it and when. Adding needs
+no fingerprint and cannot read anything back:
+
+```bash
+pbpaste | keyreeve-vault add added/hosting --description "Hosting, production" --tags work
+```
+
+A key that anything other than you in the app added is not offered to agents, and waits in **My keys** under **New, not
+reviewed**, with a notice in the menu bar and in **Agents**, such as "claude added 21 keys". Reviewing is looking at it, naming
+it and pressing **Mark reviewed**, and it offers nothing.
+
+`keyreeve-vault put` on a key already there does not replace it. The new value waits beside it, the key keeps the value it had,
+and the app says "A new value for hosting is waiting, from claude". You accept it with your fingerprint, and the old value
+stays sealed, or you discard it. Only the key's own rotation replaces it directly. A key in the vault with no identifier, such
+as one an older version sealed, shows as **Sealed without a record** with a button to give it one, and `keyreeve-vault
+orphans` lists them.
 
 ## Levels
 
@@ -85,6 +114,9 @@ Each offered key has a level, set in the app.
 The real key itself (`keyreeve-vault get`, `--real`, `run_with_key`) asks for your fingerprint every time. Quitting
 Keyreeve, **Lock everything** in the menu bar or `keyreeve-vault revoke` ends every permission.
 
+An OAuth credential, such as a Google sign-in with a refresh token, takes the same levels. keyreeve keeps the refresh token
+and gets the access tokens itself, so an unattended job can read Search Console every Monday and never hold either.
+
 ![The Agents section, with the keys offered to agents and their levels](docs/img/agents.png)
 
 ## How agents use it
@@ -95,11 +127,13 @@ Agents connect over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault 
 |---|---|
 | `list_keys` | the offered keys this agent may use, the ones closed to it, and providers with no key saved yet |
 | `use_key` | runs a command with a stand-in, through the local proxy |
-| `request_access` | asks you to open a closed key, or to save one for a provider |
+| `request_access` | asks you to open a closed key, or several at once with `keys`, or to save one for a provider |
 | `run_with_key` | runs a program you allowed, pinned by its SHA-256, with the real key in one variable |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes, only while you allow it |
 | `list_places`, `propose_places` | see where offered keys live and propose new places, which you approve with your fingerprint |
+| `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
+| `propose_bring` | proposes which keys found to seal; you review it in Bring in and seal with one fingerprint |
 
 Every yes, no and use goes in `~/.keyreeve/audit.jsonl`, with no values. Each line carries the hash of the one before, so
 `keyreeve-vault audit --verify` finds an edit.

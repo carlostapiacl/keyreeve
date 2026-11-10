@@ -87,7 +87,7 @@ struct AssistantTests {
             try Assistants.ask(Assistant(id: "t", name: "T", command: [slow.path, "{prompt}"], readsFiles: true), "x", task: "stopped")
         }
         #expect(Date().timeIntervalSince(started) < 10)
-        done.wait()
+        #expect(done.wait(timeout: .now() + 30) == .success, "the other assistant never answered")
         #expect(other.answer?.contains("fine") == true)
     }
 }

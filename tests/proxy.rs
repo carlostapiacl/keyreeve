@@ -127,6 +127,7 @@ fn run_with(reply: &'static str, hosts: &[&str], in_url: bool, expires: u64) -> 
         extra_roots: vec![up.root.clone()],
         upstream_port: Some(up.port),
         private_tunnels: true,
+        ..Default::default()
     })
     .unwrap();
     let folder = std::env::temp_dir().join(format!(
@@ -462,6 +463,7 @@ fn a_request_that_never_got_through_is_written_down_too() {
         extra_roots: vec![up.root.clone()],
         upstream_port: Some(closed),
         private_tunnels: true,
+        ..Default::default()
     })
     .unwrap();
     let folder = std::env::temp_dir().join(format!(

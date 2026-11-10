@@ -112,6 +112,12 @@ extension AppModel {
             done?(T("Not rotated: the key is not sealed, or the app is busy"))
             return
         }
+        // A rotation keeps its new key under the name where a waiting value is.
+        guard resume || item.waitingFrom == nil else {
+            message = T("Accept or discard the new value waiting for this key first")
+            done?(T("Accept or discard the new value waiting for this key first"))
+            return
+        }
         let places = self.places[item.path] ?? KeyPlaces()
         let admin = places.admin.flatMap { name in items.first { $0.path == name } }
         let original = keysFolder?.appendingPathComponent(item.path).path
@@ -192,6 +198,7 @@ extension AppModel {
                 switch result {
                 case .success(let report):
                     for path in report.sealed { self.note("sealed", path: path) }
+                    self.recordSealed(chosen.filter { report.sealed.contains($0.path) })
                     self.message =
                         report.skipped.isEmpty
                         ? (report.sealed.count == 1 ? T("1 key sealed") : T("%d keys sealed", report.sealed.count))

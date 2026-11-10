@@ -74,6 +74,7 @@ public let spanish: [String: String] = [
     "Expired %d days ago": "Venció hace %d días",
     "%d days left": "Quedan %d días",
     "Expired on %@: renew it": "Venció el %@: renuévala",
+    "The provider no longer accepts it: authorize it again": "El proveedor ya no la acepta: vuelve a autorizarla",
     "Expires today": "Vence hoy",
     "Expires tomorrow": "Vence mañana",
     "Expires in %d days": "Vence en %d días",

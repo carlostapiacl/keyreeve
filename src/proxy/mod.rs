@@ -10,10 +10,10 @@
 //! the program's hands, and what the program can do with its other permissions is its own matter.
 
 use crate::secret::Secret;
-use rustls::pki_types::{CertificateDer, ServerName};
-use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConnection, StreamOwned};
+use rustls::pki_types::CertificateDer;
+use rustls::{ClientConfig, RootCertStore, ServerConnection, StreamOwned};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufReader, Read, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -25,6 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod authority;
 mod control;
 mod http;
+mod oauth;
 
 use authority::{crypto, Authority};
 pub use control::{can_stand_in, serve_from_stdin};
@@ -32,6 +33,7 @@ use http::{
     answer, base64_decode, base64_encode, body_framing, copy_body, header, read_head, relay_reply,
     split_target, status_of, Scrubber,
 };
+pub use oauth::OAuthGrant;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
 /// A host that does not answer would otherwise hold one of the connections until the system gives up.
@@ -64,6 +66,10 @@ pub struct Event {
     /// "complete", or how far it got: "not sent", "sent in part" or "no full reply". A request the provider may
     /// have acted on is written down even when its answer never came back whole.
     pub outcome: String,
+    /// For an OAuth token exchange: `active` when the provider gave a token, `reauthorize` when it no longer
+    /// accepts the credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<String>,
 }
 
 fn now() -> u64 {
@@ -154,6 +160,8 @@ pub struct Options {
     /// Lets a tunnel reach this machine and private networks. Off in use: a program that can reach the
     /// proxy, from inside a sandbox too, must not use it to reach what its own network rules shut out.
     pub private_tunnels: bool,
+    /// Sends what would go to a key's host to this address instead, keeping the host's name for TLS.
+    pub upstream_address: Option<IpAddr>,
 }
 
 /// Whether a tunnel may reach this address: not this machine, a private or link-local network, the
@@ -196,6 +204,9 @@ pub struct Proxy {
     options: Options,
     events: Mutex<mpsc::Sender<Event>>,
     active: AtomicUsize,
+    oauth: Mutex<HashMap<String, Arc<oauth::Held>>>,
+    oauth_tokens: Mutex<HashMap<[u8; 32], std::sync::Weak<oauth::Tokens>>>,
+    oauth_refused: oauth::Refused,
 }
 
 pub struct Trust {
@@ -227,6 +238,9 @@ impl Proxy {
                 options,
                 events: Mutex::new(sender),
                 active: AtomicUsize::new(0),
+                oauth: Mutex::new(HashMap::new()),
+                oauth_tokens: Mutex::new(HashMap::new()),
+                oauth_refused: Mutex::new(HashSet::new()),
             }),
             receiver,
         ))
@@ -268,6 +282,10 @@ impl Proxy {
 
     pub fn remove(&self, id: &str) {
         self.grants
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
+        self.oauth
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
@@ -325,7 +343,8 @@ impl Proxy {
         let Some((host, port)) = split_target(target) else {
             return answer(&mut writer, 400, "that is not host:port");
         };
-        if port == 443 && !self.grants_for(&host).is_empty() {
+        if port == 443 && (!self.grants_for(&host).is_empty() || !self.oauth_for(&host).is_empty())
+        {
             writer.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")?;
             return self.terminated(&host, writer, reader);
         }
@@ -437,12 +456,21 @@ impl Proxy {
                 .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
             stream.get_mut().flush()?;
         }
+        // A token request is answered here, and a stand-in access token becomes the real one.
+        let oauth =
+            match self.oauth_route(host, &method, &target, &headers, &framing, &mut stream)? {
+                oauth::Route::Answered => return Ok(()),
+                oauth::Route::Use(grant) => Some(grant),
+                oauth::Route::Pass => None,
+            };
         // Holding a stand-in is what lets a request use its key. With none, it goes out as it came.
-        let grant = self.grants_for(host).into_iter().find(|grant| {
-            (grant.in_url && target.contains(grant.stand_in.expose()))
-                || headers.iter().any(|(name, value)| {
-                    !name.eq_ignore_ascii_case("host") && swap_header(value, grant) != *value
-                })
+        let grant = oauth.or_else(|| {
+            self.grants_for(host).into_iter().find(|grant| {
+                (grant.in_url && target.contains(grant.stand_in.expose()))
+                    || headers.iter().any(|(name, value)| {
+                        !name.eq_ignore_ascii_case("host") && swap_header(value, grant) != *value
+                    })
+            })
         });
         // A provider that takes its key in a header gets none in the address: the stand-in would go out as it is,
         // and the provider would only say the token is wrong. Stopped here, saying where the key goes.
@@ -492,27 +520,16 @@ impl Proxy {
         // in case the provider echoes the real key.
         out.push_str("Accept-Encoding: identity\r\nConnection: close\r\n\r\n");
 
-        let port = self.options.upstream_port.unwrap_or(443);
-        let name = ServerName::try_from(host.to_owned()).map_err(io::Error::other)?;
-        let connection =
-            ClientConnection::new(self.upstream.clone(), name).map_err(io::Error::other)?;
-        let addresses: Vec<SocketAddr> = (host, port)
-            .to_socket_addrs()
-            .map(Iterator::collect)
-            .unwrap_or_default();
-        let socket = match connect_within(&addresses) {
-            Ok(socket) => socket,
+        let mut upstream = match self.open_upstream(host) {
+            Ok(upstream) => upstream,
             Err(_) => {
                 self.record(grant.as_deref(), host, &method, &target, 0, "not sent");
                 return answer(stream.get_mut(), 502, "that host could not be reached");
             }
         };
-        socket.set_read_timeout(Some(IO_TIMEOUT))?;
-        socket.set_write_timeout(Some(IO_TIMEOUT))?;
-        let mut upstream = StreamOwned::new(connection, socket);
         // Connecting takes a moment, and the permission can end during it.
         if let Some(grant) = &grant {
-            if !self.grants_for(host).iter().any(|live| live.id == grant.id) {
+            if !self.is_live(host, &grant.id) {
                 self.record(Some(grant), host, &method, &target, 0, "not sent");
                 return answer(stream.get_mut(), 403, "that permission has ended");
             }
@@ -593,7 +610,7 @@ impl Proxy {
             }
         }
         let path = path.chars().take(200).collect();
-        let event = Event {
+        self.emit(Event {
             grant: grant.id.clone(),
             key: grant.key.clone(),
             host: host.to_owned(),
@@ -601,7 +618,11 @@ impl Proxy {
             path,
             status,
             outcome: outcome.to_owned(),
-        };
+            authorization: None,
+        });
+    }
+
+    fn emit(&self, event: Event) {
         let _ = self
             .events
             .lock()

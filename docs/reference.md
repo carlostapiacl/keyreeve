@@ -257,6 +257,19 @@ servers = "SHA256:abc... SHA256:def..."
 takes `--program`, since its permission is for one program. The app does the same from a key's page, shows what is in force and the
 key's recent use, and can end it.
 
+An OAuth credential, such as Google's `authorized_user` file with a client id, a client secret and a refresh token, works the same
+way. Its variable holds the path of a private copy of the file with stand-ins for the secret and the refresh token, and the real
+client id, which is not a secret (`GOOGLE_APPLICATION_CREDENTIALS` for Google). When the command's library asks the token host
+for an access token, the proxy answers it itself, with a stand-in, and never forwards that request. It gets the real access token
+from the provider on its own, keeps it until shortly before it ends, and puts it on requests to the recipe's hosts that carry the
+stand-in. A token request with anything else is refused. If the provider answers `invalid_grant`, nothing is tried again, and the
+app shows the key as needing to be authorized again, like a key that expired, until you replace it. Libraries that speak HTTP/1.1
+through `HTTPS_PROXY` work this way, such as Python's google-auth and Google's API client. gRPC clients do not.
+
+```bash
+keyreeve-vault use search-console --as GOOGLE_APPLICATION_CREDENTIALS -- python3 weekly_report.py
+```
+
 `--real` hands the command the real key, for what cannot use a stand-in, such as a provider that signs requests or a script of your
 own. It asks for your finger every time and is logged apart. A command that sends a stand-in past the proxy, or ignores its variables,
 simply fails to authenticate.
@@ -536,7 +549,7 @@ A file can also declare:
 | `auth: { header }` | sends the key in a header. The usual case |
 | `auth: { type: url }` | puts `{key}` in the address, for providers with no other way, such as Telegram |
 | `auth: { type: basic }` | HTTP Basic |
-| `auth: { type: oauth_token }` | exchanges two or three fields for a short-lived token, such as Google or PayPal |
+| `auth: { type: oauth_token }` | exchanges two or three fields for a short-lived token, such as Google or PayPal. `token_host` is in `hosts`, and the other hosts are the APIs a command may reach with it. `client_id_ends` recognizes a pasted credentials file |
 | `auth: { type: aws_sigv4 }` | signs each request, so the secret never travels. AWS and R2 |
 | `auth: { type: ssh }` | greets a server with an SSH key through the system's `ssh`, such as a GitHub deploy key |
 | `self_hosted: true` | each person gives their own server, approved one at a time, always over HTTPS |

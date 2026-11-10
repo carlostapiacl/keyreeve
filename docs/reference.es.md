@@ -267,6 +267,20 @@ configuración.
 que no es SSH lleva `--program`, ya que su permiso es para un programa. La app hace lo mismo desde la página de una clave, muestra lo
 que está vigente y el uso reciente de la clave, y puede terminarlo.
 
+Una credencial OAuth, como el archivo `authorized_user` de Google con un client id, un client secret y un refresh token, funciona
+igual. Su variable tiene la ruta de una copia privada del archivo con reemplazos para el secreto y el refresh token, y el client id
+real, que no es secreto (`GOOGLE_APPLICATION_CREDENTIALS` para Google). Cuando la biblioteca del comando le pide un token de acceso
+al host de tokens, el proxy le responde por su cuenta, con un reemplazo, y nunca reenvía esa consulta. Consigue el token de acceso
+real del proveedor por su cuenta, lo guarda hasta poco antes de que venza y lo pone en las consultas a los hosts de la receta que
+llevan el reemplazo. Una consulta de token con cualquier otra cosa se rechaza. Si el proveedor responde `invalid_grant`, no se
+vuelve a intentar, y la app muestra la clave como que hay que autorizarla de nuevo, como una clave vencida, hasta que la
+reemplaces. Así funcionan las bibliotecas que hablan HTTP/1.1 por `HTTPS_PROXY`, como google-auth de Python y el cliente de APIs de
+Google. Los clientes gRPC no.
+
+```bash
+keyreeve-vault use search-console --as GOOGLE_APPLICATION_CREDENTIALS -- python3 informe_semanal.py
+```
+
 `--real` le entrega al comando la clave real, para lo que no puede usar un reemplazo, como un proveedor que firma las consultas o un
 script tuyo. Pide tu dedo cada vez y queda registrado aparte. Un comando que manda un reemplazo saltándose el proxy, o que ignora sus
 variables, simplemente no logra autenticarse.
@@ -556,7 +570,7 @@ Un archivo también puede declarar:
 | `auth: { header }` | manda la clave en un encabezado. El caso habitual |
 | `auth: { type: url }` | pone `{key}` en la dirección, para proveedores sin otra forma, como Telegram |
 | `auth: { type: basic }` | HTTP Basic |
-| `auth: { type: oauth_token }` | cambia dos o tres campos por un token de corta duración, como Google o PayPal |
+| `auth: { type: oauth_token }` | cambia dos o tres campos por un token de corta duración, como Google o PayPal. `token_host` está en `hosts`, y los otros hosts son las APIs a las que un comando puede llegar con él. `client_id_ends` reconoce un archivo de credenciales pegado |
 | `auth: { type: aws_sigv4 }` | firma cada consulta, así el secreto nunca viaja. AWS y R2 |
 | `auth: { type: ssh }` | saluda a un servidor con una clave SSH a través del `ssh` del sistema, como una deploy key de GitHub |
 | `self_hosted: true` | cada persona indica su propio servidor, aprobado de a uno, siempre por HTTPS |

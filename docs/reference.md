@@ -569,8 +569,11 @@ engine runs a private copy of the exact bytes it hashed. A procedure that change
 
 **Check places** runs `check` for each place, with no fingerprint, and compares the hash with the SHA-256 of the key in the vault:
 **Same**, **Old value** (an earlier value of this key, such as the one before a rotation), **Different**, **Absent**, or **There,
-cannot compare**. keyreeve learns a key's hash the first time you open it for a place, with **Compare with the vault** or **Update**,
-and keeps it in `~/.keyreeve/value-digests.json`. Each check goes in the usage log with its result, never the hash.
+cannot compare**. The vault keeps a keyed digest of each value, HMAC-SHA256 of its SHA-256 with a key made from the chip key that
+needs no fingerprint, in `~/.keyreeve/value-digests.json`. It is written whenever a value is sealed, added, replaced or rotated, and
+for a key sealed before, the next time it is opened for any reason, or with **Compare with the vault**. The digest key is made in the
+chip with no prompt and never leaves memory, so without this Mac's chip the file says nothing, and a check says **Not compared yet**.
+Using places makes that chip key once if the vault has none. Each check goes in the usage log with its result, never the hash.
 
 **Update** opens the key with your fingerprint, runs `apply` with it on stdin, and checks the place again. A rotation shows the same
 list before it starts, updates every approved place before the old key is revoked, and leaves out places that wait for approval.

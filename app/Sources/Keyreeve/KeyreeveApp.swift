@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Writing to a command that already ended must be an error to handle, not a signal that ends the
         // app. Set once here, for the whole process, rather than by each call.
         signal(SIGPIPE, SIG_IGN)
+        AppModel.learnValueDigests()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {

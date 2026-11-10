@@ -23,6 +23,7 @@ extension AppModel {
     public func reloadPlaces() {
         let book = PlaceBook.load(from: placesFile)
         if book != placesState.book { placesState.book = book }
+        if !book.places.isEmpty { ensureDigestKey() }
         guard let binary else { return }
         let folder = proceduresFolder
         Task.detached {
@@ -71,8 +72,50 @@ extension AppModel {
 
     // MARK: Checking
 
-    /// Asks each place for the hash of the value it holds, with no fingerprint, and compares it with what the
-    /// vault's values are known to hash to. A place whose procedure changed is not run.
+    /// Has each value the vault seals or opens in this process leave its keyed digest, so places compare with no
+    /// fingerprint. Set once, when the app starts.
+    public nonisolated static func learnValueDigests(files: KeyreeveFiles = KeyreeveFiles()) {
+        let store = VaultStore(directory: files.directory.appendingPathComponent("vault"))
+        VaultEvents.observe(VaultEvents.recorder(store: store, file: files.directory.appendingPathComponent(ValueDigests.fileName)))
+    }
+
+    /// Gives the vault its chip key that needs no fingerprint, which keyed digests come from, once places are in use.
+    /// Making it asks nothing. Without a chip it fails, and places say "not compared".
+    func ensureDigestKey() {
+        let store = vaultStore
+        Task.detached { _ = try? store.ensureUnattended() }
+    }
+
+    /// Where each key is sealed now: its vault name, its field and which sealing.
+    func sealing(of keys: [String]) -> [String: (name: String, field: String?, revision: String?)] {
+        let vault = try? vaultStore.load()
+        var out: [String: (name: String, field: String?, revision: String?)] = [:]
+        for key in Set(keys) {
+            guard let found = indexed(key) else { continue }
+            out[key] = (found.source, found.field, vault?.entries[found.source]?.revision)
+        }
+        return out
+    }
+
+    /// How each hash compares, with the keyed digests and the chip key as they are now.
+    nonisolated static func compare(
+        _ found: [String: String], places: [PlaceBook.Place], sealing: [String: (name: String, field: String?, revision: String?)],
+        digests: ValueDigests, key: DigestKey?
+    ) -> [String: PlaceBook.Result] {
+        var out: [String: PlaceBook.Result] = [:]
+        for place in places {
+            guard let hash = found[place.id] else { continue }
+            guard let sealed = sealing[place.key] else {
+                out[place.id] = .notCompared
+                continue
+            }
+            out[place.id] = digests.compare(hash, name: sealed.name, field: sealed.field, revision: sealed.revision, key: key)
+        }
+        return out
+    }
+
+    /// Asks each place for the hash of the value it holds, with no fingerprint, and compares its keyed digest with
+    /// the vault's. A place whose procedure changed is not run.
     public func checkPlaces(_ list: [PlaceBook.Place]) {
         guard let binary, !list.isEmpty else { return }
         // Until the engine has listed its procedures every pin would look changed, so nothing runs yet.
@@ -84,8 +127,9 @@ extension AppModel {
         let pins = procedurePins
         let folder = proceduresFolder
         let tool = vaultTool
-        let digests = ValueDigests.load(from: digestsFile)
-        let revisions = currentRevisions(for: list.map(\.key))
+        let digestsFile = self.digestsFile
+        let store = vaultStore
+        let sealing = sealing(of: list.map(\.key))
         let file = placesFile
         placesState.running.formUnion(list.map(\.id))
         message = list.count == 1 ? T("Checking 1 place…") : T("Checking %d places…", list.count)
@@ -107,12 +151,18 @@ extension AppModel {
                 {
                 case .hash(let hash):
                     hashes[place.id] = hash
-                    gathered[place.id] = PlaceBook.Check(
-                        at: now, result: digests.compare(hash, key: place.key, revision: revisions[place.key]))
+                    gathered[place.id] = PlaceBook.Check(at: now, result: .notCompared)
                 case .absent: gathered[place.id] = PlaceBook.Check(at: now, result: .absent)
                 case .present: gathered[place.id] = PlaceBook.Check(at: now, result: .present)
                 case .failed(let why): gathered[place.id] = PlaceBook.Check(at: now, result: .error, detail: why)
                 }
+            }
+            // The chip key is read with no prompt. Without it every hash stays "not compared".
+            let key = (try? store.load()).flatMap { DigestKey.load(vault: $0, store: store) }
+            for (id, result) in Self.compare(
+                hashes, places: list, sealing: sealing, digests: ValueDigests.load(from: digestsFile), key: key)
+            {
+                gathered[id]?.result = result
             }
             let (results, found) = (gathered, hashes)
             let saved = Result { try PlaceBook.update(at: file) { book in Self.record(results, in: &book) } }
@@ -136,59 +186,37 @@ extension AppModel {
         }
     }
 
-    /// Which sealing each key holds now, by identifier.
-    func currentRevisions(for keys: [String]) -> [String: String] {
-        guard let vault = try? vaultStore.load() else { return [:] }
-        var out: [String: String] = [:]
-        for key in Set(keys) {
-            if let source = keyIndex.key(key)?.source ?? keyIndex.unoffered.first(where: { $0.id == key })?.source,
-                let revision = vault.entries[source]?.revision
-            {
-                out[key] = revision
-            }
-        }
-        return out
-    }
-
     func indexed(_ id: String) -> KeyIndex.Key? { keyIndex.key(id) ?? keyIndex.unoffered.first { $0.id == id } }
 
-    /// Opens these keys once, with the fingerprint, to learn what their values hash to, then compares the places
-    /// last checked. Nothing but the hashes is kept.
+    /// Opens these keys once, with the fingerprint, so a key sealed before keyed digests leaves its own, then compares
+    /// the places last checked. Any other opening of a key does the same; this is for the ones not opened since.
     public func compareWithVault(_ list: [PlaceBook.Place]) {
         let keys = Array(Set(list.map(\.key))).sorted()
-        let sources = keys.compactMap { id in indexed(id).map { (id, $0.source, $0.field) } }
-        guard !sources.isEmpty else { return }
+        let names = Array(Set(keys.compactMap { indexed($0)?.source })).sorted()
+        guard !names.isEmpty else { return }
         let reason = keys.count == 1 ? T("compare 1 key with where it lives") : T("compare %d keys with where they live", keys.count)
+        let store = vaultStore
         openVault(reason: reason) { unlocked in
             guard let unlocked else {
                 self.message = T("Not compared: it was not confirmed")
                 return
             }
-            let store = self.vaultStore
             let file = self.digestsFile
             let found = self.placesState.found
             let placesFile = self.placesFile
+            let sealing = self.sealing(of: keys)
             Task.detached {
                 let outcome = Result { () throws -> PlaceBook in
-                    let vault = try store.load()
-                    let recipient = try unlocked.recipient(store)
-                    var learned: [(String, String, String)] = []
-                    for (id, source, field) in sources {
-                        guard let entry = vault.entries[source] else { continue }
-                        let sealed = try vault.open(name: source, with: recipient)
-                        learned.append((id, entry.revision, try EnvReferences.value(in: sealed, field: field)))
-                    }
-                    try ValueDigests.save({ digests in
-                        for (id, revision, value) in learned { digests.learn(key: id, revision: revision, value: value) }
-                    }, at: file)
-                    let digests = ValueDigests.load(from: file)
-                    let revisions = Dictionary(learned.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
+                    _ = try? store.ensureUnattended()
+                    // Opening leaves each value's keyed digest, through the vault's own recorder.
+                    _ = try VaultKeeper.open(names: names, recipient: try unlocked.recipient(store), store: store, by: "place")
+                    let key = (try? store.load()).flatMap { DigestKey.load(vault: $0, store: store) }
+                    let book = PlaceBook.load(from: placesFile)
+                    let results = Self.compare(
+                        found, places: book.places, sealing: sealing, digests: ValueDigests.load(from: file), key: key)
                     return try PlaceBook.update(at: placesFile) { book in
                         for index in book.places.indices {
-                            let place = book.places[index]
-                            guard let hash = found[place.id], var check = place.lastCheck else { continue }
-                            check.result = digests.compare(hash, key: place.key, revision: revisions[place.key])
-                            book.places[index].lastCheck = check
+                            if let result = results[book.places[index].id] { book.places[index].lastCheck?.result = result }
                         }
                     }
                 }
@@ -221,19 +249,17 @@ extension AppModel {
                 return
             }
             let store = self.vaultStore
-            let file = self.digestsFile
             self.placesState.running.insert(place.id)
             Task.detached {
                 let outcome = Result { () throws in
-                    let vault = try store.load()
-                    guard let entry = vault.entries[key.source] else { throw CheckError(T("This key is not in the vault")) }
+                    guard (try store.load()).entries[key.source] != nil else { throw CheckError(T("This key is not in the vault")) }
+                    // Opening it also leaves its keyed digest, so the check after compares.
                     let sealed = try VaultKeeper.open(
                         names: [key.source], recipient: try unlocked.recipient(store), store: store, by: "place")
                     let value = try EnvReferences.value(in: Data((sealed[key.source] ?? "").utf8), field: key.field)
                     try PlaceRunner.apply(
                         procedure: place.procedure, pin: pin, params: place.params, value: value, binary: binary, folder: folder,
                         vaultTool: tool)
-                    try ValueDigests.save({ $0.learn(key: place.key, revision: entry.revision, value: value) }, at: file)
                 }
                 await MainActor.run {
                     self.placesState.running.remove(place.id)

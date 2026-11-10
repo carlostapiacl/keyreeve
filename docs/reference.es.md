@@ -587,9 +587,12 @@ ni una rotación lo corren hasta que lo apruebes de nuevo.
 
 **Revisar lugares** corre `check` en cada lugar, sin huella, y compara el hash con el SHA-256 de la clave en la bóveda: **Igual**,
 **Valor antiguo** (un valor anterior de esta clave, como el de antes de una rotación), **Distinto**, **No está**, o **Está, no se puede
-comparar**. keyreeve conoce el hash de una clave la primera vez que la abres para un lugar, con **Comparar con la bóveda** o
-**Actualizar**, y lo guarda en `~/.keyreeve/value-digests.json`. Cada revisión queda en el registro de uso con su resultado, nunca el
-hash.
+comparar**. La bóveda guarda un resumen con llave de cada valor, HMAC-SHA256 de su SHA-256 con una llave hecha a partir de la llave
+del chip que no pide huella, en `~/.keyreeve/value-digests.json`. Se escribe cada vez que un valor se sella, agrega, reemplaza o rota,
+y para una clave sellada antes, la próxima vez que se abre por cualquier motivo, o con **Comparar con la bóveda**. La llave del resumen
+se hace en el chip sin pedir nada y nunca sale de la memoria, así que sin el chip de este Mac el archivo no dice nada, y una revisión
+dice **Sin comparar aún**. Usar lugares crea esa llave del chip una vez si la bóveda no tiene. Cada revisión queda en el registro de uso
+con su resultado, nunca el hash.
 
 **Actualizar** abre la clave con tu huella, corre `apply` con ella por stdin y vuelve a revisar el lugar. Una rotación muestra la misma
 lista antes de empezar, actualiza cada lugar aprobado antes de revocar la clave antigua, y deja fuera los que esperan aprobación.

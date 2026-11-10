@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import KeyreeveVault
 import Testing
@@ -180,19 +181,100 @@ struct PlacesTests {
         #expect(files.filter { $0.hasSuffix(".sh") }.map { String($0.dropLast(3)) }.sorted() == PlaceBook.builtinProcedures.sorted())
     }
 
-    @Test func digestsTellTheValueNowFromAnEarlierOne() {
+    static func digestKey() throws -> DigestKey {
+        let chip = SoftwareRecipient()
+        return try DigestKey.derive(from: chip, tag: Age.TagRecipient(publicKey: chip.publicKey).string)
+    }
+
+    @Test func digestsTellTheValueNowFromAnEarlierOne() throws {
+        let key = try Self.digestKey()
         var digests = ValueDigests()
-        digests.learn(key: "k", revision: "r1", value: "CANARY-one")
+        digests.learn(name: "lh.env", revision: "r1", value: Data("OPENAI_API_KEY=CANARY-one\nOTHER=x\n".utf8), key: key)
         let one = PlaceBook.sha256(Data("CANARY-one".utf8))
         let two = PlaceBook.sha256(Data("CANARY-two".utf8))
-        #expect(digests.compare(one, key: "k", revision: "r1") == .same)
-        #expect(digests.compare(two, key: "k", revision: "r1") == .different)
-        // After a rotation the value now was never opened: no fingerprint, no guess.
-        #expect(digests.compare(one, key: "k", revision: "r2") == .notCompared)
-        digests.learn(key: "k", revision: "r2", value: "CANARY-two")
-        #expect(digests.compare(one, key: "k", revision: "r2") == .old)
-        #expect(digests.compare(two.uppercased(), key: "k", revision: "r2") == .same)
-        #expect(digests.compare(one, key: "other", revision: "r1") == .notCompared)
+        let compare = { (hash: String, revision: String) in
+            digests.compare(hash, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: key)
+        }
+        #expect(compare(one, "r1") == .same)
+        #expect(compare(two, "r1") == .different)
+        // Each field is its own value: OTHER holds another.
+        #expect(digests.compare(one, name: "lh.env", field: "OTHER", revision: "r1", key: key) == .different)
+        // After a rotation the value now was never seen: no guess.
+        #expect(compare(one, "r2") == .notCompared)
+        digests.learn(name: "lh.env", revision: "r2", value: Data("OPENAI_API_KEY=CANARY-two\n".utf8), key: key)
+        #expect(compare(one, "r2") == .old)
+        #expect(compare(two.uppercased(), "r2") == .same)
+        // A one-line file is its whole value.
+        digests.learn(name: "plain.txt", revision: "p", value: Data("CANARY-one\n".utf8), key: key)
+        #expect(digests.compare(one, name: "plain.txt", field: nil, revision: "p", key: key) == .same)
+    }
+
+    @Test func theDigestsFileHoldsNoPlainHashAndIsUselessWithoutTheChipKey() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("digests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent(ValueDigests.fileName)
+        let key = try Self.digestKey()
+        let chip = SoftwareRecipient()
+        var vault = VaultFile(enclave: chip.publicKey, recovery: Age.X25519Identity().recipient)
+        let value = Data("OPENAI_API_KEY=\(Self.canary)\n".utf8)
+        try vault.add(name: "lh.env", value: value)
+        let revision = try #require(vault.entries["lh.env"]?.revision)
+        let record = VaultEvents.recorder(store: VaultStore(directory: home.appendingPathComponent("vault")), file: file, key: { _ in key })
+        record(vault, "lh.env", revision, value)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let plain = PlaceBook.sha256(Data(Self.canary.utf8))
+        #expect(!text.contains(plain) && !text.contains(PlaceBook.sha256(value)) && !text.contains(Self.canary))
+        let digests = ValueDigests.load(from: file)
+        #expect(digests.compare(plain, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: key) == .same)
+        // Without the chip key there is nothing to compare with: not compared, never an error or a guess.
+        #expect(digests.compare(plain, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: nil) == .notCompared)
+        // Another Mac's key makes other digests.
+        #expect(digests.compare(plain, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: try Self.digestKey()) == .different)
+        // With no chip key, the recorder writes nothing.
+        let other = home.appendingPathComponent("other.json")
+        VaultEvents.recorder(store: VaultStore(directory: home.appendingPathComponent("vault")), file: other)(vault, "lh.env", revision, value)
+        #expect(!FileManager.default.fileExists(atPath: other.path))
+        // A file of plain hashes from before is dropped, never trusted.
+        try Data(#"{"keys":{"lh.env":{"r":"\#(plain)"}}}"#.utf8).write(to: other)
+        #expect(ValueDigests.load(from: other).entries.isEmpty)
+    }
+
+    @Test func theVaultLeavesADigestWhenItSealsAndWhenItOpens() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("digests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent(ValueDigests.fileName)
+        let key = try Self.digestKey()
+        let chip = SoftwareRecipient()
+        var vault = VaultFile(enclave: chip.publicKey, recovery: Age.X25519Identity().recipient)
+        let old = Data("CANARY-old-value\n".utf8)
+        try vault.add(name: "before.txt", value: old)
+        VaultEvents.observe(VaultEvents.recorder(store: VaultStore(directory: home), file: file, key: { _ in key }))
+        defer { VaultEvents.observe(nil) }
+        try vault.add(name: "sealed.txt", value: Data("CANARY-sealed\n".utf8))
+        try vault.replace(name: "sealed.txt", value: Data("CANARY-put\n".utf8))
+        var digests = ValueDigests.load(from: file)
+        let put = try #require(vault.entries["sealed.txt"]?.revision)
+        #expect(digests.compare(PlaceBook.sha256(Data("CANARY-put".utf8)), name: "sealed.txt", field: nil, revision: put, key: key) == .same)
+        #expect(digests.compare(PlaceBook.sha256(Data("CANARY-sealed".utf8)), name: "sealed.txt", field: nil, revision: put, key: key) == .old)
+        // Sealed before the recorder, it is filled in the first time it is opened.
+        let before = try #require(vault.entries["before.txt"]?.revision)
+        #expect(!digests.knows(name: "before.txt", revision: before))
+        _ = try vault.open(name: "before.txt", with: chip)
+        digests = ValueDigests.load(from: file)
+        #expect(digests.compare(PlaceBook.sha256(Data("CANARY-old-value".utf8)), name: "before.txt", field: nil, revision: before, key: key) == .same)
+    }
+
+    /// On a Mac with a chip, the key is made from the chip key that needs no fingerprint, with no prompt, and is
+    /// the same each time.
+    @Test func theDigestKeyComesFromTheChipWithNoPrompt() throws {
+        guard SecureEnclave.isAvailable else { return }
+        guard let made = try? EnclaveRecipient.createUnattended() else { return }
+        let tag = Age.TagRecipient(publicKey: made.recipient.publicKey).string
+        let first = try DigestKey.derive(from: try EnclaveRecipient.loadUnattended(blob: made.blob), tag: tag)
+        let second = try DigestKey.derive(from: try EnclaveRecipient.loadUnattended(blob: made.blob), tag: tag)
+        let hash = PlaceBook.sha256(Data("CANARY".utf8))
+        #expect(first.digest(ofHex: hash) == second.digest(ofHex: hash))
+        #expect(first.digest(ofHex: hash) != (try Self.digestKey()).digest(ofHex: hash))
     }
 
     @Test func aDamagedBookIsNeverWrittenOver() throws {

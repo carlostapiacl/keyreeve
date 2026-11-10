@@ -96,10 +96,14 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   engine runs a private copy of the exact bytes it hashed, and a procedure that changed by a byte does not run until you approve it
   again. Read a procedure before approving it: an agent may have written it. A procedure is checked by its file, not the programs it
   calls, such as `ssh` or `gh`. The pin lives in a file you own, so another program running as you could change it, as with any pin.
-- **A check reveals a hash.** `check` runs with no fingerprint and gives the app the SHA-256 of the value in a place, which keyreeve
-  compares with the hash of the key in the vault, kept in `value-digests.json` after you open it once. The SHA-256 of a random API key
-  tells nothing of it; that of a short password could be guessed. Neither the hash nor a value reaches an agent or the log: they get
-  the result in a word. A procedure that answers anything but a hash, `absent` or `present` is an error, and is not shown.
+- **A check reveals a hash, to this Mac only.** `check` runs with no fingerprint and hands the app, over a local pipe, the SHA-256 of
+  the value in a place. The SHA-256 of a short password could be guessed, so it is never stored: keyreeve computes HMAC-SHA256(K, that
+  hash) in memory and compares it with `value-digests.json`, which holds only such keyed digests. K comes from the chip key that needs no
+  fingerprint, by key agreement with its own public key and HKDF, so it never leaves the chip's reach and a copy of the file is useless
+  without this Mac. A program running as you while the Mac is unlocked can still ask the chip for K, as it can use that key for a copy
+  marked to need no fingerprint. Using places creates that chip key once if the vault has none. A procedure, and the place itself, see
+  the plain hash. Neither the hash nor a value reaches an agent or the log: they get the result in a word. A procedure that answers
+  anything but a hash, `absent` or `present` is an error, and is not shown.
 - **An agent's place is only words until you approve it.** `propose_places` leaves a list under Agents, and nothing is added without
   your fingerprint. `list_places` shows places of keys offered to agents, and only a count for the rest. Parameters such as a host
   or a path are in plain text in `key-places.json`.

@@ -23,6 +23,7 @@ do {
     case "run": try runWithKey()
     case "env": try runWithEnv()
     case "mcp": try serveAgents()
+    case "choose": try chooseFromService()
     case "export": try exportKey()
     case "check-recovery": try checkRecovery()
     case "recover": try recoverVault()

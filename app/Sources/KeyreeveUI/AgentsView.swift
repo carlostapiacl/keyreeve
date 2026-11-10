@@ -31,6 +31,7 @@ struct AgentsView: View {
                 sortingCard
                 connectionCard
                 allowedCard
+                KeySetsCard(model: model)
                 if !model.usage.grants.isEmpty { openCard }
                 terminalCard
                 activityCard

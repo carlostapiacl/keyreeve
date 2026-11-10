@@ -291,6 +291,27 @@ keyreeve-vault env app.env -- ./deploy.sh
 
 Una huella las abre todas para ese comando.
 
+### Varias claves a la vez
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 reporte.py
+keyreeve-vault use --set reporte-semanal --as calcom=CAL_KEY -- python3 reporte.py
+```
+
+Cada clave va en su propia variable. Una ventana las muestra con el programa, la carpeta y el motivo: desmarcas las que no quieras,
+eliges 5 minutos, hasta que termine, un día, o siempre para este programa en esta carpeta, y pones una huella. Los usos sueltos de un
+mismo script que llegan dentro de dos segundos comparten esa ventana.
+
+*Siempre* queda atado a la ruta y el SHA-256 del programa, al script que corre cuando su primer argumento es un archivo, y a la
+carpeta. Se sella una copia de cada clave para la llave del chip que no pide nada, como en *Siempre, sin huella*, así un script que
+corre el lunes a las 9:00 no necesita a nadie. Un programa o script cambiado, otra carpeta o una clave agregada después vuelve a
+preguntar. Se quita en **Agentes**, en **Conjuntos de claves**.
+
+Un conjunto es un nombre para una lista de claves, que se arma en la app en **Agentes**: a mano, o con **Armar un conjunto con lo que
+usó este proyecto**, que sugiere las claves que usó una carpeta y un programa en la última hora. Los conjuntos viven en
+`~/.keyreeve/sets.toml`. Un conjunto por sí solo no permite nada y solo lista claves ofrecidas a agentes. Ninguna herramienta de los
+agentes crea uno.
+
 ### Agentes por MCP
 
 Un agente puede usar claves por [MCP](https://modelcontextprotocol.io) con `keyreeve-vault mcp`. La sección **Agentes** de la app
@@ -343,6 +364,9 @@ Con `request_access` el agente pide una clave, dice para qué y sugiere por cuá
 4, 8 o 24 horas o siempre, o **No permitir**. Después de un sí, la clave queda libre para ese agente solamente, con una huella y sin más
 preguntas, hasta que se cumpla el plazo. Un no hace que ese agente no vuelva a pedirla en su sesión. Una clave ya abierta a otro agente
 no se vuelve a abrir con condiciones nuevas: agregas el segundo agente en **Agentes**.
+
+Un agente que necesita varias claves manda `keys` en vez de `key`. Las ves en una sola ventana, desmarcas las que no quieras y una
+huella abre el resto, así su siguiente `use_key` no pregunta nada.
 
 Cuando el agente pide un proveedor cuya clave no está guardada, la solicitud espera en la app. Elige el archivo que la tiene y aprieta
 **Guardar y permitir**: se sella, se nombra y se abre a ese agente en un solo paso. Sin archivo, **Pegar una nueva** recibe una clave
@@ -398,7 +422,8 @@ keyreeve-vault log --key resend --csv    # para una planilla
 
 Junta el registro de uso, lo que corrieron los agentes, cada prueba de una clave y tus propios usos, con nombres en lugar de rutas de
 archivo. Cada decisión que tomas en la app también queda ahí: un nivel cambiado, una solicitud respondida, una pausa. Ninguno guarda
-valores.
+valores. En el **Registro** de la app, una consulta o un uso que se repite, como un bot que consulta cada treinta segundos, es una
+sola fila con la cuenta; el archivo guarda cada línea.
 
 ### Con seisin
 

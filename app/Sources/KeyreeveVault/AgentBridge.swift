@@ -83,6 +83,8 @@ public struct AgentBridge {
     let transcript: (AgentTranscript.Entry) -> Void
     /// Asks the person whether to open a closed key. Nil is a no.
     let decideAccess: (AccessRequest) -> AccessDecision?
+    /// Asks the person about several closed keys in one window. Nil is a no.
+    let decideAccessMany: (AccessBatch) -> AccessBatch.Answer?
     /// Changes the permissions after the person opened a key, under the file's lock.
     let updatePolicy: ((inout AgentPolicy) -> Void) throws -> Void
     /// Providers the person can save a key for in the app, by name only.
@@ -146,6 +148,7 @@ public struct AgentBridge {
         describe: @escaping () -> [String: KeyIndex.Key] = { [:] },
         transcript: @escaping (AgentTranscript.Entry) -> Void = { _ in },
         decideAccess: @escaping (AccessRequest) -> AccessDecision? = { _ in nil },
+        decideAccessMany: @escaping (AccessBatch) -> AccessBatch.Answer? = { _ in nil },
         updatePolicy: @escaping ((inout AgentPolicy) -> Void) throws -> Void = { _ in throw VaultError("permissions cannot be saved here") },
         offered: @escaping () -> [String] = { [] },
         requests: @escaping () -> [AccessRequests.Entry] = { [] },
@@ -185,6 +188,7 @@ public struct AgentBridge {
         self.describe = describe
         self.transcript = transcript
         self.decideAccess = decideAccess
+        self.decideAccessMany = decideAccessMany
         self.updatePolicy = updatePolicy
         self.offered = offered
         self.requests = requests
@@ -679,11 +683,12 @@ public struct AgentBridge {
         [
             "name": "request_access",
             "description":
-                "Ask the person to open a closed key, one that list_keys shows as closed, or to save one for a provider that list_keys shows as not saved yet (give the provider as key). Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they quit Keyreeve, with one fingerprint and no more questions. Nothing is opened until they decide.",
+                "Ask the person to open a closed key, one that list_keys shows as closed, or to save one for a provider that list_keys shows as not saved yet (give the provider as key). Say why, and suggest for how long. If they allow it, use_key works with that key until the time is up or they quit Keyreeve, with one fingerprint and no more questions. Nothing is opened until they decide. A task that needs several keys asks for all of them at once with keys: the person sees one window and gives one fingerprint.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "key": ["type": "string"],
+                    "keys": ["type": "array", "items": ["type": "string"], "description": "Several saved keys at once, in place of key"],
                     "reason": ["type": "string", "description": "Why, shown to the person and kept in the usage log"],
                     "account": [
                         "type": "string",
@@ -694,7 +699,7 @@ public struct AgentBridge {
                         "description": "What you suggest, 1h if left out. always only for a key used every day. no-fingerprint asks the person to mark a saved key so agents use it with no fingerprint at all, through the proxy, even after Keyreeve restarts: only for a key used all the time that can do little harm, and they decide with their own click and finger",
                     ],
                 ],
-                "required": ["key", "reason"],
+                "required": ["reason"],
             ],
         ],
         [

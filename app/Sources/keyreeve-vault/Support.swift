@@ -29,6 +29,11 @@ let help = """
           With an SSH key (provider = "ssh"), `ssh`, `scp`, `sftp`, `git` and `rsync` sign through an agent and
           never hold it. A permission covers the first server, or those in `servers` in keys.toml. Others ask.
           --real hands the command the real key, for what cannot use a stand-in. It asks every time.
+      keyreeve-vault use <id>,<id>,... [--as id=VAR,...] [--for 5m] [--reason TEXT] -- <command> [args...]
+      keyreeve-vault use --set <name> [--as id=VAR,...] [--for 5m] [--reason TEXT] -- <command> [args...]
+          Several keys for one command, each in its own variable. One window lists them all: untick what you
+          do not want, choose 5 min, until it finishes, a day, or always for this program in this folder, and
+          give one fingerprint. Sets are made in the app, under Agents, and kept in sets.toml.
       keyreeve-vault get <id> [--reason TEXT]
           Print the real key on stdout, for a tool that takes a key from a command, such as seisin's
           key providers. It asks for your finger every time and is never remembered, so nothing can
@@ -119,7 +124,7 @@ func askService(_ request: KeyService.Request) throws -> KeyService.Response {
     if let answer = try? KeySocket.send(request, path: socketPath) { return answer }
     // It is there and gave no answer. Saying "done" here could be false, and starting another would ask twice.
     if KeySocket.isListening(path: socketPath) { throw VaultError(KeySocket.silence(for: request.op)) }
-    guard request.op == "use" else { return KeyService.Response(ok: true, grants: []) }
+    guard ["use", "use-many"].contains(request.op) else { return KeyService.Response(ok: true, grants: []) }
     let process = Process()
     process.executableURL = ownPath()
     process.arguments = ["serve"]

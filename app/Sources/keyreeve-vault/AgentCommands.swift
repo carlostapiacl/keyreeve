@@ -111,6 +111,7 @@ func serveAgents() throws {
         describe: { (try? KeyIndex.load(from: keysFile).agentDescriptions) ?? [:] },
         transcript: { AgentTranscript(url: home.appendingPathComponent(AgentTranscript.fileName)).append($0) },
         decideAccess: askAccess,
+        decideAccessMany: askAccessMany,
         updatePolicy: { change in
             guard changeStamp(ownPath()) == startedAs else {
                 throw VaultError(AgentBridge.outdated)

@@ -63,6 +63,15 @@ comando corre con el reemplazo. Desde una terminal funciona igual:
 keyreeve-vault use github --reason "listar repos" -- gh repo list
 ```
 
+Un proyecto que necesita varias claves las pide juntas: una ventana las muestra todas, desmarcas las que no quieras y una huella
+abre el resto, por 5 minutos, hasta que termine el comando, un día, o siempre para ese programa en esa carpeta. Guarda la lista
+como conjunto en **Agentes**.
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 reporte.py
+keyreeve-vault use --set reporte-semanal -- python3 reporte.py
+```
+
 ![La página de una clave, en la pestaña Uso, ofrecida a los agentes](docs/img/es/key-usage.png)
 
 ## Ofrecida o no
@@ -97,7 +106,7 @@ valor de una clave.
 |---|---|
 | `list_keys` | las claves ofrecidas que este agente puede usar, las que tiene cerradas y los proveedores sin clave guardada |
 | `use_key` | corre un comando con el reemplazo, a través del proxy local |
-| `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |
+| `request_access` | te pide abrir una clave cerrada, o varias a la vez con `keys`, o guardar una para un proveedor |
 | `run_with_key` | corre un programa que tú permitiste, fijado por su SHA-256, con la clave real en una variable |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios, solo mientras tú lo permites |

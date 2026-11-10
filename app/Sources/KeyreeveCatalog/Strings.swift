@@ -594,6 +594,7 @@ public let spanish: [String: String] = [
     "%@ is not in the vault": "%@ no está en la bóveda",
     "Any program running as you can use this key through the proxy without asking, while this Mac is unlocked. Keep it for keys that only read.": "Cualquier programa que corra con tu usuario puede usar esta clave a través del proxy sin preguntarte, mientras esta Mac esté desbloqueada. Úsalo solo para claves de lectura.",
     "Keyreeve could not confirm that the permissions ended. Quitting Keyreeve ends them all.": "Keyreeve no pudo confirmar que los permisos terminaron. Salir de Keyreeve los termina todos.",
+    "1 row of the list could not be read. Scanning the folder again rebuilds it.": "1 fila de la lista no se pudo leer. Escanear la carpeta de nuevo la reconstruye.",
     "%d rows of the list could not be read. Scanning the folder again rebuilds it.": "%d filas de la lista no se pudieron leer. Escanear la carpeta de nuevo la reconstruye.",
     "The list of keys could not be read. Scanning the folder again rebuilds it.": "La lista de claves no se pudo leer. Escanear la carpeta de nuevo la reconstruye.",
     "The vault is there but could not be opened: %@. Nothing in it was changed.": "La bóveda está, pero no se pudo abrir: %@. No se cambió nada en ella.",

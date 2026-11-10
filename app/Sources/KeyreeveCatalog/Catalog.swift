@@ -265,6 +265,9 @@ public enum CatalogParser {
                 row.append(cell)
                 cell = ""
             } else if character.isNewline {
+                // A blank line, such as the one a file ends with, is no row: counting it would report a
+                // row that could not be read when every row was.
+                if row.isEmpty && cell.isEmpty { continue }
                 row.append(cell)
                 rows.append(row)
                 row = []

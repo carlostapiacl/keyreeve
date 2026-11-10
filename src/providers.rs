@@ -307,17 +307,31 @@ pub fn hints(name: &str) -> (Option<u8>, Option<u32>) {
         })
 }
 
-/// The provider whose file claims this start of a key, if only one does.
+/// The provider whose file claims this start of a key. The longest prefix wins, so `sk_test_…` is
+/// Stripe even though ElevenLabs claims `sk_`.
 pub fn kind_from_prefix(token: &str) -> Option<String> {
+    longest_prefix(token).map(|(name, _)| name.to_owned())
+}
+
+/// The provider that claims the longest start of this key, and how long that start is.
+pub(crate) fn longest_prefix(token: &str) -> Option<(&'static str, usize)> {
     builtin()
         .iter()
-        .find(|(_, recipe)| {
+        .flat_map(|(name, recipe)| {
             recipe
                 .prefixes
                 .iter()
-                .any(|prefix| token.starts_with(prefix))
+                .filter(|prefix| token.starts_with(prefix.as_str()))
+                .map(move |prefix| (*name, prefix.len()))
         })
-        .map(|(name, _)| (*name).to_owned())
+        // On a tie the first file keeps it, as before.
+        .fold(
+            None,
+            |best: Option<(&str, usize)>, (name, len)| match best {
+                Some((_, kept)) if kept >= len => best,
+                _ => Some((name, len)),
+            },
+        )
 }
 
 /// A prefix proves a provider only if that provider's own file declares it and it ships.
@@ -654,5 +668,36 @@ mod tests {
         assert!(proven("github"));
         assert!(proven("meta"));
         assert!(!proven("cloudflare"));
+    }
+
+    #[test]
+    fn the_longest_prefix_wins() {
+        // ElevenLabs claims `sk_`, Stripe the longer `sk_test_` and `sk_live_`.
+        assert_eq!(kind_from_prefix("sk_test_abc").as_deref(), Some("stripe"));
+        assert_eq!(kind_from_prefix("sk_live_abc").as_deref(), Some("stripe"));
+        assert_eq!(kind_from_prefix("rk_live_abc").as_deref(), Some("stripe"));
+        assert_eq!(kind_from_prefix("sk_abc").as_deref(), Some("elevenlabs"));
+        assert_eq!(kind_from_prefix("sk-ant-abc").as_deref(), Some("anthropic"));
+        assert_eq!(kind_from_prefix("sk-proj-abc").as_deref(), Some("openai"));
+        assert_eq!(kind_from_prefix("cal_live_abc").as_deref(), Some("calcom"));
+        assert_eq!(kind_from_prefix("sk-abc"), None);
+    }
+
+    #[test]
+    fn no_shipped_prefix_steals_a_longer_one_by_order() {
+        // Whatever order the files load in, a key that starts with a longer prefix goes to its owner.
+        for (name, recipe) in builtin() {
+            for prefix in &recipe.prefixes {
+                let token = format!("{prefix}0123456789abcdef");
+                let (winner, len) = longest_prefix(&token).unwrap();
+                assert!(
+                    len >= prefix.len(),
+                    "{prefix} of {name} lost to a shorter one"
+                );
+                if len == prefix.len() {
+                    assert_eq!(winner, *name, "{prefix} is claimed by {winner} and {name}");
+                }
+            }
+        }
     }
 }

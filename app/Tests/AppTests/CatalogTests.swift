@@ -22,6 +22,18 @@ struct CatalogTests {
         XCTAssertEqual(items[0].lastResult, "")
     }
 
+    @Test func testTheBlankLineAFileEndsWithIsNoRow() throws {
+        // `keyreeve catalog` used to end its file with two newlines, and the blank line was counted as a row
+        // that could not be read.
+        let row = "a.txt,ask,,single-value,,2026-01-02,600,true,,\n"
+        let read = try CatalogParser.parseCounting(header + row + row.replacingOccurrences(of: "a.txt", with: "b.txt") + "\n")
+        XCTAssertEqual(read.items.count, 2)
+        XCTAssertEqual(read.skipped, 0)
+        let cut = try CatalogParser.parseCounting(header + "a.txt,ask\n" + row)
+        XCTAssertEqual(cut.items.count, 1)
+        XCTAssertEqual(cut.skipped, 1)
+    }
+
     @Test func testAMissingColumnIsAnError() {
         XCTAssertThrowsError(try CatalogParser.parse("path,level\na,ask\n"))
     }

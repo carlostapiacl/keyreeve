@@ -174,12 +174,7 @@ pub fn read_key_for(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<
         Err(error) => {
             let mut found: Vec<&str> = text
                 .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
-                .filter(|word| {
-                    recipe
-                        .prefixes
-                        .iter()
-                        .any(|prefix| word.starts_with(prefix.as_str()))
-                })
+                .filter(|word| claims(recipe, word))
                 .collect();
             found.sort_unstable();
             found.dedup();
@@ -191,6 +186,24 @@ pub fn read_key_for(text: &str, field: Option<&str>, recipe: &Recipe) -> Result<
                 ),
             }
         }
+    }
+}
+
+/// A word is this provider's key when it starts with one of its prefixes and no other provider
+/// claims a longer start of it: ElevenLabs' `sk_` does not take Stripe's `sk_test_…`.
+fn claims(recipe: &Recipe, word: &str) -> bool {
+    let Some(own) = recipe
+        .prefixes
+        .iter()
+        .filter(|prefix| word.starts_with(prefix.as_str()))
+        .map(String::len)
+        .max()
+    else {
+        return false;
+    };
+    match crate::providers::longest_prefix(word) {
+        Some((name, len)) => len <= own || name == recipe.provider,
+        None => true,
     }
 }
 

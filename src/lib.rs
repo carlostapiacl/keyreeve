@@ -3,6 +3,7 @@
 //! A recipe describes how one provider creates, checks and revokes a key. The engine runs
 //! those steps so that a failure or a crash at any point leaves working keys behind.
 
+pub mod bring;
 pub mod catalog;
 pub mod engine;
 pub mod history;

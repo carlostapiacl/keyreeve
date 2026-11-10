@@ -22,6 +22,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         "inventory" => return commands::run_inventory(paths),
+        "bring" => return commands::run_bring(paths),
         "catalog" => return commands::run_catalog(paths),
         "migrate" => return commands::run_migrate(paths),
         "verify" => return commands::run_verify(paths),

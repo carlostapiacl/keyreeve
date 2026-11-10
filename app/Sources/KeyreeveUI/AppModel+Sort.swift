@@ -77,7 +77,8 @@ extension AppModel {
             message = T("That file could not be read as text, so it was not saved")
             return nil
         }
-        let keys = KeySplit.keys(in: text, prefixes: prefixes)
+        let others = providers.all.filter { $0.id != provider }.flatMap { $0.prefixes ?? [] }
+        let keys = KeySplit.keys(in: text, prefixes: prefixes, others: others)
         guard keys.count > 1 else {
             message = T("This file holds one key, so there is nothing to split")
             return nil

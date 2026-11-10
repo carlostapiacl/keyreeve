@@ -3,12 +3,16 @@ import Foundation
 /// A file of notes that holds more than one key of a provider, told apart by the provider's prefixes the
 /// same way keyreeve's own check reads them, so each key can have a file of its own.
 public enum KeySplit {
-    /// The distinct words that start with one of the prefixes, in the order the file has them.
-    public static func keys(in text: String, prefixes: [String]) -> [String] {
+    /// The distinct words that start with one of the prefixes, in the order the file has them. A word that
+    /// starts with a longer prefix of another provider is that provider's, so ElevenLabs' `sk_` does not take
+    /// Stripe's `sk_test_…`: pass the other providers' prefixes as `others`.
+    public static func keys(in text: String, prefixes: [String], others: [String] = []) -> [String] {
         guard !prefixes.isEmpty else { return [] }
         let words = text.split { !($0.isASCII && ($0.isLetter || $0.isNumber || "_-.".contains($0))) }.map(String.init)
         var found: [String] = []
-        for word in words where prefixes.contains(where: { word.hasPrefix($0) && word.count > $0.count }) && !found.contains(word) {
+        for word in words where !found.contains(word) {
+            let own = prefixes.filter { word.hasPrefix($0) && word.count > $0.count }.map(\.count).max() ?? 0
+            guard own > 0, !others.contains(where: { word.hasPrefix($0) && $0.count > own }) else { continue }
             found.append(word)
         }
         return found

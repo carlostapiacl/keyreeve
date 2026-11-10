@@ -417,7 +417,8 @@ pub fn to_csv(rows: &[Row]) -> String {
 }
 
 pub fn write_csv(rows: &[Row], out: &Path) -> io::Result<()> {
-    write_private(out, &to_csv(rows))
+    // `write_private` ends the file with a newline of its own; a second one would read as an empty row.
+    write_private(out, to_csv(rows).trim_end_matches('\n'))
 }
 
 /// A cell that starts with these runs as a formula in a spreadsheet, and file names are not trusted.
@@ -549,6 +550,18 @@ files: { deploy.key: { tags: [shared], level: ask } }
         assert!(csv.contains("\"'=cmd,\"\"x\"\".txt\",ask"), "{csv}");
         assert!(csv.contains("'@sum.txt,ask"), "{csv}");
         assert_eq!(csv.lines().count(), 3);
+    }
+
+    #[test]
+    fn the_file_ends_with_one_newline_so_no_empty_row_follows() {
+        let dir = std::env::temp_dir().join(format!("keyreeve-csv-end-{}", std::process::id()));
+        let out = dir.join("catalog.csv");
+        let rows = build(&[item("a.txt")], &Rules::default(), &[]);
+        write_csv(&rows, &out).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.ends_with(",\n") && !text.ends_with("\n\n"), "{text:?}");
+        assert_eq!(text.split('\n').count(), 3);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

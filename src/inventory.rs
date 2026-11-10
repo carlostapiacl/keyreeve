@@ -584,14 +584,20 @@ fn kinds_in(text: &str) -> Vec<String> {
     kinds
 }
 
-/// Providers' files come first, so a new provider is recognized with no change here.
+/// The longest known start wins, wherever it is listed; on a tie the providers' files win, so a new
+/// provider is recognized with no change here.
 pub(crate) fn kind_of(token: &str) -> Option<String> {
-    crate::providers::kind_from_prefix(token).or_else(|| {
-        KINDS
-            .iter()
-            .find(|(prefix, _)| token.starts_with(prefix))
-            .map(|(_, kind)| (*kind).to_owned())
-    })
+    let from_files = crate::providers::longest_prefix(token);
+    let from_list = KINDS
+        .iter()
+        .filter(|(prefix, _)| token.starts_with(prefix))
+        .max_by_key(|(prefix, _)| prefix.len());
+    match (from_files, from_list) {
+        (Some((_, len)), Some((prefix, kind))) if prefix.len() > len => Some((*kind).to_owned()),
+        (Some((name, _)), _) => Some(name.to_owned()),
+        (None, Some((_, kind))) => Some((*kind).to_owned()),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -863,6 +869,35 @@ password CANARYb7: valor
         classify(text, &parse_words("# mine\n\nSHOP\n"), &mut item);
         assert_eq!(item.hints, ["netlify", "shop"]);
         assert_eq!(item.fields, ["shop token"]);
+    }
+
+    #[test]
+    fn a_stripe_key_is_not_taken_for_elevenlabs() {
+        assert_eq!(
+            kind_of("sk_test_51abcdefghijklmnop").as_deref(),
+            Some("stripe")
+        );
+        assert_eq!(
+            kind_of("sk_0123456789abcdefghij").as_deref(),
+            Some("elevenlabs")
+        );
+        assert_eq!(
+            kind_of("sk-ant-api03-abcdefghij").as_deref(),
+            Some("anthropic")
+        );
+        assert_eq!(
+            kind_of("sk-proj-abcdefghijklmnop").as_deref(),
+            Some("openai")
+        );
+        assert_eq!(
+            kind_of("sk-abcdefghijklmnopqrst").as_deref(),
+            Some("sk-style")
+        );
+        assert_eq!(
+            kind_of("whsec_abcdefghijklmnop").as_deref(),
+            Some("webhook-secret")
+        );
+        assert_eq!(kinds_in("sk_test_51abcdefghijklmnopqrstuvwx\n"), ["stripe"]);
     }
 
     #[test]

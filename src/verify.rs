@@ -713,6 +713,21 @@ mod tests {
     }
 
     #[test]
+    fn a_short_prefix_does_not_take_a_key_with_a_longer_one() {
+        let elevenlabs = load_recipe("elevenlabs").unwrap();
+        let stripe = load_recipe("stripe").unwrap();
+        let notes = "stripe sk_test_CANARYstripe\nvoz sk_CANARYvoice\n";
+        assert_eq!(
+            read_key_for(notes, None, &elevenlabs).unwrap().expose(),
+            "sk_CANARYvoice"
+        );
+        assert_eq!(
+            read_key_for(notes, None, &stripe).unwrap().expose(),
+            "sk_test_CANARYstripe"
+        );
+    }
+
+    #[test]
     fn a_self_hosted_provider_needs_an_approved_address() {
         assert!(resolve("coolify", None).unwrap_err().contains("address"));
         let refused = resolve("coolify", Some("not-approved.example.com")).unwrap_err();

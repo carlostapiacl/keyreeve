@@ -391,7 +391,11 @@ struct Snapshot: Sendable {
         do {
             let read = try CatalogParser.parseCounting(text ?? "")
             parsed = read.items
-            if read.skipped > 0 { problems.append(T("%d rows of the list could not be read. Scanning the folder again rebuilds it.", read.skipped)) }
+            if read.skipped == 1 {
+                problems.append(T("1 row of the list could not be read. Scanning the folder again rebuilds it."))
+            } else if read.skipped > 1 {
+                problems.append(T("%d rows of the list could not be read. Scanning the folder again rebuilds it.", read.skipped))
+            }
         } catch {
             problems.append(T("The list of keys could not be read. Scanning the folder again rebuilds it."))
         }

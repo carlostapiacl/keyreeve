@@ -8,9 +8,11 @@ let help = """
     Usage:
       keyreeve-vault init
           Create the vault and show its recovery key, once. Needs a terminal.
-      keyreeve-vault add <name> [--description TEXT] [--tags a,b]
+      keyreeve-vault add <name> [--file PATH] [--description TEXT] [--tags a,b]
           Add a key, read from stdin. Needs no fingerprint, and cannot read anything back. It gets an identifier
           in keys.toml, not offered to agents, and Keyreeve shows it as new until you review it.
+          --file seals a whole file byte for byte, from anywhere, such as a .jks keystore or a .pfx
+          certificate; the name can then be left out and the file's name is used. The file is only read.
       keyreeve-vault put <name>
           Add a key, read from stdin, as add does. For a key already there, the new value waits as
           <name>#pending and the current one stays in force until you accept it in Keyreeve, with your finger.

@@ -29,7 +29,14 @@ public struct AddKeySheet: View {
                 } label: {
                     Label(T("Paste from the clipboard"), systemImage: "doc.on.clipboard")
                 }
-                .buttonStyle(KRButtonStyle(primary: draft?.value == nil))
+                .buttonStyle(KRButtonStyle(primary: !(draft?.hasValue ?? false)))
+                Button {
+                    model.chooseKeyFile()
+                } label: {
+                    Label(T("Choose a file…"), systemImage: "doc.badge.plus")
+                }
+                .buttonStyle(KRButtonStyle())
+                .help(T("For a key that is a file, such as a .jks keystore or a .pfx certificate"))
                 if let hint = draft?.hint {
                     Label(hint, systemImage: "checkmark.seal.fill").font(Theme.code).foregroundStyle(Theme.good)
                 }
@@ -77,7 +84,7 @@ public struct AddKeySheet: View {
                 }
             }
 
-            if draft?.value != nil, draft?.provider == nil {
+            if draft?.hasValue == true, draft?.provider == nil {
                 Text(T("With no provider it is kept and can be copied, and it cannot be checked or used through the proxy until you choose one."))
                     .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
             }
@@ -93,7 +100,7 @@ public struct AddKeySheet: View {
                 Button(draft?.request == nil ? T("Save") : T("Save and allow")) { model.saveAddedKey(hours: hours) }
                     .buttonStyle(KRButtonStyle(primary: true))
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft?.value == nil || (draft?.name.trimmingCharacters(in: .whitespaces).isEmpty ?? true))
+                    .disabled(!(draft?.hasValue ?? false) || (draft?.name.trimmingCharacters(in: .whitespaces).isEmpty ?? true))
             }
         }
         .padding(24)

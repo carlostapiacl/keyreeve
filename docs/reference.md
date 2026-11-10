@@ -132,7 +132,8 @@ type back its last 6 characters. Keep that key away from this Mac, because if th
 Then choose keys and press **Seal**. Each file is sealed for a key inside your Mac's Secure Enclave, which it cannot leave, and for
 the recovery key. Your original files stay where they are. **Compare with the files** opens every sealed copy and tells you whether
 it matches. From then on, checks, identification and your own actions use the sealed copy, and ask for your finger once per batch.
-Binary files, such as a `.pfx` or `.jks`, can be sealed too.
+Binary files, such as a `.pfx` or `.jks`, can be sealed too. A file kept outside the keys folder goes in with **+** → **Choose a file…**, or from a terminal with
+`keyreeve-vault add --file <path>`: it is sealed byte for byte under the file's name, and the file itself is only read.
 
 If a file changes after you seal it, the app says so and uses the file, because the sealed copy may be an old key. **Seal the
 changed files again** replaces the copy, and the old one stays sealed. After a comparison, you can move the files that matched out

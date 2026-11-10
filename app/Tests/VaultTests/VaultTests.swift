@@ -240,6 +240,20 @@ struct KeeperTests {
         XCTAssertEqual(report.skipped["missing.txt"], .unreadable)
     }
 
+    @Test func testAFileFromAnywhereIsReadWhole() throws {
+        let (root, _, _) = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("release.jks")
+        try Data([0xFE, 0xED, 0x00, 0x0A]).write(to: file)
+        XCTAssertEqual(try VaultKeeper.readFile(at: file).get(), Data([0xFE, 0xED, 0x00, 0x0A]))
+        try Data().write(to: root.appendingPathComponent("empty.jks"))
+        XCTAssertEqual(VaultKeeper.readFile(at: root.appendingPathComponent("empty.jks")), .failure(.empty))
+        try Data(count: 1024 * 1024 + 1).write(to: root.appendingPathComponent("big.jks"))
+        XCTAssertEqual(VaultKeeper.readFile(at: root.appendingPathComponent("big.jks")), .failure(.tooLarge))
+        XCTAssertEqual(VaultKeeper.readFile(at: root), .failure(.unreadable), "a folder is not a key")
+        XCTAssertEqual(VaultKeeper.readFile(at: root.appendingPathComponent("missing.jks")), .failure(.unreadable))
+    }
+
     @Test func testSealingTwiceChangesNothing() throws {
         let (root, keys, store) = try folder()
         defer { try? FileManager.default.removeItem(at: root) }

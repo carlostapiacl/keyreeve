@@ -35,12 +35,13 @@ func arrivalCaller() -> (observed: AuditLog.Observed, addedBy: String, declared:
     )
 }
 
-/// `add <name> [--description TEXT] [--tags a,b]`. The key goes in with a record no agent sees, marked as new
-/// for the person to review.
+/// `add <name> [--file PATH] [--description TEXT] [--tags a,b]`. The key goes in with a record no agent sees,
+/// marked as new for the person to review. `--file` seals a whole file as it is, such as a keystore.
 func addKey() throws {
     var name: String?
     var description: String?
     var tags: [String]?
+    var file: URL?
     var rest = arguments.dropFirst()
     while let word = rest.popFirst() {
         switch word {
@@ -50,15 +51,30 @@ func addKey() throws {
         case "--tags":
             guard let text = rest.popFirst() else { fail(help, code: 2) }
             tags = text.split(separator: ",").map(String.init)
+        case "--file":
+            guard file == nil, let path = rest.popFirst() else { fail(help, code: 2) }
+            file = URL(fileURLWithPath: path)
         default:
             guard name == nil, !word.hasPrefix("--") else { fail(help, code: 2) }
             name = word
         }
     }
-    guard let name else { fail(help, code: 2) }
+    // With a file, the name can be left out: the file's own name is used.
+    guard let name = name ?? file?.lastPathComponent else { fail(help, code: 2) }
     guard !VaultFile.isTemporary(name) else { fail("that name is kept for a rotation") }
     guard store.exists else { fail("there is no vault yet: run keyreeve-vault init") }
-    let value = readSecret(prompt: "Value for \(name)")
+    let value: Data
+    if let file {
+        // Byte for byte, so a keystore or a certificate goes in whole. The file itself is only read.
+        switch VaultKeeper.readFile(at: file) {
+        case .success(let data): value = data
+        case .failure(.tooLarge): fail("\(file.path) is larger than 1 MB")
+        case .failure(.empty): fail("\(file.path) is empty")
+        case .failure: fail("\(file.path) could not be read as a file")
+        }
+    } else {
+        value = readSecret(prompt: "Value for \(name)")
+    }
     guard !value.isEmpty else { fail("the value is empty") }
     let caller = arrivalCaller()
     let key = try KeyArrival.add(

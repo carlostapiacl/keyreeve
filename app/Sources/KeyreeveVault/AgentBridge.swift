@@ -113,6 +113,10 @@ public struct AgentBridge {
     /// The files keys in keys.toml and the vault came from, to tell which keys found look sealed. Places only.
     let sealedSources: () -> Set<String>
     let held = Held()
+    /// Where keys live, read again for each request. Set by the server; empty elsewhere.
+    public var places: () -> PlaceBook = { PlaceBook() }
+    /// The person's procedures folder, to tell an agent that a procedure it proposes is not there yet.
+    public var proceduresFolder: URL?
 
     /// What the person answers when told of a request for a key that is not saved yet.
     public enum Announcement: Equatable, Sendable {
@@ -368,6 +372,10 @@ public struct AgentBridge {
             return String(decoding: page ?? list, as: UTF8.self)
         case "propose":
             return try propose(arguments)
+        case "list_places":
+            return try listPlaces(arguments)
+        case "propose_places":
+            return try proposePlaces(arguments)
         case "find_keys":
             return try findKeys(arguments)
         case "propose_bring":
@@ -628,6 +636,28 @@ public struct AgentBridge {
                     "changes": ["type": "array", "items": ["type": "object"]],
                 ],
                 "required": ["reason", "changes"],
+            ],
+        ],
+        [
+            "name": "list_places",
+            "description":
+                "List where the keys offered to agents live: for each place its label, procedure and parameters, whether the person approved it, and the last check's result and time (holds the value in the vault, an earlier value, another value, none). Never a value or a hash. Places of keys not offered to agents are only counted.",
+            "inputSchema": [
+                "type": "object",
+                "properties": ["key": ["type": "string", "description": "Only this key's places"]],
+            ],
+        ],
+        [
+            "name": "propose_places",
+            "description":
+                "Propose where keys live, so the person can check them and rotation can update them. Each place: {\"key\": a key offered to agents, \"procedure\": a procedure that updates that kind of place (ssh-env {host, file, variable, service?, compose_dir?}, github-secret {repo, name, environment?}, vercel-env {folder, variable, environment?}, netlify-env {token_key, account, site, variable, context?}, coolify-env {token_key, server, app, variable, restart?}, supabase-secret {token_key, project, name}, or one you wrote in the person's procedures folder), \"params\": an object of those parameters, \"label\": what the person reads, such as \"VPS2 · /opt/lh/.env · OPENAI_API_KEY\", \"why\": how you found it}. Find places yourself, such as by reading which variables a server's env file names, never their values. A procedure is a script that never holds a key: apply gets the new value on stdin, check prints only the SHA-256 of the value in place or absent. They wait in Keyreeve, where the person reviews them, sees each procedure's text, and approves the ones they want with one fingerprint.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "reason": ["type": "string", "description": "What these places are, in a sentence, shown to the person"],
+                    "places": ["type": "array", "items": ["type": "object"]],
+                ],
+                "required": ["reason", "places"],
             ],
         ],
         [

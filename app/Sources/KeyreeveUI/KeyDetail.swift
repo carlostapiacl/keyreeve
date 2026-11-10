@@ -197,6 +197,7 @@ struct KeyDetail: View {
     }
 
     @ViewBuilder private var use: some View {
+        WhereItLivesPanel(item: item, model: model)
         if isSealed {
             KeyAccessPanel(item: item, model: model)
             KeyUsagePanel(item: item, model: model)

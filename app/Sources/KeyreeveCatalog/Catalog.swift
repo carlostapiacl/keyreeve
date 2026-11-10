@@ -315,6 +315,8 @@ public enum Sidebar: Hashable, Sendable {
     case stale
     case internalOnly
     case expiring
+    /// Secrets with no place known where they live. The app narrows it with the places it holds.
+    case noPlace
     /// Keys an agent or a program added that the person has not looked at, and keys sealed with no record.
     case unreviewed
     case result(String)
@@ -342,6 +344,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .stale: return item.isOlderThanSuggested()
         case .internalOnly: return item.isInternal && !item.isArchived
         case .expiring: return !item.isArchived && item.isSecret && (item.daysLeft() ?? Int.max) <= 30
+        case .noPlace: return !item.isArchived && item.isSecret
         case .unreviewed: return item.isNew || item.waitingFrom != nil
         case .result(let result):
             guard !item.isArchived, item.isSecret else { return false }

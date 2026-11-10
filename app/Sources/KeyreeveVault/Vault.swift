@@ -82,7 +82,10 @@ public struct VaultFile: Codable, Equatable {
         let file = try Age.encrypt(
             Self.nameLine(name) + value,
             to: [try Age.TagRecipient(string: enclave), try Age.X25519Recipient(string: recovery)])
-        return Entry(added: now, source: source, sealed: file)
+        let entry = Entry(added: now, source: source, sealed: file)
+        // Its keyed digest, while the value is in hand, so a place can be compared with it later.
+        VaultEvents.saw(self, name: name, revision: entry.revision, value: value)
+        return entry
     }
 
     public mutating func add(name: String, value: Data, now: Date = Date(), source: String? = nil) throws {
@@ -140,7 +143,10 @@ public struct VaultFile: Codable, Equatable {
         guard plain.starts(with: line) else {
             throw VaultError("\(name) could not be opened: the file was changed or damaged")
         }
-        return plain.dropFirst(line.count)
+        let value = Data(plain.dropFirst(line.count))
+        // An older value learns its keyed digest the first time it is opened for any reason.
+        VaultEvents.saw(self, name: name, revision: entry.revision, value: value)
+        return value
     }
 
     /// Proves the recovery key opens this vault, or a backup of it: every key and every replaced copy is opened with

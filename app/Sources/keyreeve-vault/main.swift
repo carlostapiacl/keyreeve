@@ -2,6 +2,8 @@ import Foundation
 import KeyreeveVault
 
 if let name = ProcessInfo.processInfo.environment[SSHCommand.askpassVariable] { askPassphrase(for: name) }
+// Each value this command seals or opens leaves its keyed digest, so places compare with no fingerprint.
+VaultEvents.observe(VaultEvents.recorder(store: store, file: home.appendingPathComponent(ValueDigests.fileName)))
 
 do {
     switch arguments.first {

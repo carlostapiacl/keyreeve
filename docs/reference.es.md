@@ -4,7 +4,7 @@ Los detalles que el [README](../README.es.md) deja fuera. [English](reference.md
 
 Contenido: [Pruébalo sin conexión](#pruébalo-sin-conexión) · [La app para Mac](#la-app-para-mac) · [La bóveda](#la-bóveda-mac) ·
 [Claves y agentes](#claves-y-agentes) · [Desde una terminal](#desde-una-terminal) · [Proveedores y recetas](#proveedores-y-recetas) ·
-[Rotar una clave](#rotar-una-clave) · [Lo que falta](#lo-que-falta)
+[Dónde vive una clave](#dónde-vive-una-clave) · [Rotar una clave](#rotar-una-clave) · [Lo que falta](#lo-que-falta)
 
 ## Pruébalo sin conexión
 
@@ -383,6 +383,7 @@ Las herramientas que recibe un agente:
 | `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios para muchos archivos, cuando lo activas |
+| `list_places`, `propose_places` | dónde viven las claves ofrecidas, y lugares nuevos para que los apruebes ([abajo](#dónde-vive-una-clave)) |
 | `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
 | `propose_bring` | propone cuáles sellar de las encontradas, para que la revises en Traer y selles con una sola huella |
 
@@ -639,6 +640,65 @@ aprobación. Un archivo que viene con keyreeve nunca puede correr un programa.
 Un secreto sin proveedor, como una clave de firma, se marca como interno, y no se ofrece prueba. Los secretos de tus propios productos
 van igual: un archivo tuyo, en esa carpeta, nunca en un repositorio.
 
+## Dónde vive una clave
+
+**Dónde vive**, en la pestaña **Uso** de una clave, lista sus lugares, qué la usó en los últimos 30 días (programa, carpeta y agente,
+del registro de uso) y dónde la encontró Traer. **Sin lugar conocido**, sobre Mis claves, muestra los secretos que no tienen ninguno.
+
+Un lugar es el identificador de una clave, un procedimiento, sus parámetros y una etiqueta, guardados en `~/.keyreeve/key-places.json`
+sin ningún valor. Un procedimiento es un programa que actualiza un tipo de lugar:
+
+- `<procedimiento> apply --nombre=valor...` recibe el valor nuevo por stdin y lo pone en su lugar. Salir con 0 significa que quedó.
+- `<procedimiento> check --nombre=valor...` imprime una línea: el SHA-256 del valor que hay, `absent`, o `present` para un lugar que
+  nunca vuelve a mostrar un valor, como un secreto de GitHub. Cualquier otra cosa es un error, y keyreeve nunca la muestra.
+- Cada parámetro llega también como `PLACE_<NOMBRE>`. El entorno va limpio, más `KEYREEVE_VAULT`, el programa `keyreeve-vault`,
+  para un procedimiento que llama a una API con un token tuyo mediante `keyreeve-vault use`. Lo que imprime al aplicar, y su stderr,
+  se descartan.
+- La cabecera lo nombra: `# keyreeve-procedure: qué actualiza` y un `# param nombre: qué es` por parámetro, con `(optional)` primero
+  en uno que se puede omitir.
+
+| procedimiento | parámetros | cómo |
+|---|---|---|
+| `ssh-env` | host, file, variable, service?, compose_dir? | edita un dotenv en un servidor por ssh con un solo cambio de nombre, conservando las demás líneas, y reinicia el servicio o corre `docker compose up -d` |
+| `github-secret` | repo, name, environment? | `gh secret set`, con el valor por stdin. Una revisión solo dice si está o no |
+| `vercel-env` | folder, variable, environment? | el comando `vercel` en una carpeta enlazada. Una revisión solo dice si está o no |
+| `netlify-env` | token_key, account, site, variable, context? | la API de Netlify, con un token tuyo de Netlify mediante `keyreeve-vault use` |
+| `coolify-env` | token_key, server, app, variable, restart? | la API de Coolify, igual |
+| `supabase-secret` | token_key, project, name | la API de Supabase, que lista el SHA-256 de cada secreto |
+
+Ninguno se ha corrido todavía contra esos servicios. `ssh-env` calcula el hash en el servidor, así que el valor nunca vuelve. Los de
+API necesitan `jq`, y su clave de token debe estar ofrecida a los agentes para que `use` la alcance. Los tuyos van en
+`~/.keyreeve/procedures`, que puede ser un repositorio git, como `<nombre>.sh`. No se puede tomar un nombre que ya viene.
+`keyreeve procedures` los lista todos con su SHA-256.
+
+```bash
+keyreeve procedures
+keyreeve place check ssh-env --sha256 <hash> --param host=vps2 --param file=/opt/app/.env --param variable=API_KEY
+```
+
+Un lugar queda fijado al SHA-256 de su procedimiento cuando lo apruebas, con tu huella, porque recibe la clave real. El motor corre una
+copia privada de los mismos bytes que calculó. Un procedimiento que cambió muestra **Cambió, necesita aprobación**, y ni **Actualizar**
+ni una rotación lo corren hasta que lo apruebes de nuevo.
+
+**Revisar lugares** corre `check` en cada lugar, sin huella, y compara el hash con el SHA-256 de la clave en la bóveda: **Igual**,
+**Valor antiguo** (un valor anterior de esta clave, como el de antes de una rotación), **Distinto**, **No está**, o **Está, no se puede
+comparar**. La bóveda guarda un resumen con llave de cada valor, HMAC-SHA256 de su SHA-256 con una llave hecha a partir de la llave
+del chip que no pide huella, en `~/.keyreeve/value-digests.json`. Se escribe cada vez que un valor se sella, agrega, reemplaza o rota,
+y para una clave sellada antes, la próxima vez que se abre por cualquier motivo, o con **Comparar con la bóveda**. La llave del resumen
+se hace en el chip sin pedir nada y nunca sale de la memoria, así que sin el chip de este Mac el archivo no dice nada, y una revisión
+dice **Sin comparar aún**. Usar lugares crea esa llave del chip una vez si la bóveda no tiene. Cada revisión queda en el registro de uso
+con su resultado, nunca el hash.
+
+**Actualizar** abre la clave con tu huella, corre `apply` con ella por stdin y vuelve a revisar el lugar. Una rotación muestra la misma
+lista antes de empezar, actualiza cada lugar aprobado antes de revocar la clave antigua, y deja fuera los que esperan aprobación.
+
+Un agente con `list_places` ve la etiqueta, el procedimiento, los parámetros, la aprobación y la última revisión de cada lugar de las
+claves que se le ofrecen, y solo una cuenta de las demás. Puede encontrar lugares por su cuenta, por ejemplo leyendo qué variables nombra
+el archivo env de un servidor, y proponerlos con `propose_places`, cada uno con clave, procedimiento, parámetros, etiqueta y por qué.
+También puede escribir un procedimiento nuevo en tu carpeta de procedimientos. La propuesta espera en **Agentes**, donde ves cada lugar y
+el texto completo de cualquier procedimiento de tu carpeta, desmarcas lo que no quieras y apruebas el resto con una huella. Rechazarla no
+guarda nada.
+
 ## Rotar una clave
 
 Abre una clave sellada en la app. Si su proveedor puede rotar, indicas dónde más se usa la clave y cuánto debe durar la antigua, y
@@ -670,8 +730,9 @@ Ninguna de estas ha corrido todavía contra un servicio real, y la lista en Ajus
 agregar un proveedor, dale a su archivo `create` y `revoke`, y `keyreeve simulate` lo prueba contra fallas y caídas. Las garantías del
 simulador no aplican a `rotation: single`.
 
-Un destino puede ser un archivo, o un botón tuyo que recibe la clave nueva por stdin. Hay [ejemplos](../examples/places) para GitHub
-Actions, Vercel y un archivo env en un servidor, que no se han corrido contra esos servicios. Una clave formada por dos campos, como la
+Un destino puede ser un archivo, un botón tuyo que recibe la clave nueva por stdin, o un lugar que actualiza un procedimiento
+([arriba](#dónde-vive-una-clave)). Hay [ejemplos](../examples/places) de botones para GitHub Actions, Vercel y un archivo env en un
+servidor, que no se han corrido contra esos servicios. Una clave formada por dos campos, como la
 de AWS, todavía no puede rotar.
 
 ## Lo que falta
@@ -681,7 +742,7 @@ de AWS, todavía no puede rotar.
 - Leer la respuesta temprana de un proveedor durante una subida. Un proveedor que rechaza un cuerpo grande antes de leerlo recibe un 502 del proxy
 - Usar la bóveda en Linux y Windows, y una llave sin chip para ellos. El formato de archivo ya funciona ahí
 - Otras bóvedas como almacenamiento, como 1Password o el llavero del sistema
-- Un escaneo que encuentre dónde se usa cada clave, y qué permisos tiene cada una
+- Un escaneo de keyreeve mismo que encuentre dónde se usa cada clave, más allá de lo que proponen los agentes, y qué permisos tiene cada una
 - Recetas para más proveedores que pueden rotar, claves formadas por dos campos y rotación escrita como un programa tuyo
 - Un reemplazo para los roles dentro de [seisin](https://github.com/carlostapiacl/seisin), para que lleguen a un proveedor a través del proxy y nunca tengan la clave
 - Una huella para varias ejecuciones de seisin, sin dejar que otro programa se aproveche de ella

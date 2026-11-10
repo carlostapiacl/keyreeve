@@ -13,6 +13,9 @@ public struct RotationPlan: Encodable, Sendable {
     public var original: String?
     public var place_files: [String]
     public var place_actions: [String]
+    /// Places a procedure updates, each pinned to the procedure the person approved.
+    public var place_procedures: [PlannedProcedure] = []
+    public var procedures_folder: String?
     public var expected_events: Int?
 
     public init(
@@ -34,6 +37,20 @@ public struct RotationPlan: Encodable, Sendable {
         self.original = original
         place_files = places.files
         place_actions = places.actions
+    }
+}
+
+/// A place a procedure updates during a rotation. It holds no value.
+public struct PlannedProcedure: Encodable, Equatable, Sendable {
+    public var label: String
+    public var procedure: String
+    public var sha256: String
+    public var params: [String: String]
+    public init(label: String, procedure: String, sha256: String, params: [String: String]) {
+        self.label = label
+        self.procedure = procedure
+        self.sha256 = sha256
+        self.params = params
     }
 }
 

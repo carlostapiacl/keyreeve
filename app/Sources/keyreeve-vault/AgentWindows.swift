@@ -124,6 +124,11 @@ func announceRequest(_ request: AccessRequests.Entry) -> AgentBridge.Announcemen
         alert.informativeText = spanish
             ? "Lo que dice el agente, en sus palabras:\n\(said)\n\nEn Keyreeve ves cada cambio y aplicas los que quieras. Nada cambia antes."
             : "What the agent says, in its own words:\n\(said)\n\nIn Keyreeve you see each change and apply the ones you want. Nothing changes before."
+    } else if request.kind == "places" {
+        alert.messageText = spanish ? "\(request.agent) propone dónde viven tus claves" : "\(request.agent) proposes where your keys live"
+        alert.informativeText = spanish
+            ? "Lo que dice el agente, en sus palabras:\n\(said)\n\nEn Keyreeve ves cada lugar y el texto de su procedimiento, y apruebas los que quieras con tu huella. Nada se agrega antes."
+            : "What the agent says, in its own words:\n\(said)\n\nIn Keyreeve you see each place and its procedure's text, and approve the ones you want with your fingerprint. Nothing is added before."
     } else if request.kind == AgentBringing.kind {
         alert.messageText = spanish ? "\(request.agent) propone traer claves a tu bóveda" : "\(request.agent) proposes bringing keys into your vault"
         alert.informativeText = spanish

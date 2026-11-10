@@ -85,6 +85,8 @@ public final class AppModel: ObservableObject {
     /// keys.toml as the list on screen read it, so a change from elsewhere, such as an agent's add, shows up.
     var indexStamp = ""
     @Published public var keyIndex = KeyIndex()
+    /// Where each key lives, and the procedures that update those places.
+    @Published public var placesState = PlacesState()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
     public let files: KeyreeveFiles

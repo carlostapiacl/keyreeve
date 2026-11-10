@@ -134,11 +134,27 @@ valor de una clave.
 | `run_with_key` | corre un programa que tú permitiste, fijado por su SHA-256, con la clave real en una variable |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios, solo mientras tú lo permites |
+| `list_places`, `propose_places` | ven dónde viven las claves ofrecidas y proponen lugares nuevos, que apruebas con tu huella |
 | `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
 | `propose_bring` | propone cuáles sellar de las encontradas; tú la revisas en Traer y sellas con una sola huella |
 
 Cada sí, cada no y cada uso queda en `~/.keyreeve/audit.jsonl`, sin valores. Cada línea lleva el hash de la anterior, así
 `keyreeve-vault audit --verify` encuentra una edición.
+
+## Dónde vive cada clave
+
+La página de una clave dice dónde vive: "en el VPS2 en `/opt/lh/.env` como `OPENAI_API_KEY`, y en la app X de Coolify". Cada lugar es
+una clave, un procedimiento y sus parámetros. Un procedimiento es un script pequeño que conoce un tipo de lugar: `apply` recibe el valor
+nuevo por stdin y lo pone ahí, y `check` imprime solo el SHA-256 del valor que hay, o `absent`. Nunca contiene una clave, así que los
+tuyos pueden vivir en git, en `~/.keyreeve/procedures`. Vienen seis: `ssh-env`, `github-secret`, `vercel-env`, `netlify-env`,
+`coolify-env` y `supabase-secret`.
+
+**Revisar lugares** le pide a cada lugar su hash y lo compara con la bóveda: igual, un valor anterior, otro valor, o no está. No
+necesita huella y no muestra ningún valor, así que después de una rotación ves dónde se sigue usando la clave antigua. **Actualizar**
+pone el valor actual en un lugar, y una rotación los actualiza todos antes de revocar la clave antigua. Un lugar queda fijado al hash de
+su procedimiento cuando lo apruebas: un procedimiento que cambió no corre hasta que lo apruebes de nuevo. Un agente puede encontrar
+lugares por su cuenta, por ejemplo leyendo qué variables nombra el archivo env de un servidor, y proponerlos con `propose_places`; tú
+los revisas y los apruebas con una huella.
 
 ## Recetas
 

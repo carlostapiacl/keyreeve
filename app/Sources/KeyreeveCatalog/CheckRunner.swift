@@ -69,13 +69,17 @@ public enum CheckRunner {
     /// Ends a command that runs past its time, so nothing in the app waits on it for good. A rotation
     /// stopped this way resumes from its journal.
     public static func watch(_ process: Process, seconds: TimeInterval) {
-        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [weak process] in
-            guard let process, process.isRunning else { return }
-            process.terminate()
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak process] in
-                if let process, process.isRunning { kill(process.processIdentifier, SIGKILL) }
-            }
+        // A thread of its own, not a shared queue: when every shared thread is busy or waiting, a timer
+        // there fires late, and the command runs far past its time.
+        let watcher = Thread { [weak process] in
+            Thread.sleep(forTimeInterval: seconds)
+            guard let running = process, running.isRunning else { return }
+            running.terminate()
+            Thread.sleep(forTimeInterval: 2)
+            if let running = process, running.isRunning { kill(running.processIdentifier, SIGKILL) }
         }
+        watcher.name = "keyreeve.deadline"
+        watcher.start()
     }
 
     /// What `keyreeve check` and `simulate` say of a provider file, before it is saved: the same checks CI

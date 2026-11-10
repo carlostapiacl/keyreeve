@@ -131,11 +131,27 @@ Agents connect over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault 
 | `run_with_key` | runs a program you allowed, pinned by its SHA-256, with the real key in one variable |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes, only while you allow it |
+| `list_places`, `propose_places` | see where offered keys live and propose new places, which you approve with your fingerprint |
 | `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
 | `propose_bring` | proposes which keys found to seal; you review it in Bring in and seal with one fingerprint |
 
 Every yes, no and use goes in `~/.keyreeve/audit.jsonl`, with no values. Each line carries the hash of the one before, so
 `keyreeve-vault audit --verify` finds an edit.
+
+## Where each key lives
+
+A key's page says where it lives: "on VPS2 in `/opt/lh/.env` as `OPENAI_API_KEY`, and in Coolify app X". Each place is a key, a
+procedure and its parameters. A procedure is a small script that knows one kind of place: `apply` gets the new value on stdin and
+puts it there, and `check` prints only the SHA-256 of the value in place, or `absent`. It never holds a key, so your own can live in
+git, in `~/.keyreeve/procedures`. Six ship: `ssh-env`, `github-secret`, `vercel-env`, `netlify-env`, `coolify-env` and
+`supabase-secret`.
+
+**Check places** asks each place for its hash and compares it with the vault: same, an older value, another value, or absent. It
+needs no fingerprint and shows no value, so after a rotation you see where the old key is still in use. **Update** puts the current
+value in one place, and a rotation updates them all before the old key is revoked. A place is pinned to its procedure's hash when
+you approve it: a procedure that changed does not run until you approve it again. An agent can find places on its own, such as by
+reading which variables a server's env file names, and propose them with `propose_places`; you review them and approve with one
+fingerprint.
 
 ## Recipes
 

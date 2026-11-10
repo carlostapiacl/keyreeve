@@ -121,9 +121,11 @@ extension AppModel {
         let places = self.places[item.path] ?? KeyPlaces()
         let admin = places.admin.flatMap { name in items.first { $0.path == name } }
         let original = keysFolder?.appendingPathComponent(item.path).path
-        let plan = RotationPlan(
+        var plan = RotationPlan(
             item: item, places: places, admin: admin,
             original: original.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil })
+        plan.place_procedures = plannedProcedures(for: item)
+        plan.procedures_folder = proceduresFolder.path
         run(plan: plan, admin: admin?.path, resume: resume, handedOver: handedOver, binary: binary, vaultTool: vaultTool, done: done)
     }
 

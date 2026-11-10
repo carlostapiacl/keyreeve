@@ -4,7 +4,7 @@ The details the [README](../README.md) leaves out. [Español](reference.es.md)
 
 Contents: [Try it offline](#try-it-offline) · [The Mac app](#the-mac-app) · [The vault](#the-vault-mac) ·
 [Keys and agents](#keys-and-agents) · [From a terminal](#from-a-terminal) · [Providers and recipes](#providers-and-recipes) ·
-[Rotate a key](#rotate-a-key) · [What is missing](#what-is-missing)
+[Where a key lives](#where-a-key-lives) · [Rotate a key](#rotate-a-key) · [What is missing](#what-is-missing)
 
 ## Try it offline
 
@@ -369,6 +369,7 @@ The tools an agent gets:
 | `request_access` | asks you to open a closed key, or to save one for a provider |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes for many files, when you turn it on |
+| `list_places`, `propose_places` | where offered keys live, and new places for you to approve ([below](#where-a-key-lives)) |
 | `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
 | `propose_bring` | proposes which keys found to seal, for you to review in Bring in and seal with one fingerprint |
 
@@ -618,6 +619,62 @@ file that ships with keyreeve can never run a program.
 A secret with no provider, such as a signing key, is marked as internal, and no check is offered. Secrets for your own products go
 the same way: a file of yours, in that folder, never in a repository.
 
+## Where a key lives
+
+**Where it lives**, under a key's **Usage** tab, lists its places, what used it in the last 30 days (program, folder and agent, from
+the usage log) and where Bring in found it. **No place known**, above My keys, shows the secrets with none.
+
+A place is a key's identifier, a procedure, its parameters and a label, kept in `~/.keyreeve/key-places.json` with no value. A
+procedure is a program that updates one kind of place:
+
+- `<procedure> apply --name=value...` gets the new value on stdin and puts it in place. Exit 0 means it is there.
+- `<procedure> check --name=value...` prints one line: the SHA-256 of the value in place, `absent`, or `present` for a place that
+  never shows a value again, such as a GitHub secret. Anything else is an error, and keyreeve never shows it.
+- Each parameter also arrives as `PLACE_<NAME>`. The environment is otherwise clean, plus `KEYREEVE_VAULT`, the `keyreeve-vault`
+  program, for a procedure that calls an API with a token of yours through `keyreeve-vault use`. What a procedure prints when
+  applying, and its stderr, are dropped.
+- The header names it: `# keyreeve-procedure: what it updates` and one `# param name: what it is` per parameter, `(optional)` first
+  for one that can be left out.
+
+| procedure | parameters | how |
+|---|---|---|
+| `ssh-env` | host, file, variable, service?, compose_dir? | edits a dotenv on a server over ssh with one rename, keeping every other line, then restarts the service or `docker compose up -d` |
+| `github-secret` | repo, name, environment? | `gh secret set`, value on stdin. A check says only present or absent |
+| `vercel-env` | folder, variable, environment? | the `vercel` command in a linked folder. A check says only present or absent |
+| `netlify-env` | token_key, account, site, variable, context? | Netlify's API, with a Netlify token of yours through `keyreeve-vault use` |
+| `coolify-env` | token_key, server, app, variable, restart? | Coolify's API, the same way |
+| `supabase-secret` | token_key, project, name | Supabase's API, which lists each secret's SHA-256 |
+
+None of these has run against those services yet. `ssh-env` computes the hash on the server, so the value never comes back. The API
+ones need `jq`, and their token key must be offered to agents for `use` to reach it. Your own go in `~/.keyreeve/procedures`, which can
+be a git repository, as `<name>.sh`. A name that ships cannot be taken. `keyreeve procedures` lists them all with their SHA-256.
+
+```bash
+keyreeve procedures
+keyreeve place check ssh-env --sha256 <hash> --param host=vps2 --param file=/opt/app/.env --param variable=API_KEY
+```
+
+A place is pinned to the SHA-256 of its procedure when you approve it, with your fingerprint, because it receives the real key. The
+engine runs a private copy of the exact bytes it hashed. A procedure that changed shows **Changed, needs approval**, and neither
+**Update** nor a rotation runs it until you approve it again.
+
+**Check places** runs `check` for each place, with no fingerprint, and compares the hash with the SHA-256 of the key in the vault:
+**Same**, **Old value** (an earlier value of this key, such as the one before a rotation), **Different**, **Absent**, or **There,
+cannot compare**. The vault keeps a keyed digest of each value, HMAC-SHA256 of its SHA-256 with a key made from the chip key that
+needs no fingerprint, in `~/.keyreeve/value-digests.json`. It is written whenever a value is sealed, added, replaced or rotated, and
+for a key sealed before, the next time it is opened for any reason, or with **Compare with the vault**. The digest key is made in the
+chip with no prompt and never leaves memory, so without this Mac's chip the file says nothing, and a check says **Not compared yet**.
+Using places makes that chip key once if the vault has none. Each check goes in the usage log with its result, never the hash.
+
+**Update** opens the key with your fingerprint, runs `apply` with it on stdin, and checks the place again. A rotation shows the same
+list before it starts, updates every approved place before the old key is revoked, and leaves out places that wait for approval.
+
+An agent with `list_places` sees the label, procedure, parameters, approval and last check of each place of the keys offered to it,
+and only a count for the rest. It can find places by itself, such as by reading which variables a server's env file names, and propose
+them with `propose_places`, each with a key, procedure, parameters, label and why. It may also write a new procedure in your
+procedures folder. The proposal waits under **Agents**, where you see each place and the full text of any procedure of your folder,
+untick what you do not want, and approve the rest with one fingerprint. Declining keeps nothing.
+
 ## Rotate a key
 
 Open a sealed key in the app. If its provider can rotate, you say where else the key is used and how long the old key should last,
@@ -649,8 +706,9 @@ None of these has run against a real service yet, and the list in Settings shows
 provider, give its file `create` and `revoke`, and `keyreeve simulate` tests it against failures and crashes. The simulator's
 guarantees do not apply to `rotation: single`.
 
-A place can be a file, or a button of yours that receives the new key on stdin. There are [examples](../examples/places) for GitHub
-Actions, Vercel and an env file on a server, which have not been run against those services. A key joined from two fields, such as
+A place can be a file, a button of yours that receives the new key on stdin, or a place a procedure updates
+([above](#where-a-key-lives)). There are [examples](../examples/places) of buttons for GitHub Actions, Vercel and an env file on a
+server, which have not been run against those services. A key joined from two fields, such as
 AWS, cannot rotate yet.
 
 ## What is missing
@@ -660,7 +718,7 @@ AWS, cannot rotate yet.
 - Reading a provider's early answer during an upload. A provider that refuses a large body before reading it gets a 502 back from the proxy
 - Using the vault on Linux and Windows, and a chip-free key for them. The file format already works there
 - Other vaults as storage, such as 1Password or the system keychain
-- A scan that finds where each key is used, and which permissions each key has
+- A scan by keyreeve itself that finds where each key is used, beyond what agents propose, and which permissions each key has
 - Recipes for more providers that can rotate, keys made of two fields, and rotation written as a program of yours
 - A stand-in for roles inside [seisin](https://github.com/carlostapiacl/seisin), so they reach a provider through the proxy and never hold the key
 - One fingerprint for several seisin runs, without letting any other program ride on it

@@ -8,6 +8,8 @@ public struct AgentBridge {
         var entries: [String: (from: Date, until: Date, opened: Data, revision: String?)] = [:]
         /// Keys the person refused to open in this session, so the agent cannot keep asking.
         var refused: Set<String> = []
+        /// This agent's latest search for keys, which its proposal is checked against.
+        var scan: AgentBringing.Scan?
     }
 
     /// Ends everything agents were approved for a while: the app's lock and `revoke` touch this file, and
@@ -104,6 +106,10 @@ public struct AgentBridge {
     let decideNoFingerprint: (AccessRequest) -> Bool
     /// Opens the key with the person's fingerprint and seals its copy to the chip's key that asks nothing.
     let markUnattended: (_ key: String, _ prompt: String) throws -> Void
+    /// Runs `keyreeve bring` with these arguments, always a dry run, and returns its report. Tests answer for it.
+    let scanKeys: (_ arguments: [String]) throws -> Data
+    /// The files keys in keys.toml and the vault came from, to tell which keys found look sealed. Places only.
+    let sealedSources: () -> Set<String>
     let held = Held()
 
     /// What the person answers when told of a request for a key that is not saved yet.
@@ -153,8 +159,12 @@ public struct AgentBridge {
         decideNoFingerprint: @escaping (AccessRequest) -> Bool = { _ in false },
         markUnattended: @escaping (_ key: String, _ prompt: String) throws -> Void = { _, _ in
             throw VaultError("keys cannot be marked here")
-        }
+        },
+        scanKeys: @escaping (_ arguments: [String]) throws -> Data = { _ in throw VaultError("keys cannot be looked for here") },
+        sealedSources: @escaping () -> Set<String> = { [] }
     ) {
+        self.scanKeys = scanKeys
+        self.sealedSources = sealedSources
         self.decideNoFingerprint = decideNoFingerprint
         self.markUnattended = markUnattended
         self.revision = revision
@@ -354,6 +364,10 @@ public struct AgentBridge {
             return String(decoding: page ?? list, as: UTF8.self)
         case "propose":
             return try propose(arguments)
+        case "find_keys":
+            return try findKeys(arguments)
+        case "propose_bring":
+            return try proposeBring(arguments)
         default:
             throw VaultError("no such tool")
         }
@@ -610,6 +624,43 @@ public struct AgentBridge {
                     "changes": ["type": "array", "items": ["type": "object"]],
                 ],
                 "required": ["reason", "changes"],
+            ],
+        ],
+        [
+            "name": "find_keys",
+            "description":
+                "Find keys on this Mac, read-only. where: everywhere (the whole home folder: .env files and files that hold keys, within a time budget), places (where tools keep keys, plus .env files under projects), or folders (only those, as everywhere). Lists each key or login by number n, with its file, the names in it, its provider (strong evidence) or a guess, duplicates, and whether it looks sealed already. Never a value, and nothing is sent to a provider. Configuration, documents and public keys are only counted. If unfinished comes back, call again with where = folders and those folders. Then call propose_bring.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "where": ["type": "string", "enum": ["everywhere", "places", "folders"], "description": "places if left out"],
+                    "folders": ["type": "array", "items": ["type": "string"], "description": "With where = folders: full paths or ~/paths"],
+                    "projects": ["type": "array", "items": ["type": "string"], "description": "With where = places: folders to search for .env files"],
+                    "offset": ["type": "integer", "description": "Where the page starts; next_offset says. Pages reuse the same search"],
+                    "limit": ["type": "integer", "description": "At most 300 keys a page, 100 if left out"],
+                ],
+            ],
+        ],
+        [
+            "name": "propose_bring",
+            "description":
+                "Propose which keys from your last find_keys to seal in the vault. Nothing is sealed: the proposal waits in Keyreeve, the person reviews and changes it, and seals with one fingerprint. Sealed keys get identifiers but are not offered to agents, so list_keys does not show them until the person offers them.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "reason": ["type": "string", "description": "What this does, in a sentence, shown to the person"],
+                    "seal": [
+                        "type": "array",
+                        "description": "Keys to seal: {\"candidates\": [n], \"id\": optional identifier (one candidate only), \"provider\": optional id from known_providers, \"description\": optional, \"tags\": optional list}",
+                        "items": ["type": "object"],
+                    ],
+                    "skip": [
+                        "type": "array",
+                        "description": "Keys not to seal: {\"candidates\": [n], \"reason\": why}",
+                        "items": ["type": "object"],
+                    ],
+                ],
+                "required": ["reason"],
             ],
         ],
         [

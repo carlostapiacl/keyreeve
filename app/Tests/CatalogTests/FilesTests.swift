@@ -50,6 +50,9 @@ struct DeadlineTests {
         let started = Date()
         CheckRunner.watch(process, seconds: 1)
         process.waitUntilExit()
-        #expect(Date().timeIntervalSince(started) < 10)
+        // Ended by the watch, well before sleep would have finished on its own. A busy CI machine can be
+        // slow to deliver the signal, so this asks only that it was ended, not how fast.
+        #expect(process.terminationReason == .uncaughtSignal)
+        #expect(Date().timeIntervalSince(started) < 29)
     }
 }

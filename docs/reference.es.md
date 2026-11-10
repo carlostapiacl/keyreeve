@@ -45,7 +45,7 @@ Cuando ya hay una copia en /Applications, cada compilación la actualiza tambié
 vuelve a abrir después, así ninguna copia antigua sigue corriendo junto a los archivos que escribe la nueva. La compilación no está
 notarizada, así que macOS te avisa la primera vez.
 
-La primera vez, elige tu carpeta de claves, o **Empezar sin carpeta y pegar una clave** para partir con una bóveda vacía. La app se
+La primera vez, aprieta **Trae tus claves** ([más abajo](#traer)), elige tu carpeta de claves, o **Empezar sin carpeta y pegar una clave** para partir con una bóveda vacía. La app se
 abre con tu huella o con la contraseña de tu Mac, o sin ninguna de las dos si lo desactivas en Ajustes, ya que la lista no guarda
 ningún valor. Este bloqueo cubre la ventana. Las claves las protege [la bóveda](#la-bóveda-mac).
 
@@ -79,6 +79,25 @@ redacta archivos de proveedor en **Proveedores** y, en **Ordenar claves**, propo
 no puede probar. Recibe nombres de archivo, etiquetas y nombres de campo, nunca un valor, y la app lo dice cada vez. keyreeve nunca le
 entrega una clave, pero Codex, OpenCode o un comando tuyo pueden leer archivos de tu Mac mientras trabajan. Claude Code queda limitado
 a buscar en la web.
+
+### Traer
+
+**Trae tus claves** (en la primera pantalla, en **Seguridad y respaldo**, o en Archivo > Traer claves…) busca claves y sella las que
+elijas, en una sola pantalla:
+
+- **Dónde buscar.** *Lugares típicos de este Mac*: `~/.aws`, GitHub CLI, gcloud, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, Docker, las
+  líneas `export` de los archivos de inicio de tu shell y tus llaves SSH (solo se lee su primera línea), más los `.env` de las
+  carpetas de proyectos que marques. O *Elegir una carpeta*. Se salta `node_modules`, `.git`, compilaciones y cachés, y no necesita
+  Acceso total al disco.
+- **Qué hace.** Separa cada archivo en piezas, dice qué es cada una (clave, configuración, usuario y clave, documento o llave
+  pública), junta las partes de una clave (client id y secreto, las tres de Google, una access key con su secreto y el endpoint como
+  servidor), une la misma clave encontrada en dos lugares y prueba cada clave con los proveedores que podrían ser suyos. El que
+  responde es su proveedor.
+- **Revisar.** Los valores siguen tapados. Las que funcionan quedan elegidas, las muertas no, la configuración y las llaves públicas
+  nunca se sellan, y tú decides solo las dudosas.
+- **Sellar.** Una huella. Cada clave queda con identificador y sin ofrecer a los agentes. Con un clic puedes ofrecer las que ya usa
+  el `.env` de un proyecto. Los archivos originales nunca se mueven, cambian ni borran; de dónde vino cada clave queda guardado
+  con su copia.
 
 ### Agregar una clave
 
@@ -384,7 +403,17 @@ El comando `keyreeve` funciona en cualquier sistema con Rust, y no necesita ni l
 
 ### Mira lo que tienes
 
-Si tus claves viven en una carpeta de archivos de texto, parte aquí. Ninguno de los dos comandos cambia un archivo.
+`keyreeve bring` es lo que corre Traer en la app. Muestra cada clave que encuentra, qué es, su proveedor y si funciona, y nunca un
+valor ni un cambio a un archivo:
+
+```bash
+keyreeve bring --places --projects ~/code --dry-run   # busca, no prueba nada
+keyreeve bring --folder ~/mis-claves                  # busca y prueba cada clave con una consulta de solo lectura
+```
+
+Con `--json` sale el informe que lee la app: rutas, nombres, líneas y dónde está cada valor en su archivo.
+
+Si tus claves viven en una carpeta de archivos de texto, también puedes partir aquí. Ninguno de los dos comandos cambia un archivo.
 
 ```bash
 keyreeve inventory ~/my-keys --out ~/.keyreeve/inventory.json

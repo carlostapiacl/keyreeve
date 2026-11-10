@@ -42,7 +42,9 @@ El comando `keyreeve` solo, sin la app, también corre en Linux: `cargo install 
 
 ## Los primeros cinco minutos
 
-1. **Abre la app** y elige tu carpeta de claves, o **Empezar sin carpeta y pegar una clave**.
+1. **Abre la app** y aprieta **Trae tus claves**. Busca donde las herramientas guardan claves en este Mac (y en las carpetas
+   de proyectos que marques, para los `.env`) o en una carpeta que elijas, prueba cada clave y te muestra lo que encontró con
+   los valores tapados. Tú decides solo las dudosas y sellas con tu huella una vez. Tus archivos quedan donde están.
 2. **Crea la bóveda.** En **Seguridad y respaldo**, aprieta **Crear mi bóveda**. Anota la clave de recuperación que muestra
    una sola vez, lejos de este Mac.
 3. **Sella una clave.** Copia una clave desde tu proveedor y aprieta **+** (Agregar clave). keyreeve reconoce el

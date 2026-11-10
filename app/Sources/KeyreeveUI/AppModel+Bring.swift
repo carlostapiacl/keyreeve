@@ -14,9 +14,17 @@ public struct BringState {
         public var on: Bool
     }
 
+    public enum Place: Equatable { case usual, everywhere, folder }
+
     public var step = Step.choose
-    /// Usual places on this Mac, or one folder.
-    public var usualPlaces = true
+    /// Usual places on this Mac, the whole home folder, or one folder.
+    public var place = Place.usual
+    /// With `everywhere`, only these folders: those an agent named, or those a search did not finish.
+    public var under: [URL] = []
+    public var usualPlaces: Bool {
+        get { place == .usual }
+        set { place = newValue ? .usual : .folder }
+    }
     /// Folders to search for `.env` files. None is searched until the person turns it on.
     public var projects: [Project] = []
     public var folder: URL?
@@ -42,8 +50,11 @@ public struct BringState {
     }
 
     public var scope: BringScope? {
-        if usualPlaces { return .places(projects: projects.filter(\.on).map(\.url)) }
-        return folder.map(BringScope.folder)
+        switch place {
+        case .usual: return .places(projects: projects.filter(\.on).map(\.url))
+        case .everywhere: return .everywhere(under: under)
+        case .folder: return folder.map(BringScope.folder)
+        }
     }
 
     func candidates(_ group: BringCandidate.Group) -> [BringCandidate] {
@@ -150,8 +161,13 @@ extension AppModel {
         }
         var state = BringState()
         state.projects = proposal.scope.projects.map { .init(url: URL(fileURLWithPath: $0), on: true) }
-        state.usualPlaces = proposal.scope.folder == nil
-        state.folder = proposal.scope.folder.map { URL(fileURLWithPath: $0) }
+        switch proposal.scope.place {
+        case .places: state.place = .usual
+        case .everywhere: state.place = .everywhere
+        case .folders:
+            state.place = .everywhere
+            state.under = proposal.scope.folders.map { URL(fileURLWithPath: $0) }
+        }
         state.request = request
         state.agentProposal = proposal
         bringing = state
@@ -178,6 +194,14 @@ extension AppModel {
         }
         let missed = proposal.items.indices.filter { !used.contains($0) }.map { proposal.items[$0] }
         return (choices, missed)
+    }
+
+    /// Goes on in the folders a search of everywhere did not finish, keeping the agent's proposal if there is one.
+    public func lookInUnfinished() {
+        guard let unfinished = bringing?.report?.unfinished, !unfinished.isEmpty else { return }
+        bringing?.place = .everywhere
+        bringing?.under = unfinished.map { URL(fileURLWithPath: $0) }
+        lookForKeys()
     }
 
     public func decide(_ id: Int, seal: Bool) { bringing?.decisions[id] = seal }

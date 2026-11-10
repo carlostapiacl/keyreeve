@@ -825,6 +825,13 @@ public let spanish: [String: String] = [
     "public": "pública",
     "Each has an identifier, and no agent sees it until you offer it. Your files stay as they were.": "Cada una tiene un identificador y ningún agente la ve hasta que la ofrezcas. Tus archivos quedan como estaban.",
     "Offer the %d your scripts already use": "Ofrecer las %d que ya usan tus scripts",
+    "Everywhere in my home folder": "En toda mi carpeta de inicio",
+    "Your whole home folder: the usual places, .env files, and files whose name or start says they hold a key. Other files are not opened.": "Toda tu carpeta de inicio: los lugares típicos, los archivos .env y los archivos cuyo nombre o inicio dice que tienen una clave. Los demás archivos no se abren.",
+    "Only in these folders, as everywhere:": "Solo en estas carpetas, igual que en todas partes:",
+    "Skips Library, the Trash, photo and music libraries, iCloud Drive, apps, dependencies, builds and big files. It stops after two minutes and says which folders it did not finish.": "Se salta Librería, la Papelera, las bibliotecas de fotos y música, iCloud Drive, las apps, las dependencias, las compilaciones y los archivos grandes. Se detiene a los dos minutos y te dice qué carpetas no terminó.",
+    "macOS may ask for permission before Keyreeve reads Desktop, Documents and Downloads.": "macOS puede pedirte permiso antes de que Keyreeve lea Escritorio, Documentos y Descargas.",
+    "The search stopped before finishing %d folders: %@": "La búsqueda se detuvo antes de terminar %d carpetas: %@",
+    "Look in those": "Buscar en esas",
     // An agent proposing keys to bring in.
     "That proposal could not be read. Decline it, and ask the agent again.": "No se pudo leer esa propuesta. Recházala y pídesela de nuevo al agente.",
     "%@ proposes bringing in %d keys": "%@ propone traer %d claves",

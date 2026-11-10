@@ -629,13 +629,13 @@ public struct AgentBridge {
         [
             "name": "find_keys",
             "description":
-                "Find keys on this Mac, read-only: the usual places tools keep keys, .env files under project folders, or one folder. Lists each key or login by number n, with its file, the names in it, its provider (strong evidence) or a guess, duplicates, and whether it looks sealed already. Never a value, and nothing is sent to a provider. Configuration, documents and public keys are only counted. Then call propose_bring.",
+                "Find keys on this Mac, read-only. where: everywhere (the whole home folder: .env files and files that hold keys, within a time budget), places (where tools keep keys, plus .env files under projects), or folders (only those, as everywhere). Lists each key or login by number n, with its file, the names in it, its provider (strong evidence) or a guess, duplicates, and whether it looks sealed already. Never a value, and nothing is sent to a provider. Configuration, documents and public keys are only counted. If unfinished comes back, call again with where = folders and those folders. Then call propose_bring.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "places": ["type": "boolean", "description": "The usual places on this Mac (~/.aws, gh, gcloud, .netrc, npm, Docker, shell files, SSH). true if left out"],
-                    "projects": ["type": "array", "items": ["type": "string"], "description": "Folders to search for .env files, with places"],
-                    "folder": ["type": "string", "description": "Instead of places: every file under this one folder"],
+                    "where": ["type": "string", "enum": ["everywhere", "places", "folders"], "description": "places if left out"],
+                    "folders": ["type": "array", "items": ["type": "string"], "description": "With where = folders: full paths or ~/paths"],
+                    "projects": ["type": "array", "items": ["type": "string"], "description": "With where = places: folders to search for .env files"],
                     "offset": ["type": "integer", "description": "Where the page starts; next_offset says. Pages reuse the same search"],
                     "limit": ["type": "integer", "description": "At most 300 keys a page, 100 if left out"],
                 ],

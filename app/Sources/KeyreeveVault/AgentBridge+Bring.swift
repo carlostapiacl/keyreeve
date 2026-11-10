@@ -19,9 +19,17 @@ extension AgentBridge {
         } else {
             scan = try AgentBringing.read(try scanKeys(scope.arguments), scope: scope)
             held.scan = scan
-            let place = scope.folder.map { "folder \($0)" } ?? "places" + (scope.projects.isEmpty ? "" : " and \(scope.projects.count) project folders")
+            let place: String
+            switch scope.place {
+            case .everywhere: place = "everywhere"
+            case .folders: place = "\(scope.folders.count) folders"
+            case .places: place = "places" + (scope.projects.isEmpty ? "" : " and \(scope.projects.count) project folders")
+            }
             let secrets = scan.found.filter(\.isSecret).count
-            log("scanned", "\(secrets) keys", "\(place): \(scan.files) files, \(scan.found.count - secrets) other pieces", nil)
+            log(
+                "scanned", "\(secrets) keys",
+                "\(place): \(scan.files) files, \(scan.found.count - secrets) other pieces"
+                    + (scan.unfinished.isEmpty ? "" : ", \(scan.unfinished.count) folders not finished"), nil)
         }
         return AgentBringing.report(
             scan, sealed: sealedSources(), known: Array(knownProviders(scan)), offset: offset, limit: limit)

@@ -87,8 +87,12 @@ elijas, en una sola pantalla:
 
 - **Dónde buscar.** *Lugares típicos de este Mac*: `~/.aws`, GitHub CLI, gcloud, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, Docker, las
   líneas `export` de los archivos de inicio de tu shell y tus llaves SSH (solo se lee su primera línea), más los `.env` de las
-  carpetas de proyectos que marques. O *Elegir una carpeta*. Se salta `node_modules`, `.git`, compilaciones y cachés, y no necesita
-  Acceso total al disco.
+  carpetas de proyectos que marques. *En toda mi carpeta de inicio*: toda, buscando archivos `.env` y archivos cuyo nombre o inicio
+  dice que tienen una clave (`.pem`, `.p12`, `.key`, notas llamadas `api-key.txt`, un `.txt` o `.json` que parte con el prefijo de un
+  proveedor); los demás archivos no se abren. Se salta Librería, la Papelera, las bibliotecas de fotos y música, iCloud Drive, las
+  apps y los archivos grandes, se detiene a los dos minutos y te dice qué carpetas no terminó, con **Buscar en esas** para seguir.
+  macOS puede pedirte permiso antes de leer Escritorio, Documentos y Descargas. O *Elegir una carpeta*. Se salta `node_modules`,
+  `.git`, compilaciones y cachés, y no necesita Acceso total al disco.
 - **Qué hace.** Separa cada archivo en piezas, dice qué es cada una (clave, configuración, usuario y clave, documento o llave
   pública), junta las partes de una clave (client id y secreto, las tres de Google, una access key con su secreto y el endpoint como
   servidor) y une la misma clave encontrada en dos lugares. Una clave solo se prueba con el único proveedor que indica su
@@ -314,7 +318,7 @@ Las herramientas que recibe un agente:
 | `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios para muchos archivos, cuando lo activas |
-| `find_keys` | busca claves en este Mac o en una carpeta, por nombre y lugar, sin valores y sin probar nada con el proveedor |
+| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
 | `propose_bring` | propone cuáles sellar de las encontradas, para que la revises en Traer y selles con una sola huella |
 
 `use_key` funciona con cualquier comando, incluido `curl`. Una clave SSH inicia sesión a través de keyreeve. Una clave sin proveedor
@@ -370,7 +374,9 @@ después de que confirmas y prueba la clave ahí.
 ### Cuando un agente trae tus claves
 
 Pídele a un agente "busca todas mis claves y sella las que corresponda". Con `find_keys` corre lo mismo que [Traer](#traer), sin
-probar nada: los lugares típicos de este Mac, los `.env` de las carpetas de proyectos que indique, o una carpeta. Recibe cada clave
+probar nada. `where` es `everywhere` (toda la carpeta de inicio), `places` (los lugares típicos, y los `.env` de las carpetas
+`projects` que indique) o `folders` (solo esas, igual que en todas partes). Si a `everywhere` se le acaba el tiempo, `unfinished`
+nombra las carpetas que faltan y el agente sigue con `where: "folders"`. Recibe cada clave
 y cada usuario con clave por número, con su archivo y línea, los nombres que tiene, su proveedor (solo con evidencia fuerte) o una
 sugerencia, si apareció dos veces y si parece ya sellada, según el lugar y nunca según el valor. La configuración, los documentos y
 las llaves públicas solo se cuentan. Ningún valor y ninguna consulta a un proveedor.
@@ -427,6 +433,8 @@ valor ni un cambio a un archivo. Una clave solo se envía al único proveedor qu
 ```bash
 keyreeve bring --places --projects ~/code --dry-run   # busca, no prueba nada
 keyreeve bring --folder ~/mis-claves                  # busca y prueba cada clave con una consulta de solo lectura
+keyreeve bring --everywhere --dry-run                 # toda la carpeta de inicio, en dos minutos como máximo
+keyreeve bring --everywhere --under ~/code --dry-run  # sigue en una carpeta que no terminó
 ```
 
 Con `--json` sale el informe que lee la app: rutas, nombres, líneas y dónde está cada valor en su archivo.

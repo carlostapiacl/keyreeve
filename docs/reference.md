@@ -85,7 +85,11 @@ choose, in one screen:
 
 - **Where to look.** *Usual places on this Mac*: `~/.aws`, the GitHub CLI, gcloud, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, Docker,
   the `export` lines of your shell's startup files and your SSH keys (only their first line is read), plus `.env` files under the
-  project folders you turn on. Or *Choose a folder*. It skips `node_modules`, `.git`, builds and caches, and needs no Full Disk
+  project folders you turn on. *Everywhere in my home folder*: all of it, for `.env` files and files whose name or start says
+  they hold a key (`.pem`, `.p12`, `.key`, notes called `api-key.txt`, a `.txt` or `.json` starting with a provider's prefix);
+  other files are not opened. It skips Library, the Trash, photo and music libraries, iCloud Drive, apps and big files, stops after
+  two minutes and names the folders it did not finish, with **Look in those** to go on. macOS may ask before it reads Desktop,
+  Documents and Downloads. Or *Choose a folder*. It skips `node_modules`, `.git`, builds and caches, and needs no Full Disk
   Access.
 - **What it does.** Splits each file into pieces, says what each is (a key, configuration, a login, a document or a public key),
   puts the parts of one key together (client id and secret, Google's three, an access key and its secret with the endpoint as the
@@ -303,7 +307,7 @@ The tools an agent gets:
 | `request_access` | asks you to open a closed key, or to save one for a provider |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes for many files, when you turn it on |
-| `find_keys` | finds keys on this Mac or in a folder, by name and place, with no value and no provider check |
+| `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
 | `propose_bring` | proposes which keys found to seal, for you to review in Bring in and seal with one fingerprint |
 
 `use_key` works with any command, including `curl`. An SSH key signs in through keyreeve. A key with no provider can only go to a
@@ -356,7 +360,9 @@ confirm and checks the key there.
 ### When an agent brings keys in
 
 Ask an agent to "find all my keys and seal the ones that should be". With `find_keys` it runs what [Bring in](#bring-in) runs, as a
-dry run: the usual places on this Mac, `.env` files under the project folders it names, or one folder. It gets each key and login by
+dry run. `where` is `everywhere` (the whole home folder), `places` (the usual places, and `.env` files under the `projects` it
+names) or `folders` (only those, as everywhere). When everywhere runs out of time, `unfinished` names the folders left, and the agent
+goes on with `where: "folders"`. It gets each key and login by
 number, with its file and line, the names in it, its provider (only from strong evidence) or a guess, whether it was found twice and
 whether it looks sealed already, judged by place and never by value. Configuration, documents and public keys are only counted. No
 value, and no request to any provider.
@@ -411,6 +417,8 @@ and never a value or a change to a file. A key is only sent to the one provider 
 ```bash
 keyreeve bring --places --projects ~/code --dry-run   # look, check nothing
 keyreeve bring --folder ~/my-keys                     # look and check each key with one read-only request
+keyreeve bring --everywhere --dry-run                 # the whole home folder, within two minutes
+keyreeve bring --everywhere --under ~/code --dry-run  # go on in a folder it did not finish
 ```
 
 Add `--json` for the report the app reads: paths, names, lines and where each value stands in its file.

@@ -46,15 +46,39 @@ private struct ChooseWhere: View {
             Text(T("Keyreeve only reads. Nothing is copied, moved or changed, and no value is shown."))
                 .font(Theme.body).foregroundStyle(Theme.muted)
             Picker("", selection: Binding(
-                get: { state.usualPlaces },
-                set: { model.bringing?.usualPlaces = $0 })
+                get: { state.place },
+                set: { place in
+                    model.bringing?.place = place
+                    model.bringing?.under = []
+                })
             ) {
-                Text(T("Usual places on this Mac")).tag(true)
-                Text(T("Choose a folder")).tag(false)
+                Text(T("Usual places on this Mac")).tag(BringState.Place.usual)
+                Text(T("Everywhere in my home folder")).tag(BringState.Place.everywhere)
+                Text(T("Choose a folder")).tag(BringState.Place.folder)
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()
-            if state.usualPlaces {
+            if state.place == .everywhere {
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if state.under.isEmpty {
+                            Text(T("Your whole home folder: the usual places, .env files, and files whose name or start says they hold a key. Other files are not opened."))
+                                .font(Theme.body).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text(T("Only in these folders, as everywhere:")).font(Theme.body).foregroundStyle(Theme.text)
+                            ForEach(state.under, id: \.self) { folder in
+                                Text(shortPath(folder.path)).font(Theme.caption).foregroundStyle(Theme.text)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                        }
+                        Text(T("Skips Library, the Trash, photo and music libraries, iCloud Drive, apps, dependencies, builds and big files. It stops after two minutes and says which folders it did not finish."))
+                            .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                        Label(T("macOS may ask for permission before Keyreeve reads Desktop, Documents and Downloads."), systemImage: "lock.shield")
+                            .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(14)
+                }
+            } else if state.usualPlaces {
                 Card {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(T("Where tools keep keys: AWS, GitHub CLI, gcloud, .netrc, npm, PyPI, Docker, your shell's exports and your SSH keys."))
@@ -123,6 +147,16 @@ private struct BringReview: View {
             Text(T("Values stay hidden. Decide only the doubtful ones; the rest is already chosen."))
                 .font(Theme.body).foregroundStyle(Theme.muted)
             if let request = state.request { agentBanner(request) }
+            if let unfinished = state.report?.unfinished, !unfinished.isEmpty {
+                HStack(alignment: .firstTextBaseline) {
+                    Label(T("The search stopped before finishing %d folders: %@", unfinished.count,
+                            unfinished.prefix(4).map(shortPath).joined(separator: ", ") + (unfinished.count > 4 ? "…" : "")),
+                          systemImage: "clock.badge.exclamationmark")
+                        .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button(T("Look in those"), action: model.lookInUnfinished).buttonStyle(KRButtonStyle())
+                }
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     group(T("Work"), icon: "checkmark.circle.fill", tone: .good, rows: state.candidates(.works), toggles: true)

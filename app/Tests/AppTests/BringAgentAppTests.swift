@@ -51,7 +51,7 @@ struct BringAgentAppTests {
             requests: { AccessRequests.read(from: requests) }, addRequest: { try AccessRequests.append($0, to: requests) },
             saveProposal: { try AgentSorting.save($1, id: $0, home: root) },
             scanKeys: { _ in world.report })
-        let found = try call(bridge, "find_keys", ["folder": root.path])
+        let found = try call(bridge, "find_keys", ["where": "folders", "folders": [root.path]])
         #expect(!found.error && !found.text.contains("CANARY"), "\(found.text)")
         let answer = try call(bridge, "propose_bring", ["reason": "bring in the app's keys", "seal": seal, "skip": skip])
         #expect(!answer.error, "\(answer.text)")
@@ -109,7 +109,9 @@ struct BringAgentAppTests {
         let model = model(root, sensor: FingerTests.Sensor())
         model.reviewBringProposal(request)
         #expect(model.bringing?.request == request)
-        #expect(model.bringing?.folder?.path == root.path && model.bringing?.usualPlaces == false)
+        #expect(model.bringing?.place == .everywhere)
+        #expect(model.bringing?.under.map(\.path) == [URL(fileURLWithPath: root.path).standardizedFileURL.path])
+        #expect(model.bringing?.scope.map(\.arguments)?.first == "--everywhere")
         // The app looks again with checks, as for the person; here the search answers at once.
         model.showBrought(.success(report))
         let state = try #require(model.bringing)
@@ -119,6 +121,20 @@ struct BringAgentAppTests {
         #expect(state.chosen.map(\.id) == [1])
         model.decide(2, seal: true)
         #expect(model.bringing?.chosen.map(\.id) == [1, 2])
+    }
+
+    @Test func foldersASearchDidNotFinishCanBeSearchedNext() throws {
+        let (root, _, report) = try setUp()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = model(root, sensor: FingerTests.Sensor())
+        model.startBringIn()
+        model.bringing?.place = .everywhere
+        #expect(model.bringing?.scope == .everywhere(under: []))
+        var stopped = report
+        stopped.unfinished = ["/h/code", "/h/Documents"]
+        model.showBrought(.success(stopped))
+        model.lookInUnfinished()
+        #expect(model.bringing?.scope == .everywhere(under: [URL(fileURLWithPath: "/h/code"), URL(fileURLWithPath: "/h/Documents")]))
     }
 
     @Test func anAgentsProposalStillNeedsThePersonsFinger() async throws {

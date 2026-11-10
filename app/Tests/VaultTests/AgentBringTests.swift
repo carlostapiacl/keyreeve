@@ -68,7 +68,7 @@ struct AgentBringTests {
     @Test func findKeysListsKeysByNumberAndNeverAValue() throws {
         let world = World()
         world.sealed = ["/h/.zshrc"]
-        let answer = try call(bridge(world), "find_keys", ["places": true, "projects": [NSTemporaryDirectory()]])
+        let answer = try call(bridge(world), "find_keys", ["where": "places", "projects": [NSTemporaryDirectory()]])
         #expect(!answer.error)
         #expect(!answer.text.contains("CANARY"), "\(answer.text)")
         let object = try #require(try JSONSerialization.jsonObject(with: Data(answer.text.utf8)) as? [String: Any])
@@ -105,13 +105,34 @@ struct AgentBringTests {
     @Test func findKeysTakesFullPathsToFoldersOnly() throws {
         let world = World()
         let bridge = bridge(world)
-        #expect(try call(bridge, "find_keys", ["folder": "relative/path"]).error)
-        #expect(try call(bridge, "find_keys", ["folder": "/no/such/folder/here"]).error)
-        #expect(try call(bridge, "find_keys", ["folder": NSTemporaryDirectory(), "projects": [NSTemporaryDirectory()]]).error)
-        #expect(try call(bridge, "find_keys", ["places": false]).error)
+        let temp = NSTemporaryDirectory()
+        #expect(try call(bridge, "find_keys", ["where": "folders", "folders": ["relative/path"]]).error)
+        #expect(try call(bridge, "find_keys", ["where": "folders", "folders": ["/no/such/folder/here"]]).error)
+        #expect(try call(bridge, "find_keys", ["where": "folders"]).error)
+        #expect(try call(bridge, "find_keys", ["where": "folders", "folders": [temp], "projects": [temp]]).error)
+        #expect(try call(bridge, "find_keys", ["where": "everywhere", "folders": [temp]]).error)
+        #expect(try call(bridge, "find_keys", ["where": "places", "folders": [temp]]).error)
+        #expect(try call(bridge, "find_keys", ["where": "somewhere"]).error)
         #expect(world.scans.isEmpty)
-        #expect(!(try call(bridge, "find_keys", ["folder": NSTemporaryDirectory()]).error))
-        #expect(world.scans.last?.contains("--folder") == true && world.scans.last?.contains("--places") == false)
+        #expect(!(try call(bridge, "find_keys", ["where": "folders", "folders": [temp, "~"]]).error))
+        let standard = URL(fileURLWithPath: temp).standardizedFileURL.path
+        #expect(world.scans.last == ["bring", "--everywhere", "--under", standard, "--under", NSHomeDirectory(), "--dry-run", "--json"])
+        #expect(!(try call(bridge, "find_keys", ["where": "everywhere"]).error))
+        #expect(world.scans.last == ["bring", "--everywhere", "--dry-run", "--json"])
+    }
+
+    @Test func aSearchThatRanOutOfTimeSaysWhereToGoOn() throws {
+        let world = World()
+        var report = try #require(try JSONSerialization.jsonObject(with: world.report) as? [String: Any])
+        report["unfinished"] = ["/h/code", "/h/Documents"]
+        world.report = try JSONSerialization.data(withJSONObject: report)
+        let answer = try call(bridge(world), "find_keys", ["where": "everywhere"])
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(answer.text.utf8)) as? [String: Any])
+        #expect(object["unfinished"] as? [String] == ["/h/code", "/h/Documents"])
+        #expect((object["budget"] as? String)?.contains("where = folders") == true)
+        #expect(object["where"] as? String == "everywhere")
+        #expect(world.logged.last?.detail.contains("2 folders not finished") == true)
+        #expect(!answer.text.contains("CANARY"))
     }
 
     @Test func aPausedKeyreeveFindsNothing() throws {
@@ -159,7 +180,7 @@ struct AgentBringTests {
         let asked = try #require(world.entries.first)
         #expect(asked.kind == AgentBringing.kind && asked.event == .asked && asked.agent == "claude")
         let proposal = try #require(world.saved[asked.id].flatMap(AgentBringing.decode))
-        #expect(proposal.scope == AgentBringing.Scope(places: true, projects: [], folder: nil))
+        #expect(proposal.scope == AgentBringing.Scope(place: .places))
         #expect(proposal.items.map(\.candidate) == [1, 2])
         #expect(proposal.items[0].seal && proposal.items[0].id == "openai-app" && proposal.items[0].tags == ["app"])
         #expect(proposal.items[0].origins.count == 2, "a key found twice is found again by either place")
@@ -213,7 +234,7 @@ struct AgentBringTests {
             offered: { [] }, requests: { world.entries }, addRequest: { world.entries.append($0) },
             saveProposal: { world.saved[$0] = $1 },
             scanKeys: { try AgentBringing.runEngine(binary: engine, arguments: $0, environment: environment) })
-        let answer = try call(bridge, "find_keys", ["folder": folder.path])
+        let answer = try call(bridge, "find_keys", ["where": "folders", "folders": [folder.path]])
         #expect(!answer.error, "\(answer.text)")
         #expect(!answer.text.contains("CANARY"), "\(answer.text)")
         #expect(answer.text.contains("OPENAI_API_KEY") && answer.text.contains("GITHUB_TOKEN"))

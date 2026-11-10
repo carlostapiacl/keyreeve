@@ -40,6 +40,7 @@ fn setup() -> Setup<'static> {
         known: sort::tests::test_known(),
         host_approved: &|_, _| false,
         avoid: Vec::new(),
+        budget: Budget::EVERYWHERE,
     }
 }
 
@@ -656,4 +657,158 @@ fn a_folder_to_avoid_is_never_read() {
     let report = bring_with(&scope, &setup, None);
     assert_eq!(report.candidates.len(), 1);
     assert!(report.candidates[0].origins[0].path.ends_with("app/.env"));
+}
+
+fn paths(report: &Report, root: &Path) -> Vec<String> {
+    let mut found: Vec<String> = report
+        .candidates
+        .iter()
+        .flat_map(|c| c.origins.iter())
+        .map(|o| {
+            Path::new(&o.path)
+                .strip_prefix(root)
+                .unwrap()
+                .display()
+                .to_string()
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+#[test]
+fn everywhere_walks_the_home_folder_for_key_files_and_skips_what_holds_none() {
+    let home = Temp::new("everywhere");
+    let key = "API_KEY=sk-proj-CANARYeverywhere000000000\n";
+    home.write(
+        ".aws/credentials",
+        "[default]\naws_access_key_id = AKIACANARY0000000009\naws_secret_access_key = CANARYawsSecret00000000000000000000009\n",
+    );
+    home.write("code/app/.env", key);
+    home.write("code/app/.env.example", key);
+    home.write(
+        ".config/tool/credentials.json",
+        r#"{"token":"ghp_CANARYconfig00000000000000000000"}"#,
+    );
+    home.write("notes/api-key.txt", "CANARYnamedValue000000000000aB1\n");
+    home.write(
+        "notes/found.txt",
+        "an old one: ghp_CANARYsniffed000000000000000000000\n",
+    );
+    home.write(
+        "notes/todo.txt",
+        "buy milk, and nothing that looks like a key\n",
+    );
+    home.write(
+        "notes/deploy.pem",
+        "-----BEGIN PRIVATE KEY-----\nCANARYpem\n-----END PRIVATE KEY-----\n",
+    );
+    home.write("notes/talk.key", "PK\u{3}\u{4}CANARYkeynote");
+    home.write("notes/photo.jpg", "CANARYjpg");
+    home.write(
+        "notes/secret.json",
+        &format!("\"{}\"", "x".repeat(300 * 1024)),
+    );
+    // Each of these is skipped, so its key never shows.
+    for skipped in [
+        "code/app/node_modules/dep/.env",
+        "code/app/.git/.env",
+        "code/app/target/.env",
+        "code/app/.build/.env",
+        "code/app/.venv/.env",
+        ".cache/tool/.env",
+        ".Trash/old/.env",
+        "Library/Application Support/x/.env",
+        "Documents/Mobile Documents/x/.env",
+        "Pictures/Photos Library.photoslibrary/.env",
+        "Tools.app/Contents/.env",
+        "keyreeve/.env",
+    ] {
+        home.write(skipped, "SKIPPED_KEY=sk-proj-CANARYskipped00000000000\n");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(home.0.join("code"), home.0.join("link")).unwrap();
+    let setup = Setup {
+        avoid: vec![home.0.join("keyreeve")],
+        ..setup()
+    };
+    let scope = Scope::Everywhere {
+        home: home.0.clone(),
+        under: Vec::new(),
+    };
+    let report = bring_with(&scope, &setup, None);
+    assert_eq!(report.scope, "everywhere");
+    assert_eq!(
+        paths(&report, &home.0),
+        [
+            ".aws/credentials",
+            ".config/tool/credentials.json",
+            "code/app/.env",
+            "notes/api-key.txt",
+            "notes/deploy.pem",
+            "notes/found.txt",
+        ]
+    );
+    assert_eq!(report.skipped.examples, 1);
+    assert_eq!(report.skipped.too_large, 1);
+    assert!(report.unfinished.is_empty());
+    assert!(!report.skipped.stopped_early);
+    assert_no_value(&report);
+}
+
+#[test]
+fn a_spent_budget_names_the_folders_not_finished_and_they_can_be_searched_alone() {
+    let home = Temp::new("budget");
+    for n in 0..20 {
+        home.write(&format!("a/{n:02}.txt"), "nothing\n");
+    }
+    home.write("b/.env", "API_KEY=sk-proj-CANARYbudgetb0000000000000\n");
+    home.write("c/.env", "API_KEY=sk-proj-CANARYbudgetc0000000000000\n");
+    home.write("top.env", "API_KEY=sk-proj-CANARYbudgettop00000000000\n");
+    let setup = Setup {
+        budget: Budget {
+            entries: 5,
+            seconds: 60,
+            depth: 16,
+        },
+        ..setup()
+    };
+    let report = bring_with(
+        &Scope::Everywhere {
+            home: home.0.clone(),
+            under: Vec::new(),
+        },
+        &setup,
+        None,
+    );
+    assert!(report.skipped.stopped_early);
+    let unfinished: Vec<String> = report
+        .unfinished
+        .iter()
+        .map(|p| {
+            Path::new(p)
+                .strip_prefix(&home.0)
+                .unwrap()
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(unfinished, ["a", "b", "c"]);
+    // Files right under the home folder were read before the budget ran out.
+    assert_eq!(paths(&report, &home.0), ["top.env"]);
+    assert_no_value(&report);
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(json.contains("\"unfinished\""));
+    // Going on in the folders not finished, with the usual places left out.
+    let next = bring_with(
+        &Scope::Everywhere {
+            home: home.0.clone(),
+            under: vec![home.0.join("b"), home.0.join("c")],
+        },
+        &setup,
+        None,
+    );
+    assert!(next.unfinished.is_empty());
+    assert_eq!(paths(&next, &home.0), ["b/.env", "c/.env"]);
 }

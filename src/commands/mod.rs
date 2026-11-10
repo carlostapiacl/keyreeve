@@ -36,8 +36,11 @@ Usage:
       read goes to <folder>/backups first. Run twice, it changes nothing.
   keyreeve bring --places [--projects <folder>]... [--dry-run] [--check] [--json]
   keyreeve bring --folder <folder> [--dry-run] [--check] [--json]
+  keyreeve bring --everywhere [--under <folder>]... [--dry-run] [--check] [--json]
       Find keys in the places tools keep them on this Mac (and in .env files under the project
-      folders you name), or in a folder, and say what each is: a key, a setting, a login, a document
+      folders you name), or in a folder, or with --everywhere in the whole home folder or the folders
+      under --under (.env files and files that hold keys, within a time budget; folders not finished
+      are named), and say what each is: a key, a setting, a login, a document
       or a public key, its provider, and whether it works. Parts of one key go together, and the same
       key in two places is one key. Values are never shown, and no file is moved or changed. A key is
       checked with one read-only request, only by the one provider its prefix, its variable or its

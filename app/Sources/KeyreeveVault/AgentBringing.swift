@@ -15,19 +15,33 @@ public enum AgentBringing {
 
     /// Where to look, as the agent asked.
     public struct Scope: Codable, Equatable, Sendable {
-        public var places: Bool
-        public var projects: [String]
-        public var folder: String?
+        public enum Place: String, Codable, Sendable {
+            /// The whole home folder, with the usual places, within a time budget.
+            case everywhere
+            /// The places tools keep keys, and `.env` files under `projects`.
+            case places
+            /// Only `folders`, walked as everywhere is.
+            case folders
+        }
 
-        public init(places: Bool, projects: [String], folder: String?) {
-            self.places = places
+        public var place: Place
+        public var projects: [String]
+        public var folders: [String]
+
+        public init(place: Place, projects: [String] = [], folders: [String] = []) {
+            self.place = place
             self.projects = projects
-            self.folder = folder
+            self.folders = folders
         }
 
         /// The engine's arguments, always without checks: `--dry-run`, and never `--check`.
         public var arguments: [String] {
-            let scope = folder.map { ["--folder", $0] } ?? (["--places"] + projects.flatMap { ["--projects", $0] })
+            let scope: [String]
+            switch place {
+            case .everywhere: scope = ["--everywhere"]
+            case .folders: scope = ["--everywhere"] + folders.flatMap { ["--under", $0] }
+            case .places: scope = ["--places"] + projects.flatMap { ["--projects", $0] }
+            }
             return ["bring"] + scope + ["--dry-run", "--json"]
         }
 
@@ -42,20 +56,28 @@ public enum AgentBringing {
                 }
                 return URL(fileURLWithPath: expanded).standardizedFileURL.path
             }
-            if arguments["projects"] != nil, !(arguments["projects"] is [String]) { throw VaultError("projects is a list of folders") }
-            if arguments["folder"] != nil, !(arguments["folder"] is String) { throw VaultError("folder is one folder") }
-            let projects = try (arguments["projects"] as? [String] ?? []).map(folder)
-            guard projects.count <= 20 else { throw VaultError("at most 20 project folders at once") }
-            if let one = arguments["folder"] as? String {
-                guard projects.isEmpty, arguments["places"] as? Bool != true else {
-                    throw VaultError("give folder alone, or places with projects, not both")
+            func list(_ name: String) throws -> [String] {
+                guard let value = arguments[name] else { return [] }
+                guard let list = value as? [String] else { throw VaultError("\(name) is a list of folders") }
+                guard list.count <= 50 else { throw VaultError("at most 50 \(name) at once") }
+                return try list.map(folder)
+            }
+            let named = arguments["where"] as? String ?? Place.places.rawValue
+            guard let place = Place(rawValue: named) else { throw VaultError("where is everywhere, places or folders") }
+            let projects = try list("projects")
+            let folders = try list("folders")
+            switch place {
+            case .everywhere:
+                guard projects.isEmpty, folders.isEmpty else {
+                    throw VaultError("everywhere is the whole home folder: give no projects or folders with it")
                 }
-                return Scope(places: false, projects: [], folder: try folder(one))
+            case .places:
+                guard folders.isEmpty else { throw VaultError("folders go with where = folders") }
+            case .folders:
+                guard !folders.isEmpty else { throw VaultError("where = folders needs folders") }
+                guard projects.isEmpty else { throw VaultError("projects go with where = places") }
             }
-            guard arguments["places"] as? Bool ?? true else {
-                throw VaultError("nothing to look in: set places, or give a folder")
-            }
-            return Scope(places: true, projects: projects, folder: nil)
+            return Scope(place: place, projects: projects, folders: folders)
         }
     }
 
@@ -128,6 +150,8 @@ public enum AgentBringing {
         public var files: Int
         public var roots: [String]
         public var skipped: [String: Int]
+        /// Folders the engine did not finish before its budget ran out.
+        public var unfinished: [String]
         public var found: [Found]
 
         public func candidate(_ number: Int) -> Found? { found.first { $0.number == number } }
@@ -157,7 +181,7 @@ public enum AgentBringing {
         let skipped = (object["skipped"] as? [String: Any] ?? [:]).compactMapValues { $0 as? Int }.filter { $0.value > 0 }
         return Scan(
             scope: scope, files: object["files"] as? Int ?? 0, roots: object["roots"] as? [String] ?? [], skipped: skipped,
-            found: found)
+            unfinished: object["unfinished"] as? [String] ?? [], found: found)
     }
 
     /// Whether a key looks sealed already: one of its files is the source of a key in keys.toml, or the
@@ -193,7 +217,7 @@ public enum AgentBringing {
             return row
         }
         var out: [String: Any] = [
-            "scope": scan.scope.folder == nil ? "places" : "folder", "roots": scan.roots, "files": scan.files,
+            "where": scan.scope.place.rawValue, "roots": scan.roots, "files": scan.files,
             "counts": [
                 "keys": count("key"), "logins": count("login"), "configuration": count("configuration"),
                 "documents": count("document"), "public": count("public"),
@@ -205,6 +229,11 @@ public enum AgentBringing {
                 "Values are never shown. To bring keys in, call propose_bring with their n. Configuration, documents and public keys are counted only, and are not sealed.",
         ]
         if !scan.skipped.isEmpty { out["skipped"] = scan.skipped }
+        if !scan.unfinished.isEmpty {
+            out["unfinished"] = scan.unfinished
+            out["budget"] =
+                "The search stopped before finishing the folders in unfinished, to keep it short. Call find_keys with where = folders and those folders to go on. Each search has its own numbers, so propose_bring takes those of your last one."
+        }
         if end < secrets.count { out["next_offset"] = end }
         if start == 0 { out["known_providers"] = known.sorted() }
         guard let data = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]) else { return "{}" }

@@ -60,12 +60,16 @@ struct StaleIndexTests {
     @Test func aChangeOnDiskIsNoticed() throws {
         let (model, root) = try model("stamp")
         defer { try? FileManager.default.removeItem(at: root) }
-        model.indexStamp = KeyIndex.stamp(of: model.files.keyIndex)
+        model.indexStamp = AppModel.indexStamp(of: model.files)
         let before = model.indexStamp
         model.reloadIfIndexChanged()
         #expect(model.indexStamp == before, "nothing changed, nothing is read")
         _ = try KeyArrival.add(Data("CANARY-x".utf8), as: "added/x", addedBy: "claude", store: model.vaultStore, index: model.files.keyIndex)
         model.reloadIfIndexChanged()
         #expect(model.indexStamp != before, "the add is seen, and the list is read again")
+        // A mark the key service writes in key-state.json changes the stamp too, with keys.toml untouched.
+        let added = AppModel.indexStamp(of: model.files)
+        try KeyStates.mark(id: "x", active: false, in: AppModel.keyStates(of: model.files))
+        #expect(AppModel.indexStamp(of: model.files) != added, "a key its provider stopped accepting is flagged without a restart")
     }
 }

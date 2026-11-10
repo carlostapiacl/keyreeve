@@ -104,12 +104,23 @@ extension AppModel {
 
     /// Reads the list again when keys.toml changed on disk since it was read: a key an agent added shows up with no
     /// restart. Called on focus and by the menu bar's ticker; a stat, and nothing more, while nothing changed.
+    /// key-state.json counts too, so a key its provider stopped accepting is flagged without a restart.
     public func reloadIfIndexChanged() {
         guard unlocked, !settling else { return }
-        let now = KeyIndex.stamp(of: files.keyIndex)
+        let now = Self.indexStamp(of: files)
         guard now != indexStamp else { return }
         indexStamp = now
         load()
+    }
+
+    /// The file where the key service writes what providers said of OAuth keys, beside keys.toml.
+    nonisolated static func keyStates(of files: KeyreeveFiles) -> URL {
+        files.keyIndex.deletingLastPathComponent().appendingPathComponent(KeyStates.fileName)
+    }
+
+    /// keys.toml's stamp and key-state.json's: either one changing is a reason to read the list again.
+    nonisolated static func indexStamp(of files: KeyreeveFiles) -> String {
+        KeyIndex.stamp(of: files.keyIndex) + "|" + KeyIndex.stamp(of: keyStates(of: files))
     }
 
     /// Brings the window to the new keys.

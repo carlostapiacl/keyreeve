@@ -381,7 +381,7 @@ struct Snapshot: Sendable {
     let places: [String: KeyPlaces]
     let agentPolicy: AgentPolicy
     let keyIndex: KeyIndex
-    /// Taken before keys.toml is read, so a write in between is seen as a change next time.
+    /// Taken before keys.toml and key-state.json are read, so a write in between is seen as a change next time.
     let indexStamp: String
     let usage: UsageSnapshot
     /// Files that are there and could not be read. Each would otherwise look empty, which is a different thing.
@@ -393,7 +393,7 @@ struct Snapshot: Sendable {
 
     init(reading source: Source) {
         let files = source.files
-        indexStamp = KeyIndex.stamp(of: files.keyIndex)
+        indexStamp = AppModel.indexStamp(of: files)
         files.tightenFolders()
         let ignored = files.ignoredKeys()
         let details = files.allDetails()
@@ -460,7 +460,7 @@ struct Snapshot: Sendable {
         }
         AppModel.markArrivals(&parsed, vault: vault, index: index, journal: files.rotations)
         // The service writes what providers said of OAuth keys in a file of its own, never in keys.toml.
-        let marked = KeyStates.needingReauthorization(in: files.keyIndex.deletingLastPathComponent().appendingPathComponent(KeyStates.fileName))
+        let marked = KeyStates.needingReauthorization(in: AppModel.keyStates(of: files))
         let reauthorize = Set((index.keys + index.unoffered).filter { marked.contains($0.id) }.map(\.source))
         for at in parsed.indices where reauthorize.contains(parsed[at].path) { parsed[at].needsReauthorizing = true }
         items = parsed

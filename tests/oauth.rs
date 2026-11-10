@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,7 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 /// What the token host answers, one per exchange, the last kept for any after it.
 type Answers = Arc<Mutex<VecDeque<(u16, String)>>>;
 
+#[derive(Clone)]
 struct Upstream {
     port: u16,
     root: CertificateDer<'static>,
@@ -186,7 +187,11 @@ impl Drop for Run {
 }
 
 fn run_with(answers: Vec<(u16, String)>, delay: Duration) -> Run {
-    let up = upstream(answers, delay);
+    run_on(upstream(answers, delay))
+}
+
+/// A proxy of its own, as one started again would be, in front of this upstream.
+fn run_on(up: Upstream) -> Run {
     let (proxy, events) = Proxy::new(Options {
         extra_roots: vec![up.root.clone()],
         upstream_port: Some(up.port),
@@ -254,13 +259,66 @@ fn curl(run: &Run, args: &[&str]) -> (String, String) {
         .env_clear()
         .env("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
         .envs(command_env(run))
-        .output()
+        .output_within(Duration::from_secs(30))
         .unwrap();
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + &String::from_utf8_lossy(&output.stderr);
     assert_no_canary(&text, "curl's output");
     let (body, code) = text.rsplit_once('\n').unwrap_or(("", ""));
     (body.to_owned(), code.trim().to_owned())
+}
+
+/// `output`, but a program that hangs is killed and the test fails, rather than holding the run forever.
+trait Within {
+    fn output_within(&mut self, limit: Duration) -> std::io::Result<Output>;
+}
+
+impl Within for Command {
+    fn output_within(&mut self, limit: Duration) -> std::io::Result<Output> {
+        let mut child = self
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let read = |pipe: Option<Box<dyn Read + Send>>| {
+            thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    let _ = pipe.read_to_end(&mut bytes);
+                }
+                bytes
+            })
+        };
+        let stdout = read(
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let stderr = read(
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let deadline = std::time::Instant::now() + limit;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("a program ran past {limit:?}");
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        Ok(Output {
+            status,
+            stdout: stdout.join().unwrap_or_default(),
+            stderr: stderr.join().unwrap_or_default(),
+        })
+    }
 }
 
 fn assert_no_canary(text: &str, place: &str) {
@@ -495,6 +553,42 @@ fn invalid_grant_marks_the_key_and_is_not_tried_again() {
 }
 
 #[test]
+fn after_a_restart_a_marked_key_is_tried_once_more_then_stops_again() {
+    // The mark outlives the proxy, in the service's file. A proxy started again knows nothing of it, so the
+    // next use asks the provider once, which may now accept a credential put right, and stops again if not.
+    let refused = (400, r#"{"error":"invalid_grant"}"#.to_owned());
+    let first = run_with(vec![refused], Duration::ZERO);
+    let url = format!("https://{TOKEN_HOST}/token");
+    for _ in 0..2 {
+        assert_eq!(
+            curl(&first, &["--data", &form(&stand_ins(&first)), &url]).1,
+            "400"
+        );
+    }
+    assert_eq!(first.up.exchanges.load(Ordering::SeqCst), 1);
+    let up = first.up.clone();
+    first.proxy.remove("g-1");
+    drop(first);
+
+    let again = run_on(up);
+    for _ in 0..3 {
+        let (answer, code) = curl(&again, &["--data", &form(&stand_ins(&again)), &url]);
+        assert_eq!(code, "400", "{answer}");
+    }
+    assert_eq!(
+        again.up.exchanges.load(Ordering::SeqCst),
+        2,
+        "one more try, then none"
+    );
+    let marks: Vec<Event> = events(&again)
+        .into_iter()
+        .filter(|event| event.authorization.is_some())
+        .collect();
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].authorization.as_deref(), Some("reauthorize"));
+}
+
+#[test]
 fn the_real_access_token_goes_to_no_host_outside_the_recipe() {
     let run = run();
     let access = stand_in_access(&run);
@@ -517,7 +611,7 @@ fn the_real_access_token_goes_to_no_host_outside_the_recipe() {
         .env("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
         .env("HTTPS_PROXY", format!("http://127.0.0.1:{}", run.port))
         .env("CURL_CA_BUNDLE", &bundle)
-        .output()
+        .output_within(Duration::from_secs(30))
         .unwrap();
     let text = String::from_utf8_lossy(&output.stdout).to_string();
     assert!(text.ends_with("200"), "{text}");
@@ -544,7 +638,7 @@ fn python_google_auth_works_through_the_proxy() {
             "-c",
             "import google.auth, google.auth.transport.requests, requests",
         ])
-        .output();
+        .output_within(Duration::from_secs(30));
     if !probe.is_ok_and(|out| out.status.success()) {
         eprintln!("skipped: python3 with google-auth and requests is not installed");
         return;
@@ -576,7 +670,7 @@ print("apiclient", json.dumps(service.sites().list().execute()))
         .env_remove("no_proxy")
         .env_remove("GOOGLE_CLOUD_PROJECT")
         .envs(command_env(&run))
-        .output()
+        .output_within(Duration::from_secs(90))
         .unwrap();
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     let err = String::from_utf8_lossy(&output.stderr).to_string();

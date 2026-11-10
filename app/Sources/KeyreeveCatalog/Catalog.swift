@@ -42,7 +42,7 @@ public struct CatalogItem: Identifiable, Hashable, Sendable {
     /// The day it stops working, `yyyy-mm-dd`, as the person or an agent wrote it.
     public var expires: String
     /// The provider answered its OAuth credential with `invalid_grant`: a person has to sign in again and
-    /// replace it. Read from `state` in keys.toml, which the key service writes.
+    /// replace it. Read from key-state.json, which only the key service writes.
     public var needsReauthorizing = false
     public var id: String { path }
 

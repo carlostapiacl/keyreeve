@@ -45,7 +45,7 @@ public struct KeyIndex: Equatable, Sendable {
         public var expires: String?
         public var criticality: Int?
         public var archived = false
-        /// `static` or `oauth`, as a person reads it. The provider's file decides how the key is used.
+        /// `static` or `oauth`. Only static keys work today.
         public var auth: String?
         /// `active` or `reauthorize`.
         public var state: String?
@@ -145,27 +145,6 @@ public struct KeyIndex: Equatable, Sendable {
     public mutating func update(id: String, _ change: (inout Key) -> Void) {
         if let at = keys.firstIndex(where: { $0.id == id }) { change(&keys[at]) }
         if let at = unoffered.firstIndex(where: { $0.id == id }) { change(&unoffered[at]) }
-    }
-
-    /// Marks a key whose provider no longer accepts its OAuth credential, or takes the mark off once a token
-    /// comes again, after the person replaced it. Says whether anything changed, so an unchanged file is not written.
-    public mutating func markAuthorization(id: String, active: Bool) -> Bool {
-        var changed = false
-        update(id: id) { key in
-            let wanted: String? = active ? nil : "reauthorize"
-            guard key.more.state != wanted, !active || key.more.state == "reauthorize" else { return }
-            key.more.state = wanted
-            changed = true
-        }
-        return changed
-    }
-
-    /// The same, on the file, as the key service does when the proxy says what the provider answered.
-    public static func markAuthorization(id: String, active: Bool, in url: URL) throws {
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        var index = try load(from: url)
-        guard index.markAuthorization(id: id, active: active) else { return }
-        try PrivateFile.write(Data(index.toml.utf8), to: url)
     }
 
     public mutating func remove(id: String) {

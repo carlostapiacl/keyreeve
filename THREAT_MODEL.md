@@ -166,7 +166,8 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   reply that echoes it gets a stand-in back. While a permission lasts, a compromised command can still use the API through the proxy,
   with every scope the credential has. It cannot take the refresh token or the client secret away, so what it can do ends with the
   permission. A provider that sends a new refresh token gets it used in memory only; the vault keeps the one you sealed. An
-  `invalid_grant` is not retried, and the key is marked in `keys.toml` until a token comes again.
+  `invalid_grant` is not retried while the proxy runs, and the key is marked in `key-state.json`, a file only the key service
+  writes, until a token comes again. After a restart the mark stays, and the next use tries the provider once more, then stops again.
 - **The proxy reads that traffic.** It ends TLS for a key's hosts, with a CA made for each run whose key stays in memory. Only commands
   started by `use` are pointed at that CA. The system's own trust store is never touched.
 - **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a

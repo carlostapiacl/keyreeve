@@ -116,6 +116,7 @@ private struct ChooseWhere: View {
                     .padding(14)
                 }
             }
+            DontLookHere(model: model, rules: state.ignore)
             if let error = state.error {
                 Label(error, systemImage: "exclamationmark.triangle.fill").font(Theme.body).foregroundStyle(Theme.bad)
             }
@@ -147,6 +148,8 @@ private struct BringReview: View {
             Text(T("Values stay hidden. Decide only the doubtful ones; the rest is already chosen."))
                 .font(Theme.body).foregroundStyle(Theme.muted)
             if let request = state.request { agentBanner(request) }
+            VaultComparisonBanner(model: model, state: state)
+            FoundExtras(model: model, state: state)
             if let unfinished = state.report?.unfinished, !unfinished.isEmpty {
                 HStack(alignment: .firstTextBaseline) {
                     Label(T("The search stopped before finishing %d folders: %@", unfinished.count,
@@ -157,7 +160,17 @@ private struct BringReview: View {
                     Button(T("Look in those"), action: model.lookInUnfinished).buttonStyle(KRButtonStyle())
                 }
             }
+            Picker("", selection: Binding(get: { state.byProject }, set: { model.bringing?.byProject = $0 })) {
+                Text(T("By result")).tag(false)
+                Text(T("By project")).tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 260)
             ScrollView {
+                if state.byProject {
+                    byProject.frame(maxWidth: .infinity, alignment: .leading)
+                } else {
                 VStack(alignment: .leading, spacing: 16) {
                     group(T("Work"), icon: "checkmark.circle.fill", tone: .good, rows: state.candidates(.works), toggles: true)
                     doubtful
@@ -172,6 +185,7 @@ private struct BringReview: View {
                     other
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .frame(minHeight: 260, maxHeight: 460)
             if let error = state.error {
@@ -211,6 +225,14 @@ private struct BringReview: View {
                 Text(T("%d of its choices no longer match what was found: the file changed or is gone.", state.agentMissed.count))
                     .font(Theme.caption).foregroundStyle(Theme.warn)
             }
+            ForEach((state.agentProposal?.ignore ?? []).filter { !state.ignore.contains($0) }, id: \.self) { folder in
+                HStack {
+                    Text(T("It suggests never looking in %@", folder)).font(Theme.caption).foregroundStyle(Theme.text)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button(T("Don't look there")) { model.addIgnored(folder) }.buttonStyle(KRButtonStyle())
+                }
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -229,7 +251,9 @@ private struct BringReview: View {
                 }
                 ForEach(rows) { row in
                     HStack(spacing: 8) {
-                        BringRow(candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id])
+                        BringRow(
+                            candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id],
+                            sealed: state.sealedNow[row.id])
                         Picker("", selection: Binding(
                             get: { state.decisions[row.id] },
                             set: { if let seal = $0 { model.decide(row.id, seal: seal) } })
@@ -246,12 +270,40 @@ private struct BringReview: View {
         }
     }
 
+    /// Every key and login, under the project it was found in. A key in two projects shows in each.
+    @ViewBuilder private var byProject: some View {
+        let secrets = (state.report?.candidates ?? []).filter { $0.group != .other }
+        let paths = Array(Set(secrets.flatMap { $0.origins.map(\.projectPath) })).sorted()
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(paths, id: \.self) { path in
+                let rows = secrets.filter { $0.origins.contains { $0.projectPath == path } }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(shortPath(path)).font(Theme.section).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text(rows.count == 1 ? T("1 key") : T("%d keys", rows.count)).font(Theme.caption).foregroundStyle(Theme.muted)
+                    }
+                    ForEach(rows) { row in
+                        Toggle(isOn: Binding(
+                            get: { state.decisions[row.id] == true },
+                            set: { model.decide(row.id, seal: $0) })
+                        ) {
+                            BringRow(
+                                candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id],
+                                sealed: state.sealedNow[row.id])
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var other: some View {
         let rows = state.candidates(.other)
         if !rows.isEmpty {
             DisclosureGroup(isExpanded: $showOther) {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(rows) { BringRow(candidate: $0, model: model, agent: nil, choice: nil) }
+                    ForEach(rows) { BringRow(candidate: $0, model: model, agent: nil, choice: nil, sealed: nil) }
                 }
                 .padding(.top, 4)
             } label: {
@@ -271,7 +323,9 @@ private struct BringReview: View {
                         get: { state.decisions[row.id] == true },
                         set: { model.decide(row.id, seal: $0) })
                     ) {
-                        BringRow(candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id])
+                        BringRow(
+                            candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id],
+                            sealed: state.sealedNow[row.id])
                     }
                 }
             }
@@ -286,6 +340,8 @@ private struct BringRow: View {
     /// The agent that proposed this review, and what it suggested for this key.
     let agent: String?
     let choice: AgentBringing.Proposal.Item?
+    /// What the vault holds of it, compared by keyed digest.
+    let sealed: AgentBringing.Sealed?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -296,6 +352,12 @@ private struct BringRow: View {
                 if let agent, let choice { suggestion(agent, choice) }
             }
             Spacer(minLength: 6)
+            switch sealed {
+            case .now(let ids): Chip(text: ids.isEmpty ? T("in your vault") : T("in your vault as %@", ids.joined(separator: ", ")))
+            case .earlier(let ids): Chip(text: ids.isEmpty ? T("an earlier value") : T("an earlier value of %@", ids.joined(separator: ", ")))
+            case .new: Chip(text: T("new"))
+            case .unmatched, nil: EmptyView()
+            }
             if candidate.duplicate { Chip(text: T("%d places", candidate.origins.count)) }
             if candidate.from_project { Chip(text: T("a project uses it")) }
             Chip(text: kind)
@@ -359,6 +421,11 @@ private struct BringDone: View {
             }
             HStack {
                 Spacer()
+                let projects = model.projectsFound()
+                if !projects.isEmpty, state.projectsKept == 0 {
+                    Button(projects.count == 1 ? T("Keep 1 project") : T("Keep %d projects", projects.count), action: model.rememberProjects)
+                        .buttonStyle(KRButtonStyle())
+                }
                 if !state.fromProjects.isEmpty {
                     Button(T("Offer the %d your scripts already use", state.fromProjects.count), action: model.offerBroughtFromProjects)
                         .buttonStyle(KRButtonStyle())
@@ -369,6 +436,111 @@ private struct BringDone: View {
             }
         }
         .padding(24)
+    }
+}
+
+/// The folders Bring in never looks in, kept in bring.toml, with a way to add and remove them.
+private struct DontLookHere: View {
+    @ObservedObject var model: AppModel
+    let rules: [String]
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    SectionTitle(T("Don't look here"))
+                    Spacer()
+                    Button(T("Add a folder…"), action: model.chooseIgnoredFolder).buttonStyle(KRButtonStyle())
+                }
+                if rules.isEmpty {
+                    Text(T("No folder left out yet. Archives and benchmark copies are good ones to add."))
+                        .font(Theme.caption).foregroundStyle(Theme.muted)
+                }
+                ForEach(rules, id: \.self) { rule in
+                    HStack {
+                        Text(rule).font(Theme.body).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button(T("Look here again")) { model.removeIgnored(rule) }.buttonStyle(KRButtonStyle())
+                    }
+                }
+                Text(T("Looking everywhere also leaves out tests, fixtures, examples and SDK caches, and says how many folders each rule left out."))
+                    .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+        }
+    }
+}
+
+/// Whether the search was compared with the vault: what it holds already, and what is new. Without learned digests it
+/// says so, and offers to learn them with one fingerprint, rather than call every key new.
+private struct VaultComparisonBanner: View {
+    @ObservedObject var model: AppModel
+    let state: BringState
+
+    var body: some View {
+        let secrets = (state.report?.candidates ?? []).filter { $0.group != .other }.count
+        let held = state.sealedNow.values.filter { if case .now = $0 { return true } else { return false } }.count
+        let fresh = state.sealedNow.values.filter { $0 == .new }.count
+        switch state.comparison {
+        case .compared(let coverage) where coverage.complete:
+            Label(T("%d already in your vault, %d new", held, fresh), systemImage: "checkmark.seal")
+                .font(Theme.caption).foregroundStyle(Theme.text)
+        case .compared(let coverage):
+            learn(T("Keyreeve knows %d of the %d values in your vault: %d of these keys are in it, and the rest may be too.", coverage.known, coverage.total, held))
+        case .unavailable(.noVault), nil:
+            EmptyView()
+        case .unavailable:
+            if secrets > 0 {
+                learn(T("Keyreeve has not learned what your vault holds, so it cannot tell which of these keys you already have."))
+            }
+        }
+    }
+
+    private func learn(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label(text, systemImage: "questionmark.diamond").font(Theme.caption).foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button(T("Learn what the vault holds")) { model.learnWhatTheVaultHolds() }.buttonStyle(KRButtonStyle())
+        }
+    }
+}
+
+/// What else the search found: places where keys in the vault live, the projects they belong to, and what each rule
+/// left out. Each waits for the person.
+private struct FoundExtras: View {
+    @ObservedObject var model: AppModel
+    let state: BringState
+
+    var body: some View {
+        let places = state.placesAdded ? [] : model.foundPlaces()
+        let projects = state.projectsKept > 0 ? [] : model.projectsFound()
+        VStack(alignment: .leading, spacing: 6) {
+            if !places.isEmpty {
+                HStack(alignment: .firstTextBaseline) {
+                    Label(places.count == 1
+                          ? T("Found 1 place where a key in your vault lives")
+                          : T("Found %d places where keys in your vault live", places.count), systemImage: "mappin.and.ellipse")
+                        .font(Theme.caption).foregroundStyle(Theme.text)
+                    Spacer(minLength: 8)
+                    Button(T("Add them as places"), action: model.addFoundPlaces).buttonStyle(KRButtonStyle())
+                }
+            }
+            if !projects.isEmpty {
+                HStack(alignment: .firstTextBaseline) {
+                    Label(projects.count == 1 ? T("1 project uses keys in your vault") : T("%d projects use keys in your vault", projects.count),
+                          systemImage: "folder")
+                        .font(Theme.caption).foregroundStyle(Theme.text)
+                    Spacer(minLength: 8)
+                    Button(projects.count == 1 ? T("Keep 1 project") : T("Keep %d projects", projects.count), action: model.rememberProjects)
+                        .buttonStyle(KRButtonStyle())
+                }
+            }
+            if let rules = state.report?.skipped.rules, !rules.isEmpty {
+                Text(T("Left out: %@", rules.sorted { $0.key < $1.key }.map { "\($0.key) (\($0.value))" }.joined(separator: ", ")))
+                    .font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(2).truncationMode(.tail)
+            }
+        }
     }
 }
 

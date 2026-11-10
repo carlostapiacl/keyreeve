@@ -139,3 +139,117 @@ fn a_folder_and_bad_arguments() {
     );
     assert_eq!(run(&home.0, &[]).status.code(), Some(2));
 }
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+#[test]
+fn hashes_go_to_a_private_file_of_their_own_and_never_to_the_screen() {
+    let home = home();
+    let code = home.0.join("code");
+    let out = home.0.join("private").join("hashes.json");
+    fs::create_dir_all(out.parent().unwrap()).unwrap();
+    let args = [
+        "--everywhere",
+        "--under",
+        code.to_str().unwrap(),
+        "--dry-run",
+        "--json",
+        "--hashes-out",
+        out.to_str().unwrap(),
+    ];
+    let output = run(&home.0, &args);
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let value = "re_CANARYsite0000000000000000";
+    let hash = sha256_hex(value);
+    for text in [&stdout, &stderr] {
+        assert!(!text.contains("CANARY") && !text.contains(&hash));
+    }
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        report["projects"][0]["path"],
+        code.join("site").display().to_string()
+    );
+    assert_eq!(report["projects"][0]["marker"], ".env");
+    let id = report["candidates"][0]["id"].as_u64().unwrap().to_string();
+    let written: serde_json::Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(written["keys"][id.as_str()][0], hash.as_str());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&out).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    // A file that is there already is never written over.
+    let again = run(&home.0, &args);
+    assert!(!again.status.success());
+}
+
+#[test]
+fn the_persons_folders_are_kept_and_left_out() {
+    let home = home();
+    write(
+        &home.0,
+        "code/old/.env",
+        "OLD_KEY=sk-proj-CANARYold000000000000000\n",
+    );
+    let listed = run(
+        &home.0,
+        &["ignore", "--add", "~/code/old", "--add", "scratch"],
+    );
+    assert!(listed.status.success());
+    assert_eq!(
+        String::from_utf8(listed.stdout).unwrap(),
+        "~/code/old\nscratch\n"
+    );
+    let file = home.0.join(".keyreeve/bring.toml");
+    assert!(fs::read_to_string(&file)
+        .unwrap()
+        .contains("\"~/code/old\""));
+    let report = run(
+        &home.0,
+        &[
+            "--everywhere",
+            "--under",
+            home.0.join("code").to_str().unwrap(),
+            "--dry-run",
+            "--json",
+        ],
+    );
+    let report: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
+    assert_eq!(report["skipped"]["rules"]["~/code/old"], 1);
+    assert_eq!(report["candidates"].as_array().unwrap().len(), 2);
+    // --ignore adds a folder for one search only.
+    let once = run(
+        &home.0,
+        &[
+            "--everywhere",
+            "--under",
+            home.0.join("code").to_str().unwrap(),
+            "--ignore",
+            "site",
+            "--dry-run",
+            "--json",
+        ],
+    );
+    let once: serde_json::Value = serde_json::from_slice(&once.stdout).unwrap();
+    assert_eq!(once["skipped"]["rules"]["site"], 1);
+    assert!(!fs::read_to_string(&file).unwrap().contains("site"));
+    let removed = run(&home.0, &["ignore", "--remove", "scratch"]);
+    assert_eq!(String::from_utf8(removed.stdout).unwrap(), "~/code/old\n");
+    // A file that cannot be read stops the search rather than look everywhere.
+    fs::write(&file, "ignore = [oops]\n").unwrap();
+    assert_eq!(
+        run(&home.0, &["--places", "--dry-run"]).status.code(),
+        Some(2)
+    );
+}

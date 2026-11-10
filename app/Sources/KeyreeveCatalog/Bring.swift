@@ -9,6 +9,8 @@ public struct BringReport: Codable, Equatable, Sendable {
         public var too_deep = 0
         public var examples = 0
         public var stopped_early = false
+        /// Folders each rule left out: a built-in one, such as `tests`, or one of the person's.
+        public var rules: [String: Int]? = nil
     }
 
     public struct Summary: Codable, Equatable, Sendable {
@@ -30,6 +32,15 @@ public struct BringReport: Codable, Equatable, Sendable {
     public var candidates: [BringCandidate]
     /// Folders a search of everywhere did not finish before its time ran out.
     public var unfinished: [String]? = nil
+    /// The projects keys were found in: the nearest folder above each file where a project starts.
+    public var projects: [BringProject]? = nil
+}
+
+public struct BringProject: Codable, Equatable, Hashable, Sendable {
+    public var path: String
+    public var name: String
+    /// What says a project starts there: `.git`, `package.json`, a `.env`… or none for a file's own folder.
+    public var marker: String?
 }
 
 public struct BringCandidate: Codable, Equatable, Hashable, Sendable, Identifiable {
@@ -48,6 +59,11 @@ public struct BringCandidate: Codable, Equatable, Hashable, Sendable, Identifiab
         public var bytes: UInt64
         public var modified: UInt64
         public var parts: [Part]
+        /// The project the file is in, a path in the report's projects.
+        public var project: String? = nil
+
+        /// The project, or the file's folder for a report from before projects.
+        public var projectPath: String { project ?? URL(fileURLWithPath: path).deletingLastPathComponent().path }
     }
 
     public struct Part: Codable, Equatable, Hashable, Sendable {
@@ -122,12 +138,13 @@ public enum BringRunner {
     }
 
     /// Runs `keyreeve bring` and reads its report. Each key is checked with one read-only request to
-    /// its provider, unless `check` is false. Only the report is read: the command prints no value.
-    public static func run(binary: URL, scope: BringScope, check: Bool = true) throws -> BringReport {
+    /// its provider, unless `check` is false. Only the report is read: the command prints no value. `extra` are more
+    /// arguments, such as where the engine hands each key's hashes over.
+    public static func run(binary: URL, scope: BringScope, check: Bool = true, extra: [String] = []) throws -> BringReport {
         let process = Process()
         let pipe = CheckRunner.privatePipe()
         process.executableURL = binary
-        process.arguments = ["bring"] + scope.arguments + (check ? [] : ["--dry-run"]) + ["--json"]
+        process.arguments = ["bring"] + scope.arguments + (check ? [] : ["--dry-run"]) + ["--json"] + extra
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice

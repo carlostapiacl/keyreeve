@@ -44,7 +44,8 @@ El comando `keyreeve` solo, sin la app, también corre en Linux: `cargo install 
 
 1. **Abre la app** y aprieta **Trae tus claves**. Busca donde las herramientas guardan claves en este Mac (y en las carpetas
    de proyectos que marques, para los `.env`) o en una carpeta que elijas, prueba cada clave y te muestra lo que encontró con
-   los valores tapados. Tú decides solo las dudosas y sellas con tu huella una vez. Tus archivos quedan donde están.
+   los valores tapados, por proyecto y marcadas ya en la bóveda o nuevas. Tú decides solo las dudosas y sellas con tu huella
+   una vez. Tus archivos quedan donde están.
 2. **Crea la bóveda.** En **Seguridad y respaldo**, aprieta **Crear mi bóveda**. Anota la clave de recuperación que muestra
    una sola vez, lejos de este Mac.
 3. **Sella una clave.** Copia una clave desde tu proveedor y aprieta **+** (Agregar clave). keyreeve reconoce el
@@ -135,8 +136,9 @@ valor de una clave.
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios, solo mientras tú lo permites |
 | `list_places`, `propose_places` | ven dónde viven las claves ofrecidas y proponen lugares nuevos, que apruebas con tu huella |
-| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
-| `propose_bring` | propone cuáles sellar de las encontradas; tú la revisas en Traer y sellas con una sola huella |
+| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, como un resumen por proyecto y luego las claves de un proyecto, cada una marcada ya sellada o nueva, sin valores y sin probar nada con el proveedor |
+| `propose_bring` | propone cuáles sellar de las encontradas, y carpetas donde no buscar más; tú la revisas en Traer y sellas con una sola huella |
+| `list_projects` | tus proyectos: carpeta, claves (identificadores solo de las ofrecidas), dónde viven y su conjunto de claves |
 
 Cada sí, cada no y cada uso queda en `~/.keyreeve/audit.jsonl`, sin valores. Cada línea lleva el hash de la anterior, así
 `keyreeve-vault audit --verify` encuentra una edición.

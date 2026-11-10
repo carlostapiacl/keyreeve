@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import KeyreeveVault
 import Testing
@@ -11,7 +12,6 @@ struct AgentBringTests {
         var entries: [AccessRequests.Entry] = []
         var saved: [String: Data] = [:]
         var logged: [(event: String, key: String, detail: String)] = []
-        var sealed: Set<String> = []
         var answer = AgentBridge.Announcement.later
         var paused = false
     }
@@ -57,8 +57,7 @@ struct AgentBringTests {
             scanKeys: { arguments in
                 world.scans.append(arguments)
                 return world.report
-            },
-            sealedSources: { world.sealed })
+            })
     }
 
     func call(_ bridge: AgentBridge, _ name: String, _ arguments: [String: Any]) throws -> (text: String, error: Bool) {
@@ -67,23 +66,29 @@ struct AgentBringTests {
 
     @Test func findKeysListsKeysByNumberAndNeverAValue() throws {
         let world = World()
-        world.sealed = ["/h/.zshrc"]
-        let answer = try call(bridge(world), "find_keys", ["where": "places", "projects": [NSTemporaryDirectory()]])
+        let bridge = bridge(world)
+        let answer = try call(bridge, "find_keys", ["where": "places", "projects": [NSTemporaryDirectory()]])
         #expect(!answer.error)
         #expect(!answer.text.contains("CANARY"), "\(answer.text)")
         let object = try #require(try JSONSerialization.jsonObject(with: Data(answer.text.utf8)) as? [String: Any])
-        let keys = try #require(object["keys"] as? [[String: Any]])
-        #expect(keys.map { $0["n"] as? Int } == [1, 2], "configuration is counted, not listed")
-        #expect(keys[0]["names"] as? String == "OPENAI_API_KEY")
-        #expect(keys[0]["from"] as? [String] == ["/p/app/.env:4", "/h/.zshrc:2"])
-        #expect(keys[0]["provider"] as? String == "openai" && keys[0]["by"] as? String == "prefix")
-        #expect(keys[0]["duplicate"] as? Bool == true && keys[0]["looks_sealed"] as? Bool == true)
-        #expect(keys[1]["guess"] as? [String] == ["telegram"] && keys[1]["provider"] == nil)
-        #expect(keys[1]["names"] as? String == "line 1", "a name that does not read as one is shown as its line")
-        #expect(keys[1]["looks_sealed"] == nil)
+        #expect(object["keys"] == nil, "a summary lists projects, not keys")
+        let projects = try #require(object["projects"] as? [[Any]])
+        #expect(projects.map { $0[0] as? String } == ["/h", "/p/app", "/p/bot"])
         let counts = try #require(object["counts"] as? [String: Int])
-        #expect(counts["keys"] == 2 && counts["configuration"] == 1 && counts["looks_sealed"] == 1)
+        #expect(counts["keys"] == 2 && counts["other"] == 1 && counts["not_compared"] == 2 && counts["projects"] == 3)
         #expect((object["known_providers"] as? [String])?.contains("telegram") == true)
+        let app = try call(bridge, "find_keys", ["project": "/p/app"])
+        #expect(!app.text.contains("CANARY"), "\(app.text)")
+        let appObject = try #require(try JSONSerialization.jsonObject(with: Data(app.text.utf8)) as? [String: Any])
+        let keys = try #require(appObject["keys"] as? [[String: Any]])
+        #expect(keys.map { $0["n"] as? Int } == [1], "configuration is counted, not listed")
+        #expect(keys[0]["names"] as? String == "OPENAI_API_KEY")
+        #expect(keys[0]["at"] as? [String] == [".env:4"] && keys[0]["elsewhere"] as? Int == 1)
+        #expect(keys[0]["provider"] as? String == "openai" && keys[0]["by"] as? String == "prefix")
+        let bot = try call(bridge, "find_keys", ["project": "/p/bot"])
+        let botKeys = try #require((try JSONSerialization.jsonObject(with: Data(bot.text.utf8)) as? [String: Any])?["keys"] as? [[String: Any]])
+        #expect(botKeys[0]["guess"] as? [String] == ["telegram"] && botKeys[0]["provider"] == nil)
+        #expect(botKeys[0]["names"] as? String == "line 1", "a name that does not read as one is shown as its line")
         // Always a dry run: nothing is sent to a provider from an agent's call.
         let arguments = try #require(world.scans.first)
         #expect(arguments.first == "bring" && arguments.contains("--dry-run") && !arguments.contains("--check"))
@@ -98,7 +103,7 @@ struct AgentBringTests {
         let first = try call(bridge, "find_keys", ["limit": 1])
         #expect(first.text.contains("\"next_offset\":1"))
         let second = try call(bridge, "find_keys", ["offset": 1, "limit": 1])
-        #expect(second.text.contains("\"n\":2") && !second.text.contains("\"n\":1,"))
+        #expect(second.text.contains("[\"/p/app\",") && !second.text.contains("[\"/h\","))
         #expect(world.scans.count == 1, "a later page keeps the numbers of the first")
     }
 
@@ -228,21 +233,49 @@ struct AgentBringTests {
             .write(to: folder.appendingPathComponent(".env"), atomically: true, encoding: .utf8)
         let environment = ["HOME": root.path, "KEYREEVE_HOME": root.appendingPathComponent("kr").path, "PATH": "/usr/bin:/bin"]
         let world = World()
-        let bridge = AgentBridge(
+        var bridge = AgentBridge(
             policy: { AgentPolicy() }, names: { [] },
             open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            describe: { ["openai-app": KeyIndex.Key(id: "openai-app", source: "added/openai")] },
             offered: { [] }, requests: { world.entries }, addRequest: { world.entries.append($0) },
             saveProposal: { world.saved[$0] = $1 },
             scanKeys: { try AgentBringing.runEngine(binary: engine, arguments: $0, environment: environment) })
+        // The vault holds the OpenAI key, as its keyed digest says; the GitHub token is new.
+        let openai = "sk-proj-CANARYopenai000000000000"
+        let digestKey = DigestKey(key: SymmetricKey(size: .bits256))
+        var digests = ValueDigests()
+        digests.learn(name: "added/openai", revision: "r1", value: Data(openai.utf8), key: digestKey)
+        bridge.sealedMatcher = {
+            .success(SealedMatcher(digests: digests, key: digestKey, revisions: ["added/openai": "r1"], keys: [("openai-app", "added/openai", nil)]))
+        }
+        var handed: URL?
+        bridge.scanKeysHashed = { arguments in
+            try EngineHashes.around { extra in
+                handed = URL(fileURLWithPath: extra[1])
+                return try AgentBringing.runEngine(binary: engine, arguments: arguments + extra, environment: environment)
+            }
+        }
         let answer = try call(bridge, "find_keys", ["where": "folders", "folders": [folder.path]])
         #expect(!answer.error, "\(answer.text)")
-        #expect(!answer.text.contains("CANARY"), "\(answer.text)")
-        #expect(answer.text.contains("OPENAI_API_KEY") && answer.text.contains("GITHUB_TOKEN"))
-        #expect(!answer.text.contains("DATABASE_HOST"), "configuration is only counted")
+        let plain = SHA256.hash(data: Data(openai.utf8)).map { String(format: "%02x", $0) }.joined()
+        let handedFile = try #require(handed)
+        #expect(!FileManager.default.fileExists(atPath: handedFile.path), "the hashes file is removed once read")
+        #expect(!FileManager.default.fileExists(atPath: handedFile.deletingLastPathComponent().path))
+        let listed = try call(bridge, "find_keys", ["project": folder.path])
+        for text in [answer.text, listed.text] {
+            #expect(!text.contains("CANARY"), "\(text)")
+            #expect(!text.contains(plain) && !text.contains(digestKey.digest(ofValue: openai)))
+        }
+        let counts = try #require((try JSONSerialization.jsonObject(with: Data(answer.text.utf8)) as? [String: Any])?["counts"] as? [String: Int])
+        #expect(counts["already_sealed"] == 1 && counts["new"] == 1, "\(answer.text)")
+        #expect(listed.text.contains("OPENAI_API_KEY") && listed.text.contains("GITHUB_TOKEN"))
+        #expect(listed.text.contains("\"sealed_as\":[\"openai-app\"]"), "\(listed.text)")
+        #expect(!listed.text.contains("DATABASE_HOST"), "configuration is only counted")
         let proposed = try call(bridge, "propose_bring", ["reason": "r", "seal": [["candidates": [1, 2]]]])
         #expect(!proposed.error, "\(proposed.text)")
         let saved = try #require(world.saved.values.first)
         #expect(!String(decoding: saved, as: UTF8.self).contains("CANARY"))
+        #expect(!String(decoding: saved, as: UTF8.self).contains(plain))
     }
 
     /// The engine `cargo build` leaves in the repository's target folder, if there is one.

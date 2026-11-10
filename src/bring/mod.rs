@@ -5,11 +5,19 @@
 //! The steps: find the files, split each into pieces, say what each piece is, put the parts of one
 //! key together, join the same key found in two places, and check each key with the providers that
 //! could own it, the one that answers being the provider.
+//!
+//! Each key's SHA-256 can also be handed to the app alone, apart from the report, so the app can tell with its
+//! own keyed digests whether the vault already holds it. The report never carries it.
 
+mod project;
 mod read;
+pub mod settings;
 mod sort;
 
-pub use read::{suggested_projects, Area, Budget, Skipped};
+pub use project::{Project, MARKERS};
+pub use read::{
+    suggested_projects, Area, Budget, Ignore, Skipped, BUILTIN_SKIPS, BUILTIN_SKIP_PATHS,
+};
 pub use sort::Class;
 
 use crate::providers;
@@ -58,6 +66,75 @@ pub struct Report {
     pub unfinished: Vec<String>,
     pub summary: Summary,
     pub candidates: Vec<Candidate>,
+    /// The projects keys were found in: the nearest folder above each file where a project starts.
+    pub projects: Vec<Project>,
+    /// Each key's SHA-256, by candidate. Never written into the report: only `Hashes::write_new` hands it on.
+    #[serde(skip)]
+    pub hashes: Hashes,
+}
+
+/// The SHA-256 of each part of each key found, kept apart from the report. The app turns each into a keyed
+/// digest only it can make and compares it with the vault's, so it never needs a value or keeps a plain hash.
+#[derive(Default)]
+pub struct Hashes(BTreeMap<usize, Vec<[u8; 32]>>);
+
+impl std::fmt::Debug for Hashes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Hashes({} keys)", self.0.len())
+    }
+}
+
+impl Hashes {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn of(&self, candidate: usize) -> Option<&[[u8; 32]]> {
+        self.0.get(&candidate).map(Vec::as_slice)
+    }
+
+    /// `{"schema":1,"keys":{"<n>":["<hex>",...]}}`, one hex SHA-256 per part, in the parts' order.
+    pub fn to_json(&self) -> zeroize::Zeroizing<String> {
+        let mut out = String::from("{\"schema\":1,\"keys\":{");
+        for (index, (id, parts)) in self.0.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!("\"{id}\":["));
+            let hexes: Vec<String> = parts
+                .iter()
+                .map(|hash| format!("\"{}\"", hex(hash)))
+                .collect();
+            out.push_str(&hexes.join(","));
+            out.push(']');
+        }
+        out.push_str("}}");
+        zeroize::Zeroizing::new(out)
+    }
+
+    /// Writes them to a file that must not exist yet, readable by this user alone. The app names a file in a
+    /// private folder, reads it, and removes it at once.
+    pub fn write_new(&self, path: &Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path)?;
+        file.write_all(self.to_json().as_bytes())?;
+        file.sync_all()
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -131,6 +208,8 @@ pub struct Origin {
     pub modified: u64,
     /// The pieces that make the key, in order. A key of two parts names two.
     pub parts: Vec<Part>,
+    /// The project the file is in, as a path in `projects`.
+    pub project: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +252,8 @@ struct Draft {
     owner: sort::Owner,
     server: Option<String>,
     origins: Vec<Origin>,
+    /// The SHA-256 of each part's value. None for a whole file, which is not read.
+    hashes: Vec<[u8; 32]>,
 }
 
 /// What the steps need from this Mac: the providers it knows, the servers you approved, and
@@ -182,16 +263,24 @@ pub struct Setup<'a> {
     host_approved: &'a (dyn Fn(&str, &str) -> bool + Sync),
     avoid: Vec<PathBuf>,
     budget: Budget,
+    /// The folders the person asked never to look in.
+    ignore: Ignore,
 }
 
 impl Setup<'static> {
-    /// The providers and approvals in keyreeve's folder, which itself is never searched.
+    /// The providers and approvals in keyreeve's folder, which itself is never searched, and the folders the
+    /// person never wants searched.
     pub fn this_mac() -> Self {
+        Self::this_mac_ignoring(Ignore::default())
+    }
+
+    pub fn this_mac_ignoring(ignore: Ignore) -> Self {
         Self {
             known: sort::known(),
             host_approved: &providers::host_approved,
             avoid: vec![providers::home()],
             budget: Budget::EVERYWHERE,
+            ignore,
         }
     }
 }
@@ -203,6 +292,7 @@ pub fn bring(scope: &Scope, checker: Option<&Checker>) -> Report {
 
 pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Report {
     let known = &setup.known;
+    let ignore = &setup.ignore;
     let mut skipped = Skipped::default();
     let mut unfinished = Vec::new();
     let (files, roots, suggested, scope_name) = match scope {
@@ -216,6 +306,7 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
                     Shape::Env,
                     &read::is_env_name,
                     avoid,
+                    ignore,
                     &mut skipped,
                 ));
             }
@@ -229,6 +320,7 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
                 Shape::Any,
                 &|_| true,
                 &setup.avoid,
+                ignore,
                 &mut skipped,
             );
             (files, vec![folder.clone()], Vec::new(), "folder")
@@ -239,7 +331,8 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
             } else {
                 under.clone()
             };
-            let walked = read::walk_everywhere(&roots, &setup.avoid, setup.budget, &mut skipped);
+            let walked =
+                read::walk_everywhere(&roots, &setup.avoid, ignore, setup.budget, &mut skipped);
             let mut files = if under.is_empty() {
                 read::home_files(home)
             } else {
@@ -257,9 +350,17 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
             (files, roots, Vec::new(), "everywhere")
         }
     };
+    let mut bounds = roots.clone();
+    if let Scope::Places { home, .. } | Scope::Everywhere { home, .. } = scope {
+        bounds.push(home.clone());
+    }
+    let mut finder = project::Finder::new(bounds);
     let mut drafts: Vec<Draft> = Vec::new();
+    let mut projects: BTreeMap<String, Project> = BTreeMap::new();
     for file in &files {
-        drafts.extend(drafts_of(file, known, &mut skipped));
+        let project = finder.project_of(&file.path, file.area == Area::Home);
+        drafts.extend(drafts_of(file, known, &project.path, &mut skipped));
+        projects.entry(project.path.clone()).or_insert(project);
     }
     let drafts = join_duplicates(drafts);
     let checks = match checker {
@@ -267,11 +368,18 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
         None => drafts.iter().map(|_| None).collect(),
     };
     let mut summary = Summary::default();
+    let mut hashes = Hashes::default();
     let candidates: Vec<Candidate> = drafts
         .into_iter()
         .zip(checks)
         .enumerate()
-        .map(|(index, (draft, check))| {
+        .map(|(index, (mut draft, check))| {
+            let secret = matches!(draft.class, Class::Key | Class::Login);
+            if secret && !draft.hashes.is_empty() {
+                hashes
+                    .0
+                    .insert(index + 1, std::mem::take(&mut draft.hashes));
+            }
             let candidate = finish(index + 1, draft, check);
             match candidate.group {
                 Group::Works => summary.works += 1,
@@ -282,6 +390,15 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
             summary.duplicates += usize::from(candidate.duplicate);
             candidate
         })
+        .collect();
+    // Only the projects a candidate was found in.
+    let used: std::collections::BTreeSet<&str> = candidates
+        .iter()
+        .flat_map(|c| c.origins.iter().map(|o| o.project.as_str()))
+        .collect();
+    let projects: Vec<Project> = projects
+        .into_values()
+        .filter(|p| used.contains(p.path.as_str()))
         .collect();
     let shown = |paths: &[PathBuf]| paths.iter().map(|p| p.display().to_string()).collect();
     Report {
@@ -295,6 +412,8 @@ pub fn bring_with(scope: &Scope, setup: &Setup, checker: Option<&Checker>) -> Re
         unfinished: shown(&unfinished),
         summary,
         candidates,
+        projects,
+        hashes,
     }
 }
 
@@ -347,7 +466,12 @@ fn finish(id: usize, draft: Draft, check: Option<Check>) -> Candidate {
 }
 
 /// The pieces of one file, sorted and paired into keys.
-fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Draft> {
+fn drafts_of(
+    file: &FileFound,
+    known: &[Known],
+    project: &str,
+    skipped: &mut Skipped,
+) -> Vec<Draft> {
     let pieces = read::pieces(file, skipped);
     let meta = std::fs::symlink_metadata(&file.path).ok();
     let stamp = Origin {
@@ -359,6 +483,7 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_secs()),
         parts: Vec::new(),
+        project: project.to_owned(),
     };
     let file_words: Vec<String> = file
         .path
@@ -428,6 +553,10 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
                 },
             )
         };
+        let hashes = parts
+            .iter()
+            .map(|p| Sha256::digest(p.value.as_bytes()).into())
+            .collect();
         drafts.push(Draft {
             class,
             why,
@@ -438,6 +567,7 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
                 parts: parts.iter().map(|p| Part::of(p)).collect(),
                 ..stamp.clone()
             }],
+            hashes,
         });
         for i in members.parts.into_iter().chain(members.endpoint) {
             used[i] = true;
@@ -468,11 +598,17 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
             ),
             _ => sort::Owner::default(),
         };
-        let value = if piece.whole.is_some() {
+        let (value, hashes) = if piece.whole.is_some() {
             // A whole file is not read here, so it is told apart by its place alone.
-            Secret::new(format!("\0{}", file.path.display()))
+            (
+                Secret::new(format!("\0{}", file.path.display())),
+                Vec::new(),
+            )
         } else {
-            Secret::new(piece.value.as_str())
+            (
+                Secret::new(piece.value.as_str()),
+                vec![Sha256::digest(piece.value.as_bytes()).into()],
+            )
         };
         drafts.push(Draft {
             class,
@@ -484,6 +620,7 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
                 parts: vec![Part::of(&piece)],
                 ..stamp.clone()
             }],
+            hashes,
         });
     }
     drafts

@@ -1,18 +1,73 @@
 use super::usage;
-use keyreeve::bring::{self, Scope};
+use keyreeve::bring::{self, settings, Ignore, Scope, Setup};
+use keyreeve::providers;
 use keyreeve::transport::HttpTransport;
 use keyreeve::verify;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+/// `keyreeve bring ignore`: lists the folders Bring in never looks in, and adds or removes some.
+fn run_ignore(args: &[String]) -> ExitCode {
+    let file = settings::file(&providers::home());
+    let mut rules = match settings::load(&file) {
+        Ok(rules) => rules,
+        Err(problem) => {
+            eprintln!("bring: {problem}, so it was left as it is");
+            return ExitCode::from(2);
+        }
+    };
+    let before = rules.clone();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let Some(rule) = rest.next() else {
+            return usage();
+        };
+        let rule = rule.trim().to_owned();
+        if rule.is_empty() {
+            return usage();
+        }
+        match arg.as_str() {
+            "--add" => {
+                if !rules.contains(&rule) {
+                    rules.push(rule);
+                }
+            }
+            "--remove" => rules.retain(|r| *r != rule),
+            _ => return usage(),
+        }
+    }
+    if rules.len() > settings::MAX_RULES {
+        eprintln!("bring: at most {} folders", settings::MAX_RULES);
+        return ExitCode::from(2);
+    }
+    if rules != before {
+        if let Err(problem) = settings::save(&file, &rules) {
+            eprintln!("bring: {problem}");
+            return ExitCode::FAILURE;
+        }
+    }
+    if rules.is_empty() {
+        println!("Bring in looks everywhere it was asked to. Add a folder with --add <folder>.");
+    }
+    for rule in &rules {
+        println!("{rule}");
+    }
+    ExitCode::SUCCESS
+}
+
 /// `keyreeve bring`: reads, sorts and checks, and never moves, copies or changes a file.
 pub fn run_bring(args: &[String]) -> ExitCode {
+    if args.first().map(String::as_str) == Some("ignore") {
+        return run_ignore(&args[1..]);
+    }
     let mut places = false;
     let mut everywhere = false;
     let mut under: Vec<PathBuf> = Vec::new();
     let mut folder: Option<PathBuf> = None;
     let mut projects: Vec<PathBuf> = Vec::new();
     let (mut dry_run, mut check, mut json) = (false, false, false);
+    let mut ignored: Vec<String> = Vec::new();
+    let mut hashes_out: Option<PathBuf> = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -28,6 +83,14 @@ pub fn run_bring(args: &[String]) -> ExitCode {
             },
             "--projects" => match rest.next() {
                 Some(dir) => projects.push(PathBuf::from(dir)),
+                None => return usage(),
+            },
+            "--ignore" => match rest.next() {
+                Some(rule) => ignored.push(rule.clone()),
+                None => return usage(),
+            },
+            "--hashes-out" => match rest.next() {
+                Some(file) => hashes_out = Some(PathBuf::from(file)),
                 None => return usage(),
             },
             "--dry-run" => dry_run = true,
@@ -81,7 +144,30 @@ pub fn run_bring(args: &[String]) -> ExitCode {
         verify::check(recipe, key, &mut HttpTransport::for_recipe(recipe))
     };
     let checks = !dry_run || check;
-    let report = bring::bring(&scope, checks.then_some(&checker as &bring::Checker));
+    let mut rules = match settings::load(&settings::file(&providers::home())) {
+        Ok(rules) => rules,
+        Err(problem) => {
+            eprintln!("bring: {problem}. Fix it, or remove it to look everywhere");
+            return ExitCode::from(2);
+        }
+    };
+    rules.extend(ignored);
+    let setup = Setup::this_mac_ignoring(Ignore::new(&rules, home.as_deref()));
+    let report = bring::bring_with(
+        &scope,
+        &setup,
+        checks.then_some(&checker as &bring::Checker),
+    );
+    // Each key's SHA-256 goes to a file of its own that must not exist yet, never into the report or the screen.
+    if let Some(file) = &hashes_out {
+        if report.hashes.write_new(file).is_err() {
+            eprintln!(
+                "bring: {} could not be made, or is there already",
+                file.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
     if json {
         match serde_json::to_string_pretty(&report) {
             Ok(text) => println!("{text}"),
@@ -96,6 +182,15 @@ pub fn run_bring(args: &[String]) -> ExitCode {
     );
     for line in bring::lines(&report, home.as_deref()) {
         println!("{line}");
+    }
+    if !report.skipped.rules.is_empty() {
+        let rules: Vec<String> = report
+            .skipped
+            .rules
+            .iter()
+            .map(|(rule, count)| format!("{rule} ({count})"))
+            .collect();
+        println!("Folders left out: {}.", rules.join(", "));
     }
     if !report.unfinished.is_empty() {
         println!(

@@ -146,24 +146,18 @@ func serveAgents() throws {
             // keyreeve-cli, beside this program, always as a dry run: no request leaves this Mac from here.
             let cli = ownPath().deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
             return try AgentBringing.runEngine(binary: cli, arguments: arguments)
-        },
-        sealedSources: {
-            // Where sealed keys came from, read from names and recorded origins. No value is opened.
-            var sources = Set<String>()
-            if let index = try? KeyIndex.load(from: keysFile) {
-                for key in index.keys + index.unoffered { sources.insert(key.source) }
-            }
-            for (name, entry) in (try? store.load())?.entries ?? [:] {
-                sources.insert(name)
-                let lines = (entry.source ?? "").split(separator: "\n").map(String.init)
-                sources.formUnion(lines)
-                // A file sealed from the keys folder is named by its path in it, and the folder is its source.
-                if lines.count == 1, !name.hasPrefix("/"), !name.hasPrefix("added/") {
-                    sources.insert(URL(fileURLWithPath: lines[0]).appendingPathComponent(name).path)
-                }
-            }
-            return sources
         })
+    bridge.scanKeysHashed = { arguments in
+        // Each key's hashes come back in a private file, read and removed at once, and never reach the agent.
+        let cli = ownPath().deletingLastPathComponent().appendingPathComponent("keyreeve-cli")
+        return try AgentBringing.runEngineHashed(binary: cli, arguments: arguments)
+    }
+    bridge.sealedMatcher = {
+        // The vault's keyed digests and the chip key that needs no fingerprint: nothing is opened, and no one is asked.
+        SealedMatcher.load(
+            store: store, digestsFile: home.appendingPathComponent(ValueDigests.fileName), keys: try? KeyIndex.load(from: keysFile))
+    }
+    bridge.projects = { Projects.load(from: Projects.file(home: home)) }
     bridge.places = { PlaceBook.load(from: PlaceBook.file(home: home)) }
     bridge.proceduresFolder = PlaceBook.proceduresFolder(home: home)
     // One message per line, at most a megabyte: a client that sends more is told so and the line is

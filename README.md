@@ -43,7 +43,8 @@ The `keyreeve` command alone, without the app, runs on Linux too: `cargo install
 
 1. **Open the app** and press **Bring in your keys**. It looks where tools keep keys on this Mac (and in the project
    folders you turn on for `.env` files) or in a folder you choose, checks each key, and shows what it found with the values
-   hidden. You decide only the doubtful ones, and seal with your fingerprint once. Your files stay where they are.
+   hidden, grouped by project and marked already in the vault or new. You decide only the doubtful ones, and seal with your
+   fingerprint once. Your files stay where they are.
 2. **Create the vault.** In **Security and backup**, press **Create my vault**. Write down the recovery key it shows once,
    away from this Mac.
 3. **Seal a key.** Copy a key from your provider and press **+** (Add a key). keyreeve tells the provider from how the key
@@ -132,8 +133,9 @@ Agents connect over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault 
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes, only while you allow it |
 | `list_places`, `propose_places` | see where offered keys live and propose new places, which you approve with your fingerprint |
-| `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
-| `propose_bring` | proposes which keys found to seal; you review it in Bring in and seal with one fingerprint |
+| `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, as a summary by project, then one project's keys, each marked already sealed or new, with no value and no provider check |
+| `propose_bring` | proposes which keys found to seal, and folders to stop looking in; you review it in Bring in and seal with one fingerprint |
+| `list_projects` | your projects: folder, keys (identifiers only for offered ones), where they live and their key set |
 
 Every yes, no and use goes in `~/.keyreeve/audit.jsonl`, with no values. Each line carries the hash of the one before, so
 `keyreeve-vault audit --verify` finds an edit.

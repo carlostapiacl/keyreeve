@@ -52,7 +52,7 @@ public struct MainView: View {
     /// Goes to a section or a filter. Sections are sidebar rows; a filter shows My keys with it on.
     private func go(_ target: Sidebar) {
         switch target {
-        case .home, .all, .attention, .vault, .agents, .providers, .rotation, .log:
+        case .home, .all, .attention, .vault, .agents, .providers, .projects, .rotation, .log:
             filterOverride = nil
             selection = target
         default:
@@ -121,6 +121,7 @@ public struct MainView: View {
                         }
                         .tag(Sidebar.agents)
                     }
+                    Label(T("Projects"), systemImage: "folder").tag(Sidebar.projects)
                     Label(T("Rotation"), systemImage: "arrow.triangle.2.circlepath").tag(Sidebar.rotation)
                     Label(T("Log"), systemImage: "list.bullet.rectangle").tag(Sidebar.log)
                     Label(T("Providers"), systemImage: "puzzlepiece.extension").tag(Sidebar.providers)
@@ -184,6 +185,8 @@ public struct MainView: View {
             AgentsView(model: model)
         } else if selection == .providers {
             ProvidersView(model: model)
+        } else if selection == .projects {
+            ProjectsView(model: model)
         } else {
             HStack(spacing: 0) {
                 if shown.isEmpty {
@@ -267,6 +270,7 @@ public struct MainView: View {
         case .rotation: return T("Rotation")
         case .log: return T("Log")
         case .providers: return T("Providers")
+        case .projects: return T("Projects")
         case .checkable: return T("Can be checked")
         case .critical: return T("Critical keys")
         case .stale: return T("Older than suggested")
@@ -322,7 +326,7 @@ public struct MainView: View {
     /// Sections that show the list of keys, where filters and checks belong. The tool sections have their own.
     private var showsList: Bool {
         switch selection ?? .all {
-        case .home, .vault, .agents, .providers, .rotation, .log: return false
+        case .home, .vault, .agents, .providers, .projects, .rotation, .log: return false
         default: return true
         }
     }

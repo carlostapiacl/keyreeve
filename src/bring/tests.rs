@@ -44,6 +44,7 @@ fn setup() -> Setup<'static> {
         host_approved: &|_, _| false,
         avoid: Vec::new(),
         budget: Budget::EVERYWHERE,
+        ignore: Ignore::default(),
     }
 }
 
@@ -814,4 +815,271 @@ fn a_spent_budget_names_the_folders_not_finished_and_they_can_be_searched_alone(
     );
     assert!(next.unfinished.is_empty());
     assert_eq!(paths(&next, &home.0), ["b/.env", "c/.env"]);
+}
+
+#[test]
+fn test_folders_sdk_caches_and_the_persons_folders_are_left_out_and_counted() {
+    let home = Temp::new("ignore");
+    let key = |n: &str| format!("API_KEY=sk-proj-CANARY{n}000000000000000000\n");
+    home.write("code/app/.env", &key("app"));
+    for skipped in [
+        "code/app/tests/.env",
+        "code/app/test/.env",
+        "code/lib/__fixtures__/.env",
+        "code/lib/spec/support/.env",
+        "code/sdk/flutter/packages/.env",
+        "go/pkg/mod/github.com/x/.env",
+        "archive/old/.env",
+        "bench/repo1/.env",
+        "bench/repo2/.env",
+        "code/app/scratch/.env",
+    ] {
+        home.write(skipped, &key("skipped"));
+    }
+    let bench = format!("{}/bench/", home.0.display());
+    let setup = Setup {
+        ignore: Ignore::new(
+            &[
+                "~/archive".to_owned(),
+                bench.clone(),
+                "scratch".to_owned(),
+                // Not a rule: a relative path with a slash.
+                "some/where".to_owned(),
+            ],
+            Some(&home.0),
+        ),
+        ..setup()
+    };
+    let scope = Scope::Everywhere {
+        home: home.0.clone(),
+        under: Vec::new(),
+    };
+    let report = bring_with(&scope, &setup, None);
+    assert_eq!(paths(&report, &home.0), ["code/app/.env"]);
+    let rules: Vec<(&str, usize)> = report
+        .skipped
+        .rules
+        .iter()
+        .map(|(rule, count)| (rule.as_str(), *count))
+        .collect();
+    let mut expected = vec![
+        ("__fixtures__", 1),
+        ("flutter", 1),
+        ("go/pkg/mod", 1),
+        ("scratch", 1),
+        ("spec", 1),
+        ("test", 1),
+        ("tests", 1),
+        ("~/archive", 1),
+        (bench.as_str(), 1),
+    ];
+    expected.sort();
+    assert_eq!(rules, expected);
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["skipped"]["rules"]["tests"], 1);
+    assert_no_value(&report);
+
+    // A project folder searched for .env files leaves out the person's folders too, but not tests: only a walk
+    // of whole folders does that.
+    let places = Scope::Places {
+        home: home.0.join("nohome"),
+        projects: vec![home.0.join("code")],
+    };
+    let report = bring_with(&places, &setup, None);
+    assert_eq!(
+        paths(&report, &home.0),
+        [
+            "code/app/.env",
+            "code/app/test/.env",
+            "code/app/tests/.env",
+            "code/lib/__fixtures__/.env",
+            "code/lib/spec/support/.env",
+            "code/sdk/flutter/packages/.env"
+        ]
+    );
+    assert_eq!(report.skipped.rules.get("scratch"), Some(&1));
+}
+
+#[test]
+fn a_folder_chosen_is_searched_even_under_a_rule() {
+    let home = Temp::new("ignore-root");
+    home.write(
+        "archive/x/.env",
+        "API_KEY=sk-proj-CANARYroot000000000000000\n",
+    );
+    let setup = Setup {
+        ignore: Ignore::new(&["~/archive".to_owned()], Some(&home.0)),
+        ..setup()
+    };
+    let scope = Scope::Everywhere {
+        home: home.0.clone(),
+        under: vec![home.0.join("archive")],
+    };
+    let report = bring_with(&scope, &setup, None);
+    assert_eq!(paths(&report, &home.0), ["archive/x/.env"]);
+}
+
+#[test]
+fn each_key_belongs_to_the_nearest_project_above_it() {
+    let home = Temp::new("projects");
+    let key = |n: &str| format!("API_KEY=sk-proj-CANARY{n}000000000000000000\n");
+    // A repository, with a key file deep in it and a .env in a folder of its own.
+    home.write("code/shop/.git/HEAD", "ref: main\n");
+    home.write(
+        "code/shop/config/keys/api-key.txt",
+        "CANARYnamedValue000000000000aB1\n",
+    );
+    home.write("code/shop/web/package.json", "{}\n");
+    home.write("code/shop/web/src/.env.local", &key("web"));
+    // A folder with only a .env is a project.
+    home.write("code/bot/.env", &key("bot"));
+    // Nothing marks this one, so the file's folder is its project.
+    home.write(
+        "notes/old/api-token.txt",
+        "CANARYnamedValue000000000000aB2\n",
+    );
+    // A marker above the folder searched does not count.
+    home.write("Cargo.toml", "[package]\n");
+    home.write(
+        ".aws/credentials",
+        "[default]\naws_access_key_id = AKIACANARY0000000007\naws_secret_access_key = CANARYawsSecret00000000000000000000007\n",
+    );
+    let scope = Scope::Everywhere {
+        home: home.0.clone(),
+        under: vec![home.0.join("code"), home.0.join("notes")],
+    };
+    let report = bring_with(&scope, &setup(), None);
+    let project_of = |end: &str| -> String {
+        let candidate = report
+            .candidates
+            .iter()
+            .find(|c| c.origins[0].path.ends_with(end))
+            .unwrap_or_else(|| panic!("{end} was not found"));
+        Path::new(&candidate.origins[0].project)
+            .strip_prefix(&home.0)
+            .unwrap()
+            .display()
+            .to_string()
+    };
+    assert_eq!(project_of("api-key.txt"), "code/shop");
+    assert_eq!(project_of(".env.local"), "code/shop/web");
+    assert_eq!(project_of("bot/.env"), "code/bot");
+    assert_eq!(project_of("api-token.txt"), "notes/old");
+    let listed: Vec<(String, Option<&str>)> = report
+        .projects
+        .iter()
+        .map(|p| {
+            (
+                Path::new(&p.path)
+                    .strip_prefix(&home.0)
+                    .unwrap()
+                    .display()
+                    .to_string(),
+                p.marker,
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("code/bot".to_owned(), Some(".env")),
+            ("code/shop".to_owned(), Some(".git")),
+            ("code/shop/web".to_owned(), Some("package.json")),
+            ("notes/old".to_owned(), None),
+        ]
+    );
+    assert_eq!(report.projects[1].name, "shop");
+
+    // A tool's file in the home folder is its own folder's, however the home folder is marked.
+    let home_report = bring_with(&places(&home), &setup(), None);
+    let aws = home_report
+        .candidates
+        .iter()
+        .find(|c| c.origins[0].path.ends_with(".aws/credentials"))
+        .unwrap();
+    assert_eq!(
+        aws.origins[0].project,
+        home.0.join(".aws").display().to_string()
+    );
+}
+
+fn hex_of(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+#[test]
+fn each_part_is_hashed_apart_from_the_report_and_the_report_holds_no_hash() {
+    let home = Temp::new("hashes");
+    let secret = "sk-proj-CANARYhashed00000000000000";
+    home.write(
+        "app/.env",
+        &format!("OPENAI_API_KEY={secret}\nSITE=https://example.com\n"),
+    );
+    home.write(
+        "app/google.env",
+        "GOOGLE_CLIENT_ID=CANARY-id.apps.googleusercontent.com\nGOOGLE_CLIENT_SECRET=CANARYclientSecret000000\n",
+    );
+    let scope = Scope::Folder(home.0.join("app"));
+    let report = bring_with(&scope, &setup(), None);
+    assert_no_value(&report);
+    let json = serde_json::to_string(&report).unwrap();
+    let debug = format!("{report:?}");
+    for value in [
+        secret,
+        "CANARY-id.apps.googleusercontent.com",
+        "CANARYclientSecret000000",
+    ] {
+        let hex = hex_of(value);
+        assert!(
+            !json.contains(&hex) && !debug.contains(&hex),
+            "a hash reached the report"
+        );
+    }
+    let openai = report
+        .candidates
+        .iter()
+        .find(|c| c.origins[0].parts[0].name.as_deref() == Some("OPENAI_API_KEY"))
+        .unwrap();
+    let hashes = report.hashes.of(openai.id).unwrap();
+    assert_eq!(hashes.len(), 1);
+    assert_eq!(super::hex(&hashes[0]), hex_of(secret));
+    let client = report
+        .candidates
+        .iter()
+        .find(|c| c.origins[0].parts.len() == 2)
+        .unwrap();
+    let parts: Vec<String> = report
+        .hashes
+        .of(client.id)
+        .unwrap()
+        .iter()
+        .map(|h| super::hex(h))
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            hex_of("CANARY-id.apps.googleusercontent.com"),
+            hex_of("CANARYclientSecret000000")
+        ]
+    );
+    // Configuration is not a key, so it has no hash.
+    assert_eq!(report.hashes.len(), 2);
+
+    // The file the app reads is new, private, and never written over.
+    let out = home.0.join("hashes.json");
+    report.hashes.write_new(&out).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&out).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let read: serde_json::Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(read["keys"][openai.id.to_string()][0], hex_of(secret));
+    assert!(report.hashes.write_new(&out).is_err());
 }

@@ -110,9 +110,14 @@ public struct AgentBridge {
     let markUnattended: (_ key: String, _ prompt: String) throws -> Void
     /// Runs `keyreeve bring` with these arguments, always a dry run, and returns its report. Tests answer for it.
     let scanKeys: (_ arguments: [String]) throws -> Data
-    /// The files keys in keys.toml and the vault came from, to tell which keys found look sealed. Places only.
-    let sealedSources: () -> Set<String>
     let held = Held()
+    /// Runs `keyreeve bring` as `scanKeys` does, and also gets each key's hashes apart from the report, to compare with
+    /// the vault. Set by the server; without it nothing is compared.
+    public var scanKeysHashed: ((_ arguments: [String]) throws -> (report: Data, hashes: [Int: [String]]))?
+    /// The keyed digests of the vault's values and the key that makes them, read with no prompt.
+    public var sealedMatcher: () -> Result<SealedMatcher, SealedMatcher.UnavailableError> = { .failure(.init(.nothingLearned)) }
+    /// The person's projects, read again for each request.
+    public var projects: () -> Projects = { Projects() }
     /// Where keys live, read again for each request. Set by the server; empty elsewhere.
     public var places: () -> PlaceBook = { PlaceBook() }
     /// The person's procedures folder, to tell an agent that a procedure it proposes is not there yet.
@@ -167,11 +172,9 @@ public struct AgentBridge {
         markUnattended: @escaping (_ key: String, _ prompt: String) throws -> Void = { _, _ in
             throw VaultError("keys cannot be marked here")
         },
-        scanKeys: @escaping (_ arguments: [String]) throws -> Data = { _ in throw VaultError("keys cannot be looked for here") },
-        sealedSources: @escaping () -> Set<String> = { [] }
+        scanKeys: @escaping (_ arguments: [String]) throws -> Data = { _ in throw VaultError("keys cannot be looked for here") }
     ) {
         self.scanKeys = scanKeys
-        self.sealedSources = sealedSources
         self.decideNoFingerprint = decideNoFingerprint
         self.markUnattended = markUnattended
         self.revision = revision
@@ -380,6 +383,8 @@ public struct AgentBridge {
             return try findKeys(arguments)
         case "propose_bring":
             return try proposeBring(arguments)
+        case "list_projects":
+            return projects().forAgents(offered: Set(describe().keys))
         default:
             throw VaultError("no such tool")
         }
@@ -650,7 +655,7 @@ public struct AgentBridge {
         [
             "name": "propose_places",
             "description":
-                "Propose where keys live, so the person can check them and rotation can update them. Each place: {\"key\": a key offered to agents, \"procedure\": a procedure that updates that kind of place (ssh-env {host, file, variable, service?, compose_dir?}, github-secret {repo, name, environment?}, vercel-env {folder, variable, environment?}, netlify-env {token_key, account, site, variable, context?}, coolify-env {token_key, server, app, variable, restart?}, supabase-secret {token_key, project, name}, or one you wrote in the person's procedures folder), \"params\": an object of those parameters, \"label\": what the person reads, such as \"VPS2 · /opt/lh/.env · OPENAI_API_KEY\", \"why\": how you found it}. Find places yourself, such as by reading which variables a server's env file names, never their values. A procedure is a script that never holds a key: apply gets the new value on stdin, check prints only the SHA-256 of the value in place or absent. They wait in Keyreeve, where the person reviews them, sees each procedure's text, and approves the ones they want with one fingerprint.",
+                "Propose where keys live, so the person can check them and rotation can update them. Each place: {\"key\": a key offered to agents, \"procedure\": a procedure that updates that kind of place (ssh-env {host, file, variable, service?, compose_dir?}, dotenv-local {file, variable} for a dotenv file on this Mac, github-secret {repo, name, environment?}, vercel-env {folder, variable, environment?}, netlify-env {token_key, account, site, variable, context?}, coolify-env {token_key, server, app, variable, restart?}, supabase-secret {token_key, project, name}, or one you wrote in the person's procedures folder), \"params\": an object of those parameters, \"label\": what the person reads, such as \"VPS2 · /opt/lh/.env · OPENAI_API_KEY\", \"why\": how you found it}. Find places yourself, such as by reading which variables a server's env file names, never their values. A procedure is a script that never holds a key: apply gets the new value on stdin, check prints only the SHA-256 of the value in place or absent. They wait in Keyreeve, where the person reviews them, sees each procedure's text, and approves the ones they want with one fingerprint.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -663,15 +668,16 @@ public struct AgentBridge {
         [
             "name": "find_keys",
             "description":
-                "Find keys on this Mac, read-only. where: everywhere (the whole home folder: .env files and files that hold keys, within a time budget), places (where tools keep keys, plus .env files under projects), or folders (only those, as everywhere). Lists each key or login by number n, with its file, the names in it, its provider (strong evidence) or a guess, duplicates, and whether it looks sealed already. Never a value, and nothing is sent to a provider. Configuration, documents and public keys are only counted. If unfinished comes back, call again with where = folders and those folders. Then call propose_bring.",
+                "Find keys on this Mac, read-only. where: everywhere (the whole home folder: .env files and files that hold keys, within a time budget; test folders, fixtures, examples, SDK caches and the person's ignored folders are left out and counted), places (where tools keep keys, plus .env files under projects), or folders (only those, as everywhere). Answers a summary by project: the nearest folder with .git, package.json, composer.json, Cargo.toml, pyproject.toml, go.mod or a .env, with its counts of keys, logins, duplicates, already sealed and new, and the providers seen. Then call again with project = one of those paths to list its keys by number n: names, file:line, provider or guess, and whether the vault already holds it (compared by a keyed digest, never a value). Never a value, and nothing is sent to a provider. If unfinished comes back, call again with where = folders and those folders. Then call propose_bring with numbers from any of these lists.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "where": ["type": "string", "enum": ["everywhere", "places", "folders"], "description": "places if left out"],
                     "folders": ["type": "array", "items": ["type": "string"], "description": "With where = folders: full paths or ~/paths"],
                     "projects": ["type": "array", "items": ["type": "string"], "description": "With where = places: folders to search for .env files"],
+                    "project": ["type": "string", "description": "A path from the summary's projects: lists that project's keys from the same search, with no new search"],
                     "offset": ["type": "integer", "description": "Where the page starts; next_offset says. Pages reuse the same search"],
-                    "limit": ["type": "integer", "description": "At most 300 keys a page, 100 if left out"],
+                    "limit": ["type": "integer", "description": "At most 300 projects or keys a page, 100 if left out"],
                 ],
             ],
         ],
@@ -693,9 +699,20 @@ public struct AgentBridge {
                         "description": "Keys not to seal: {\"candidates\": [n], \"reason\": why}",
                         "items": ["type": "object"],
                     ],
+                    "ignore": [
+                        "type": "array",
+                        "description": "Folders to suggest never looking in again, such as a benchmark's or an archive's: full paths, ~/paths or a folder's name. The person adds the ones they want",
+                        "items": ["type": "string"],
+                    ],
                 ],
                 "required": ["reason"],
             ],
+        ],
+        [
+            "name": "list_projects",
+            "description":
+                "List the person's projects: name, folder, the keys it uses (identifiers only for keys offered to you, a count for the rest), how many files hold them, and its key set. The person makes and changes projects in Keyreeve. No values.",
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
         ],
         [
             "name": "rotate_key",

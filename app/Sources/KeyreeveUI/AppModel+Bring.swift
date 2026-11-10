@@ -44,6 +44,23 @@ public struct BringState {
     public var agentMissed: [AgentBringing.Proposal.Item] = []
     /// Whether the identifiers, notes and tags the agent suggested are used. The person can turn them off.
     public var useAgentNames = true
+    /// Folders never looked in, from bring.toml.
+    public var ignore: [String] = []
+    /// Each key's SHA-256 as the engine handed it over, in memory only while this sheet is open, so learning what the
+    /// vault holds can compare again without a new search. Never shown, written or logged.
+    var hashes: [Int: [String]] = [:]
+    /// What the vault holds of each key found, by keyed digest.
+    public var sealedNow: [Int: AgentBringing.Sealed] = [:]
+    /// Whether the search was compared with the vault, and how much of it was known.
+    public var comparison: AgentBringing.Comparison?
+    /// The identifier each key sealed here got, by its number.
+    public var sealedIDs: [Int: String] = [:]
+    /// Review by project rather than by what each check said.
+    public var byProject = false
+    /// Places where a key in the vault was found, offered to add in one go.
+    public var placesAdded = false
+    /// Projects remembered from this search.
+    public var projectsKept = 0
 
     public init(projects: [URL] = []) {
         self.projects = projects.map { Project(url: $0, on: false) }
@@ -75,6 +92,8 @@ public struct BringState {
 extension AppModel {
     public func startBringIn() {
         bringing = BringState(projects: BringRunner.suggestedProjects())
+        bringing?.ignore = (try? BringIgnore.load(from: ignoreFile)) ?? []
+        reloadPlaces()
     }
 
     public func cancelBringIn() { bringing = nil }
@@ -113,18 +132,37 @@ extension AppModel {
         }
         bringing?.step = .looking
         bringing?.error = nil
+        let store = vaultStore
+        let digests = digestsFile
+        let index = keyIndex
         Task.detached {
-            let result = Result { try BringRunner.run(binary: binary, scope: scope) }
-            await MainActor.run { self.showBrought(result) }
+            let result = Result { () throws -> (BringReport, [Int: [String]]) in
+                // Each key's hashes come back apart from the report, in a private file read and removed at once.
+                let (report, hashes) = try EngineHashes.around { extra in try BringRunner.run(binary: binary, scope: scope, extra: extra) }
+                return (report, hashes)
+            }
+            let matcher = SealedMatcher.load(store: store, digestsFile: digests, keys: index)
+            await MainActor.run {
+                switch result {
+                case .success(let (report, hashes)):
+                    self.bringing?.hashes = hashes
+                    self.showBrought(.success(report), matcher: matcher)
+                case .failure(let error): self.showBrought(.failure(error), matcher: matcher)
+                }
+            }
         }
     }
 
-    func showBrought(_ result: Result<BringReport, Error>) {
+    func showBrought(
+        _ result: Result<BringReport, Error>,
+        matcher: Result<SealedMatcher, SealedMatcher.UnavailableError> = .failure(.init(.nothingLearned))
+    ) {
         guard bringing != nil else { return }
         switch result {
         case .success(let report):
             bringing?.report = report
-            bringing?.decisions = Self.firstDecisions(report)
+            compareBrought(matcher)
+            bringing?.decisions = Self.firstDecisions(report, sealed: bringing?.sealedNow ?? [:])
             if let proposal = bringing?.agentProposal {
                 let found = Self.agentChoices(report, proposal: proposal)
                 bringing?.agentChoices = found.choices
@@ -138,10 +176,15 @@ extension AppModel {
         }
     }
 
-    /// Keys that work are sealed and dead ones are not, until the person says otherwise. Those to decide wait.
-    nonisolated static func firstDecisions(_ report: BringReport) -> [Int: Bool] {
+    /// Keys that work are sealed and dead ones are not, until the person says otherwise. Those to decide wait. A key
+    /// the vault already holds is not sealed again.
+    nonisolated static func firstDecisions(_ report: BringReport, sealed: [Int: AgentBringing.Sealed] = [:]) -> [Int: Bool] {
         var decisions: [Int: Bool] = [:]
         for candidate in report.candidates {
+            if case .now = sealed[candidate.id] {
+                decisions[candidate.id] = false
+                continue
+            }
             switch candidate.suggested {
             case "seal": decisions[candidate.id] = true
             case "skip": decisions[candidate.id] = false
@@ -250,7 +293,8 @@ extension AppModel {
             } else {
                 audit(result.sealed.map { ($0.id, "brought in") }, event: "sealed")
             }
-            bringing?.sealed = result.sealed
+            bringing?.sealed = result.sealed.map { ($0.id, $0.fromProject) }
+            for one in result.sealed { bringing?.sealedIDs[one.candidate] = one.id }
             bringing?.failed = result.failed
             bringing?.step = .done
         } catch {
@@ -273,10 +317,10 @@ extension AppModel {
     nonisolated static func sealBrought(
         _ chosen: [BringCandidate], index: KeyIndex, store: VaultStore, selfHosted: Set<String> = [],
         variables: [String: String] = [:], named: [Int: AgentBringing.Proposal.Item] = [:], writeIndex: (Data) throws -> Void
-    ) throws -> (index: KeyIndex, sealed: [(id: String, fromProject: Bool)], failed: [String]) {
+    ) throws -> (index: KeyIndex, sealed: [(id: String, fromProject: Bool, candidate: Int)], failed: [String]) {
         var index = index
         var values: [(entry: String, data: Data, source: String)] = []
-        var sealed: [(id: String, fromProject: Bool)] = []
+        var sealed: [(id: String, fromProject: Bool, candidate: Int)] = []
         var failed: [String] = []
         for candidate in chosen {
             // The first place it can still be read from: a key found twice is one key.
@@ -308,7 +352,7 @@ extension AppModel {
             (key.more.addedBy, key.more.addedAt) = (KeyArrival.byPerson, KeyArrival.stamp())
             try index.addUnoffered(key)
             values.append((entry, read.data, candidate.origins.map(\.path).joined(separator: "\n")))
-            sealed.append((id, candidate.from_project))
+            sealed.append((id, candidate.from_project, candidate.id))
         }
         guard !values.isEmpty else { return (index, [], failed) }
         try store.update { vault in

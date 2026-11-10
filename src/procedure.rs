@@ -32,6 +32,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const BUILTIN: &[(&str, &str)] = &[
     ("coolify-env", include_str!("../procedures/coolify-env.sh")),
     (
+        "dotenv-local",
+        include_str!("../procedures/dotenv-local.sh"),
+    ),
+    (
         "github-secret",
         include_str!("../procedures/github-secret.sh"),
     ),
@@ -648,6 +652,46 @@ mod tests {
             Found::Hash {
                 sha256: sha256_hex(b"CANARY-new_1")
             }
+        );
+    }
+
+    #[test]
+    fn dotenv_local_updates_a_file_on_this_mac_and_checks_its_hash() {
+        let temp = Temp::new("dotenv-local");
+        let mut runner = Runner::new(temp.0.join("procedures"));
+        runner.limit = Duration::from_secs(30);
+        let file = temp.0.join(".env");
+        fs::write(&file, "A=1\nexport API_KEY='CANARY-old'\n").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        let params = Params::from([
+            ("file".to_owned(), file.display().to_string()),
+            ("variable".to_owned(), "API_KEY".to_owned()),
+        ]);
+        let pin = pin("dotenv-local");
+        assert_eq!(
+            runner.check("dotenv-local", &pin, &params).unwrap(),
+            Found::Hash {
+                sha256: sha256_hex(b"CANARY-old")
+            }
+        );
+        runner
+            .apply("dotenv-local", &pin, &params, &Secret::new("CANARY-new"))
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "A=1\nexport API_KEY='CANARY-new'\n"
+        );
+        assert_eq!(
+            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let other = Params::from([
+            ("file".to_owned(), file.display().to_string()),
+            ("variable".to_owned(), "MISSING".to_owned()),
+        ]);
+        assert_eq!(
+            runner.check("dotenv-local", &pin, &other).unwrap(),
+            Found::Absent
         );
     }
 

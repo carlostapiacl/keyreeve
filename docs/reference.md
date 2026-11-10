@@ -91,10 +91,30 @@ choose, in one screen:
   two minutes and names the folders it did not finish, with **Look in those** to go on. macOS may ask before it reads Desktop,
   Documents and Downloads. Or *Choose a folder*. It skips `node_modules`, `.git`, builds and caches, and needs no Full Disk
   Access.
+- **Don't look here.** Everywhere also leaves out folders named `test`, `tests`, `__tests__`, `fixtures`, `__fixtures__`,
+  `testdata`, `spec` and `examples`, and SDK and package caches (`flutter`, `.pub-cache`, `Pods`, `.gradle`, `.m2`,
+  `go/pkg/mod`, `.cargo/registry`, `.rustup`). Your own list is in `~/.keyreeve/bring.toml`, `ignore = ["~/old-archive",
+  "~/benchmarks"]`: a full path or `~/path` leaves out that folder and everything under it, and a name with no `/` every folder
+  of that name. Edit it on the first screen or with `keyreeve bring ignore --add <folder>` (and `--remove`); `--ignore <folder>`
+  leaves one out for a single search. A folder you choose to search is searched even if it is on the list. The review says how
+  many folders each rule left out.
 - **What it does.** Splits each file into pieces, says what each is (a key, configuration, a login, a document or a public key),
   puts the parts of one key together (client id and secret, Google's three, an access key and its secret with the endpoint as the
   server), and joins the same key found in two places. A key is checked only by the one provider its prefix, its variable
   name or its client id names; a name that only mentions a provider is shown as a guess and sends nothing.
+- **Already in the vault.** Each key found is marked **in your vault as** its identifier, **an earlier value of** one, or
+  **new**, by value and with no value shown: the engine hands the app each value's SHA-256 in a private file it removes at once,
+  and the app turns it into the keyed digest only this Mac makes (see [Where a key lives](#where-a-key-lives)) and looks it up.
+  That needs the digest of every value in the vault. **Learn what the vault holds** opens each sealed value once, with one
+  fingerprint, keeps its keyed digest and each field's, and drops the values; after that, rotations and every other opening keep
+  it current. Until then the review says it cannot tell, and calls nothing new. A key already in the vault starts as skipped.
+- **Projects.** Each key belongs to its project: the nearest folder above its file with `.git`, `package.json`,
+  `composer.json`, `Cargo.toml`, `pyproject.toml`, `go.mod` or a `.env`, or else its own folder. **By project** groups the review
+  so. **Keep projects** writes them to `~/.keyreeve/projects.toml`: each one's name, folder, the identifiers of its keys and the
+  files they were found in, never a value. **Projects**, under Tools, shows each with its keys in the vault, new or missing, its
+  files, and **Make its key set**, a [key set](#several-keys-at-once) of its keys offered to agents.
+- **Places.** Where a key in the vault was found in a dotenv file, the review offers **Add them as places**: one place each,
+  the file and its variable with `dotenv-local`, approved with one fingerprint.
 - **Review.** Values stay hidden. Keys that work are chosen, dead ones are not, configuration and public keys are never sealed,
   and you decide only the doubtful ones.
 - **Seal.** One fingerprint. Each key gets an identifier and is not offered to agents. One click can offer the ones a project's
@@ -428,13 +448,25 @@ confirm and checks the key there.
 Ask an agent to "find all my keys and seal the ones that should be". With `find_keys` it runs what [Bring in](#bring-in) runs, as a
 dry run. `where` is `everywhere` (the whole home folder), `places` (the usual places, and `.env` files under the `projects` it
 names) or `folders` (only those, as everywhere). When everywhere runs out of time, `unfinished` names the folders left, and the agent
-goes on with `where: "folders"`. It gets each key and login by
-number, with its file and line, the names in it, its provider (only from strong evidence) or a guess, whether it was found twice and
-whether it looks sealed already, judged by place and never by value. Configuration, documents and public keys are only counted. No
-value, and no request to any provider.
+goes on with `where: "folders"`. It gets a summary by project, a few kilobytes for a hundred projects:
 
-With `propose_bring` it names the numbers to seal, with an identifier, a description and tags if it wants, and the ones to skip with
-a reason. A number from no search, or a provider keyreeve does not know, refuses the whole proposal. It waits under **Agents**.
+```json
+{"under": "~", "columns": ["path", "keys", "logins", "duplicates", "sealed", "new", "providers"],
+ "projects": [["code/shop", 4, 0, 1, 3, 1, "openai stripe"], ["code/bot", 1, 0, 0, 0, 1, "telegram?"]],
+ "counts": {"keys": 5, "logins": 0, "duplicates": 1, "already_sealed": 3, "earlier_values": 0, "new": 2, "projects": 2, "other": 7},
+ "left_out": {"tests": 40, "~/benchmarks": 1}, "sealed_check": "compared: ..."}
+```
+
+Then `find_keys {"project": "code/shop"}` lists that project's keys from the same search, by number:
+`{"n": 12, "names": "OPENAI_API_KEY", "at": [".env:4"], "provider": "openai", "by": "prefix", "sealed_as": ["openai-shop"]}`.
+`sealed_as` names only keys offered to the agent; for any other it says `"sealed": true`. `new` and the `new` count appear only
+when every value in the vault was compared; until you press **Learn what the vault holds**, `sealed_check` says so and neither is
+claimed. Configuration, documents and public keys are only counted. No value, no hash of one, and no request to any provider.
+
+With `propose_bring` it names the numbers to seal, from the summary's project lists, with an identifier, a description and tags if it
+wants, the ones to skip with a reason, and `ignore`, folders it suggests leaving out, which the review shows for you to add or not. A
+number from no search, or a provider keyreeve does not know, refuses the whole proposal. `list_projects` shows your projects, with
+the identifiers of their keys offered to the agent and only a count of the rest; only you make or change them. It waits under **Agents**.
 **Review** looks again where the agent looked, checks each key with its own provider as Bring in does, and opens the review with the
 agent's choices marked. Change any of them, or turn off its names, and **Seal** with one fingerprint. A provider the agent names is
 only shown: a key is saved with the provider its own evidence names. Sealed keys get identifiers and are not offered to agents, so
@@ -643,6 +675,7 @@ procedure is a program that updates one kind of place:
 | `vercel-env` | folder, variable, environment? | the `vercel` command in a linked folder. A check says only present or absent |
 | `netlify-env` | token_key, account, site, variable, context? | Netlify's API, with a Netlify token of yours through `keyreeve-vault use` |
 | `coolify-env` | token_key, server, app, variable, restart? | Coolify's API, the same way |
+| `dotenv-local` | file, variable | a dotenv file on this Mac, such as a project's `.env`, with one rename, keeping every other line |
 | `supabase-secret` | token_key, project, name | Supabase's API, which lists each secret's SHA-256 |
 
 None of these has run against those services yet. `ssh-env` computes the hash on the server, so the value never comes back. The API

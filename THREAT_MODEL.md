@@ -104,6 +104,15 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   marked to need no fingerprint. Using places creates that chip key once if the vault has none. A procedure, and the place itself, see
   the plain hash. Neither the hash nor a value reaches an agent or the log: they get the result in a word. A procedure that answers
   anything but a hash, `absent` or `present` is an error, and is not shown.
+- **Learning what the vault holds opens every value once.** **Learn what the vault holds** asks for one fingerprint, then opens
+  each sealed value in memory, in the app, writes the keyed digest of it and of each field to `value-digests.json`, and drops it. A
+  no learns nothing. It is the same exposure as any opening with your finger, for every key at once, and nothing leaves the app.
+- **Bring in hashes what it finds, to this Mac only.** To tell whether a key found is already sealed, `keyreeve bring` writes the
+  SHA-256 of each value it found to a new file, readable by you alone, in a private folder the app names; the app reads it, removes
+  it at once, turns each hash into the keyed digest above in memory, and keeps only the answer: sealed (as which key), an earlier
+  value, new, or not compared. A crash between the two leaves that file in your temporary folder; it holds hashes, never a value.
+  The report, the agent's answers, the log and `projects.toml` hold neither a hash nor a value. An agent is told the identifier
+  only of a key offered to it, and only "already sealed" for any other, so it learns that a file holds a key you sealed.
 - **An agent's place is only words until you approve it.** `propose_places` leaves a list under Agents, and nothing is added without
   your fingerprint. `list_places` shows places of keys offered to agents, and only a count for the rest. Parameters such as a host
   or a path are in plain text in `key-places.json`.

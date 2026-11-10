@@ -1,4 +1,5 @@
 import KeyreeveCatalog
+import KeyreeveVault
 import SwiftUI
 
 /// Bring in, on one screen: where to look, then what was found with values hidden, then one fingerprint.
@@ -45,15 +46,39 @@ private struct ChooseWhere: View {
             Text(T("Keyreeve only reads. Nothing is copied, moved or changed, and no value is shown."))
                 .font(Theme.body).foregroundStyle(Theme.muted)
             Picker("", selection: Binding(
-                get: { state.usualPlaces },
-                set: { model.bringing?.usualPlaces = $0 })
+                get: { state.place },
+                set: { place in
+                    model.bringing?.place = place
+                    model.bringing?.under = []
+                })
             ) {
-                Text(T("Usual places on this Mac")).tag(true)
-                Text(T("Choose a folder")).tag(false)
+                Text(T("Usual places on this Mac")).tag(BringState.Place.usual)
+                Text(T("Everywhere in my home folder")).tag(BringState.Place.everywhere)
+                Text(T("Choose a folder")).tag(BringState.Place.folder)
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()
-            if state.usualPlaces {
+            if state.place == .everywhere {
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if state.under.isEmpty {
+                            Text(T("Your whole home folder: the usual places, .env files, and files whose name or start says they hold a key. Other files are not opened."))
+                                .font(Theme.body).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text(T("Only in these folders, as everywhere:")).font(Theme.body).foregroundStyle(Theme.text)
+                            ForEach(state.under, id: \.self) { folder in
+                                Text(shortPath(folder.path)).font(Theme.caption).foregroundStyle(Theme.text)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                        }
+                        Text(T("Skips Library, the Trash, photo and music libraries, iCloud Drive, apps, dependencies, builds and big files. It stops after two minutes and says which folders it did not finish."))
+                            .font(Theme.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                        Label(T("macOS may ask for permission before Keyreeve reads Desktop, Documents and Downloads."), systemImage: "lock.shield")
+                            .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(14)
+                }
+            } else if state.usualPlaces {
                 Card {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(T("Where tools keep keys: AWS, GitHub CLI, gcloud, .netrc, npm, PyPI, Docker, your shell's exports and your SSH keys."))
@@ -121,6 +146,17 @@ private struct BringReview: View {
             Text(T("What was found")).font(Theme.title).foregroundStyle(Theme.text)
             Text(T("Values stay hidden. Decide only the doubtful ones; the rest is already chosen."))
                 .font(Theme.body).foregroundStyle(Theme.muted)
+            if let request = state.request { agentBanner(request) }
+            if let unfinished = state.report?.unfinished, !unfinished.isEmpty {
+                HStack(alignment: .firstTextBaseline) {
+                    Label(T("The search stopped before finishing %d folders: %@", unfinished.count,
+                            unfinished.prefix(4).map(shortPath).joined(separator: ", ") + (unfinished.count > 4 ? "…" : "")),
+                          systemImage: "clock.badge.exclamationmark")
+                        .font(Theme.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button(T("Look in those"), action: model.lookInUnfinished).buttonStyle(KRButtonStyle())
+                }
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     group(T("Work"), icon: "checkmark.circle.fill", tone: .good, rows: state.candidates(.works), toggles: true)
@@ -159,6 +195,28 @@ private struct BringReview: View {
         .padding(24)
     }
 
+    /// Whose suggestions these are, set apart, with the person's say over the names.
+    private func agentBanner(_ request: AccessRequests.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(T("%@ suggested what to seal. Its choices are marked, and you can change any of them.", request.agent), systemImage: "sparkles")
+                .font(Theme.body).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+            if let reason = request.reason {
+                Text("\u{201C}\(reason)\u{201D}").font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(2)
+            }
+            Toggle(T("Use the names and notes it suggested"), isOn: Binding(
+                get: { state.useAgentNames },
+                set: { model.bringing?.useAgentNames = $0 }))
+                .toggleStyle(.checkbox).font(Theme.caption)
+            if !state.agentMissed.isEmpty {
+                Text(T("%d of its choices no longer match what was found: the file changed or is gone.", state.agentMissed.count))
+                    .font(Theme.caption).foregroundStyle(Theme.warn)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.smallRadius))
+    }
+
     @ViewBuilder private var doubtful: some View {
         let rows = state.candidates(.doubtful)
         if !rows.isEmpty {
@@ -171,7 +229,7 @@ private struct BringReview: View {
                 }
                 ForEach(rows) { row in
                     HStack(spacing: 8) {
-                        BringRow(candidate: row, model: model)
+                        BringRow(candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id])
                         Picker("", selection: Binding(
                             get: { state.decisions[row.id] },
                             set: { if let seal = $0 { model.decide(row.id, seal: seal) } })
@@ -193,7 +251,7 @@ private struct BringReview: View {
         if !rows.isEmpty {
             DisclosureGroup(isExpanded: $showOther) {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(rows) { BringRow(candidate: $0, model: model) }
+                    ForEach(rows) { BringRow(candidate: $0, model: model, agent: nil, choice: nil) }
                 }
                 .padding(.top, 4)
             } label: {
@@ -213,7 +271,7 @@ private struct BringReview: View {
                         get: { state.decisions[row.id] == true },
                         set: { model.decide(row.id, seal: $0) })
                     ) {
-                        BringRow(candidate: row, model: model)
+                        BringRow(candidate: row, model: model, agent: state.request?.agent, choice: state.agentChoices[row.id])
                     }
                 }
             }
@@ -225,6 +283,9 @@ private struct BringReview: View {
 private struct BringRow: View {
     let candidate: BringCandidate
     @ObservedObject var model: AppModel
+    /// The agent that proposed this review, and what it suggested for this key.
+    let agent: String?
+    let choice: AgentBringing.Proposal.Item?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -232,6 +293,7 @@ private struct BringRow: View {
                 Text(candidate.partNames.isEmpty ? T("whole file") : candidate.partNames)
                     .font(Theme.rowTitle).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
                 Text(origin).font(Theme.caption).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.middle)
+                if let agent, let choice { suggestion(agent, choice) }
             }
             Spacer(minLength: 6)
             if candidate.duplicate { Chip(text: T("%d places", candidate.origins.count)) }
@@ -248,6 +310,16 @@ private struct BringRow: View {
                 Text(T(reason)).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(1)
             }
         }
+    }
+
+    /// What the agent suggested, in its words and set apart from keyreeve's own.
+    private func suggestion(_ agent: String, _ choice: AgentBringing.Proposal.Item) -> some View {
+        var parts = [choice.seal ? T("%@ suggests sealing it", agent) : T("%@ suggests skipping it", agent)]
+        if let id = choice.id { parts.append(T("as %@", id)) }
+        if let provider = choice.provider, provider != candidate.provider { parts.append(T("says %@", model.providerName(provider))) }
+        if let words = choice.description ?? choice.reason { parts.append("\u{201C}\(words)\u{201D}") }
+        return Label(parts.joined(separator: " · "), systemImage: "sparkles")
+            .font(Theme.caption).foregroundStyle(Theme.accent).lineLimit(1).truncationMode(.tail)
     }
 
     private var origin: String {

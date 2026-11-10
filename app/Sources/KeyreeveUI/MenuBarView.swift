@@ -87,6 +87,8 @@ public struct MenuBarView: View {
                 HStack {
                     Text(request.kind == "sort"
                          ? T("%@ proposes sorting your keys", request.agent)
+                         : request.kind == AgentBringing.kind
+                         ? T("%@ proposes bringing in keys", request.agent)
                          : request.isRotation
                          ? T("%@ asks to rotate %@", request.agent, request.key ?? request.provider)
                          : T("%@ asks for a %@ key", request.agent, request.provider))

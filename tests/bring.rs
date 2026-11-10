@@ -4,6 +4,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Tests run in parallel: each folder gets its own number, so one test's cleanup never removes another's.
+static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 struct Temp(PathBuf);
 
@@ -14,8 +18,11 @@ impl Drop for Temp {
 }
 
 fn temp(name: &str) -> Temp {
-    let path =
-        std::env::temp_dir().join(format!("keyreeve-bring-cli-{name}-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "keyreeve-bring-cli-{name}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
     Temp(path)

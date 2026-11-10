@@ -12,6 +12,8 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
     private let started = DispatchSemaphore(value: 0)
     /// Each request that went out: grant, key and a line for the log.
     public var onEvent: (@Sendable (String, String, String) -> Void)?
+    /// What a provider said of an OAuth credential the proxy exchanged: key, then `active` or `reauthorize`.
+    public var onAuthorization: (@Sendable (String, String) -> Void)?
 
     public init(binary: URL, runFolder: URL) throws {
         for handle in [input.fileHandleForReading, input.fileHandleForWriting, output.fileHandleForReading, output.fileHandleForWriting] {
@@ -61,7 +63,10 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
             let place = "\(parts[1] as? String ?? "?")\(parts[2] as? String ?? "")"
             // How far it got, when it did not get all the way: the provider may have acted on it all the same.
             let outcome = (message["outcome"] as? String).flatMap { $0 == "complete" ? nil : ", \($0)" } ?? ""
-            onEvent?(grant, key, "\(method) \(place) \(parts[3] as? Int ?? 0)\(outcome)")
+            let authorization = message["authorization"] as? String
+            let said = authorization == "reauthorize" ? ", needs authorizing again" : ""
+            onEvent?(grant, key, "\(method) \(place) \(parts[3] as? Int ?? 0)\(outcome)\(said)")
+            if let authorization { onAuthorization?(key, authorization) }
         default:
             guard let grant = message["grant"] as? String else { return }
             lock.lock()

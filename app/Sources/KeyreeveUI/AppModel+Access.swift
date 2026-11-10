@@ -341,8 +341,9 @@ extension AppModel {
         if level != nil { offerIfWaiting(id) }
         // "Always" needs a copy sealed to the chip's key that asks nothing, made with this fingerprint once.
         if level == .always { return markAlways(id) }
-        // Off "always", the copy goes: nothing can open the key with no fingerprint any more.
-        if agentPolicy.levels[id] == .always, let key = keyIndex.key(id) {
+        // Off "always", the copy goes: nothing can open the key with no fingerprint any more. A key a standing
+        // permission still names keeps it, until that permission is removed under Key sets.
+        if agentPolicy.levels[id] == .always, let key = keyIndex.key(id), !loadSets().standingKeys.contains(id) {
             try? vaultStore.update { $0.dropUnattended(name: key.source) }
         }
         applyLevel(level, for: id)

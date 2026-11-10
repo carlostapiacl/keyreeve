@@ -365,6 +365,9 @@ pub struct Entry {
     pub actions: Vec<CustomAction>,
     /// How this provider's keys start, so a pasted key can be recognised.
     pub prefixes: Vec<String>,
+    /// How this provider's OAuth client ids end, so a pasted credentials file can be recognised.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id_ends: Option<String>,
     /// The servers you approved, for a provider each person runs, so the app can tell a server that
     /// was only suggested from one you approved.
     pub approved_hosts: Vec<String>,
@@ -392,6 +395,7 @@ impl Entry {
             programs: runs_of(recipe),
             actions: recipe.actions.clone(),
             prefixes: recipe.prefixes.clone(),
+            client_id_ends: recipe.auth.client_id_ends.clone(),
             approved_hosts: if recipe.self_hosted {
                 approved_hosts().remove(id).unwrap_or_default()
             } else {
@@ -500,6 +504,7 @@ pub fn list() -> Vec<Entry> {
                 programs: Vec::new(),
                 actions: Vec::new(),
                 prefixes: Vec::new(),
+                client_id_ends: None,
                 approved_hosts: Vec::new(),
             }),
         }

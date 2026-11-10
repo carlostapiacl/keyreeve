@@ -85,7 +85,11 @@ choose, in one screen:
 
 - **Where to look.** *Usual places on this Mac*: `~/.aws`, the GitHub CLI, gcloud, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, Docker,
   the `export` lines of your shell's startup files and your SSH keys (only their first line is read), plus `.env` files under the
-  project folders you turn on. Or *Choose a folder*. It skips `node_modules`, `.git`, builds and caches, and needs no Full Disk
+  project folders you turn on. *Everywhere in my home folder*: all of it, for `.env` files and files whose name or start says
+  they hold a key (`.pem`, `.p12`, `.key`, notes called `api-key.txt`, a `.txt` or `.json` starting with a provider's prefix);
+  other files are not opened. It skips Library, the Trash, photo and music libraries, iCloud Drive, apps and big files, stops after
+  two minutes and names the folders it did not finish, with **Look in those** to go on. macOS may ask before it reads Desktop,
+  Documents and Downloads. Or *Choose a folder*. It skips `node_modules`, `.git`, builds and caches, and needs no Full Disk
   Access.
 - **What it does.** Splits each file into pieces, says what each is (a key, configuration, a login, a document or a public key),
   puts the parts of one key together (client id and secret, Google's three, an access key and its secret with the endpoint as the
@@ -283,6 +287,19 @@ servers = "SHA256:abc... SHA256:def..."
 takes `--program`, since its permission is for one program. The app does the same from a key's page, shows what is in force and the
 key's recent use, and can end it.
 
+An OAuth credential, such as Google's `authorized_user` file with a client id, a client secret and a refresh token, works the same
+way. Its variable holds the path of a private copy of the file with stand-ins for the secret and the refresh token, and the real
+client id, which is not a secret (`GOOGLE_APPLICATION_CREDENTIALS` for Google). When the command's library asks the token host
+for an access token, the proxy answers it itself, with a stand-in, and never forwards that request. It gets the real access token
+from the provider on its own, keeps it until shortly before it ends, and puts it on requests to the recipe's hosts that carry the
+stand-in. A token request with anything else is refused. If the provider answers `invalid_grant`, nothing is tried again, and the
+app shows the key as needing to be authorized again, like a key that expired, until you replace it. Libraries that speak HTTP/1.1
+through `HTTPS_PROXY` work this way, such as Python's google-auth and Google's API client. gRPC clients do not.
+
+```bash
+keyreeve-vault use search-console --as GOOGLE_APPLICATION_CREDENTIALS -- python3 weekly_report.py
+```
+
 `--real` hands the command the real key, for what cannot use a stand-in, such as a provider that signs requests or a script of your
 own. It asks for your finger every time and is logged apart. A command that sends a stand-in past the proxy, or ignores its variables,
 simply fails to authenticate.
@@ -306,6 +323,25 @@ keyreeve-vault env app.env -- ./deploy.sh
 ```
 
 One fingerprint opens them all for that command.
+
+### Several keys at once
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 report.py
+keyreeve-vault use --set weekly-report --as calcom=CAL_KEY -- python3 report.py
+```
+
+Each key goes in its own variable. One window lists them with the program, the folder and the reason: untick what you do not want,
+choose 5 minutes, until it finishes, a day, or always for this program in this folder, and give one fingerprint. Single uses from
+one script that arrive within two seconds share that window too.
+
+*Always* is bound to the program's path and SHA-256, the script it runs when its first argument is a file, and the folder. A copy of
+each key is sealed to the chip's key that asks nothing, as for *Always, no fingerprint*, so a script that runs on Monday at 9:00 needs
+no one. A changed program or script, another folder or a key added later asks again. Remove it under **Agents**, in **Key sets**.
+
+A set is a name for a list of keys, made in the app under **Agents**: by hand, or with **Make a set from what this project used**,
+which suggests the keys one folder and program used in the last hour. Sets live in `~/.keyreeve/sets.toml`. A set grants nothing on
+its own, and lists only keys offered to agents. No agent tool makes one.
 
 ### Agents over MCP
 
@@ -333,6 +369,8 @@ The tools an agent gets:
 | `request_access` | asks you to open a closed key, or to save one for a provider |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes for many files, when you turn it on |
+| `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
+| `propose_bring` | proposes which keys found to seal, for you to review in Bring in and seal with one fingerprint |
 
 `use_key` works with any command, including `curl`. An SSH key signs in through keyreeve. A key with no provider can only go to a
 program you allow with `run_with_key`: if the file changes, it is refused until you allow it again. Shells, interpreters, `curl`, `env`
@@ -354,6 +392,9 @@ With `request_access` the agent asks for a key, says why and suggests for how lo
 hours or always, or **Deny**. After a yes the key is free to that agent alone, with one fingerprint and no more questions, until the
 time is up. A no stops that agent asking again in its session. A key already open to another agent is not reopened on new terms:
 you add the second agent under **Agents**.
+
+An agent that needs several keys sends `keys` in place of `key`. You see them in one window, untick what you do not want, and one
+fingerprint opens the rest, so its next `use_key` asks nothing.
 
 When the agent asks for a provider whose key is not saved, the request waits in the app. Pick the file that holds it and press
 **Save and allow**: it is sealed, named and opened to that agent in one step. With no file, **Paste a new one** takes a key you copy
@@ -381,6 +422,23 @@ ones, checks the ones it should, which may ask for your fingerprint, and seals t
 A server an agent suggests is saved but not approved. The key's page says so, and **Approve … and check** approves it after you
 confirm and checks the key there.
 
+### When an agent brings keys in
+
+Ask an agent to "find all my keys and seal the ones that should be". With `find_keys` it runs what [Bring in](#bring-in) runs, as a
+dry run. `where` is `everywhere` (the whole home folder), `places` (the usual places, and `.env` files under the `projects` it
+names) or `folders` (only those, as everywhere). When everywhere runs out of time, `unfinished` names the folders left, and the agent
+goes on with `where: "folders"`. It gets each key and login by
+number, with its file and line, the names in it, its provider (only from strong evidence) or a guess, whether it was found twice and
+whether it looks sealed already, judged by place and never by value. Configuration, documents and public keys are only counted. No
+value, and no request to any provider.
+
+With `propose_bring` it names the numbers to seal, with an identifier, a description and tags if it wants, and the ones to skip with
+a reason. A number from no search, or a provider keyreeve does not know, refuses the whole proposal. It waits under **Agents**.
+**Review** looks again where the agent looked, checks each key with its own provider as Bring in does, and opens the review with the
+agent's choices marked. Change any of them, or turn off its names, and **Seal** with one fingerprint. A provider the agent names is
+only shown: a key is saved with the provider its own evidence names. Sealed keys get identifiers and are not offered to agents, so
+the agent does not see them in `list_keys`, and only you can offer them. The agent learns how many were sealed, never which.
+
 ### One log for everything
 
 ```bash
@@ -389,7 +447,8 @@ keyreeve-vault log --key resend --csv    # for a spreadsheet
 ```
 
 It joins the usage log, what agents ran, every check of a key and your own uses, with names in place of file paths. Each decision
-you make in the app goes in it too: a level changed, a request answered, a pause. No value is in any of them.
+you make in the app goes in it too: a level changed, a request answered, a pause. No value is in any of them. In the app's **Log**, a
+request or use that repeats, such as a bot polling every thirty seconds, is one row with a count; the file keeps every line.
 
 ### With seisin
 
@@ -424,6 +483,8 @@ and never a value or a change to a file. A key is only sent to the one provider 
 ```bash
 keyreeve bring --places --projects ~/code --dry-run   # look, check nothing
 keyreeve bring --folder ~/my-keys                     # look and check each key with one read-only request
+keyreeve bring --everywhere --dry-run                 # the whole home folder, within two minutes
+keyreeve bring --everywhere --under ~/code --dry-run  # go on in a folder it did not finish
 ```
 
 Add `--json` for the report the app reads: paths, names, lines and where each value stands in its file.
@@ -518,7 +579,7 @@ A file can also declare:
 | `auth: { header }` | sends the key in a header. The usual case |
 | `auth: { type: url }` | puts `{key}` in the address, for providers with no other way, such as Telegram |
 | `auth: { type: basic }` | HTTP Basic |
-| `auth: { type: oauth_token }` | exchanges two or three fields for a short-lived token, such as Google or PayPal |
+| `auth: { type: oauth_token }` | exchanges two or three fields for a short-lived token, such as Google or PayPal. `token_host` is in `hosts`, and the other hosts are the APIs a command may reach with it. `client_id_ends` recognizes a pasted credentials file |
 | `auth: { type: aws_sigv4 }` | signs each request, so the secret never travels. AWS and R2 |
 | `auth: { type: ssh }` | greets a server with an SSH key through the system's `ssh`, such as a GitHub deploy key |
 | `self_hosted: true` | each person gives their own server, approved one at a time, always over HTTPS |

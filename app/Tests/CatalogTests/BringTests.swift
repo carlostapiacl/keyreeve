@@ -44,6 +44,13 @@ struct BringTests {
         #expect(key.evidence == "prefix" && key.guessed.isEmpty && key.unchecked == nil)
         #expect(BringScope.places(projects: [URL(fileURLWithPath: "/h/code")]).arguments == ["--places", "--projects", "/h/code"])
         #expect(BringScope.folder(URL(fileURLWithPath: "/k")).arguments == ["--folder", "/k"])
+        #expect(BringScope.everywhere(under: []).arguments == ["--everywhere"])
+        #expect(BringScope.everywhere(under: [URL(fileURLWithPath: "/h/a")]).arguments == ["--everywhere", "--under", "/h/a"])
+        #expect(report.unfinished == nil, "a report from before everywhere still reads")
+        let later = try JSONDecoder().decode(
+            BringReport.self,
+            from: Data(#"{"schema":1,"scope":"everywhere","roots":[],"suggested_projects":[],"files":0,"checked":false,"skipped":{"too_large":0,"unreadable":0,"too_deep":0,"examples":0,"stopped_early":true},"unfinished":["/h/a"],"summary":{"works":0,"doubtful":0,"other":0,"dead":0,"duplicates":0},"candidates":[]}"#.utf8))
+        #expect(later.unfinished == ["/h/a"] && later.skipped.stopped_early)
     }
 
     @Test func readsOneValueFromItsSpan() throws {

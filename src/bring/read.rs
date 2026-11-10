@@ -329,6 +329,295 @@ fn walk_dir(
     }
 }
 
+/// How far a walk of the whole home folder goes, and for how long. When it runs out, the folders not
+/// finished are named, so the search can go on in those alone.
+#[derive(Debug, Clone, Copy)]
+pub struct Budget {
+    pub entries: usize,
+    pub seconds: u64,
+    pub depth: usize,
+}
+
+impl Budget {
+    pub const EVERYWHERE: Budget = Budget {
+        entries: 600_000,
+        seconds: 120,
+        depth: 16,
+    };
+}
+
+/// What a walk of whole folders found, and the folders it did not finish.
+pub struct Walked {
+    pub files: Vec<FileFound>,
+    pub unfinished: Vec<PathBuf>,
+}
+
+/// Hidden folders that hold keys people keep by hand. Every other hidden folder is a tool's own.
+const HIDDEN_KEPT: &[&str] = &[".config", ".secrets", ".credentials", ".keys"];
+/// Besides `SKIP_DIRS`: where nothing a person wrote a key into lives, or that iCloud would download.
+const SKIP_EVERYWHERE: &[&str] = &[
+    "Mobile Documents",
+    "CloudStorage",
+    "Photos Library",
+    "Music",
+    "Movies",
+    "Pictures",
+    "Applications",
+    "anaconda3",
+    "miniconda3",
+    "site-packages",
+];
+/// Bundles: a folder the Finder shows as one file, such as an app or a photo library.
+const BUNDLES: &[&str] = &[
+    ".app",
+    ".photoslibrary",
+    ".photolibrary",
+    ".musiclibrary",
+    ".tvlibrary",
+    ".imovielibrary",
+    ".fcpbundle",
+    ".logicx",
+    ".band",
+    ".bundle",
+    ".framework",
+    ".xcarchive",
+    ".xcodeproj",
+    ".xcworkspace",
+    ".pkg",
+];
+/// Files whose name says what they are: keys and keystores.
+const KEY_EXTENSIONS: &[&str] = &["pem", "p12", "pfx", "key", "jks", "keystore"];
+/// Files that may hold keys, read when their name says so or their start shows a known prefix.
+const NOTE_EXTENSIONS: &[&str] = &["txt", "json", "toml", "yaml", "yml"];
+/// Words in a file's name that say it holds a key.
+const KEY_WORDS: &[&str] = &[
+    "key",
+    "secret",
+    "token",
+    "credential",
+    "password",
+    "passwd",
+    "auth",
+    "service-account",
+    "serviceaccount",
+    "private",
+];
+/// Files a project ships that are never a key file, however their contents read.
+const NOISE: &[&str] = &[
+    "package.json",
+    "package-lock.json",
+    "composer.json",
+    "tsconfig.json",
+    "jsconfig.json",
+    "cargo.toml",
+    "pyproject.toml",
+    "manifest.json",
+    "requirements.txt",
+    "license.txt",
+];
+/// A file is opened only to look for a known prefix while it is this small.
+const SNIFF_BYTES: u64 = 16 * 1024;
+
+fn skip_everywhere(name: &str) -> bool {
+    if SKIP_DIRS.contains(&name) || SKIP_EVERYWHERE.contains(&name) {
+        return true;
+    }
+    if name.starts_with('.') {
+        return !HIDDEN_KEPT.contains(&name);
+    }
+    let lower = name.to_ascii_lowercase();
+    BUNDLES
+        .iter()
+        .any(|ext| lower.ends_with(&ext.to_ascii_lowercase()))
+}
+
+/// Whether a file found in a walk of whole folders is worth reading, and how: `.env` files, keys and
+/// keystores, and notes whose name says key or whose start holds a provider's prefix.
+fn choose(path: &Path, name: &str, size: u64, skipped: &mut Skipped) -> Option<(Shape, Area)> {
+    let lower = name.to_ascii_lowercase();
+    if is_env_name(name) {
+        if is_example(name) {
+            skipped.examples += 1;
+            return None;
+        }
+        return (size <= MAX_FILE_BYTES)
+            .then_some((Shape::Env, Area::Project))
+            .or_else(|| {
+                skipped.too_large += 1;
+                None
+            });
+    }
+    let (stem, ext) = match lower.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, ext),
+        _ => return None,
+    };
+    let keyish = KEY_EXTENSIONS.contains(&ext);
+    let note = NOTE_EXTENSIONS.contains(&ext);
+    if !keyish && !note {
+        return None;
+    }
+    if is_example(name) || NOISE.contains(&lower.as_str()) {
+        return None;
+    }
+    if size > MAX_FILE_BYTES {
+        skipped.too_large += 1;
+        return None;
+    }
+    let named = KEY_WORDS.iter().any(|word| stem.contains(word));
+    if ext == "key" {
+        // A Keynote file is called .key too: only text that starts like a key is one.
+        return starts_like_pem(path).then_some((Shape::Any, Area::Folder));
+    }
+    if keyish || named {
+        return Some((Shape::Any, Area::Folder));
+    }
+    (size <= SNIFF_BYTES && holds_known_prefix(path)).then_some((Shape::Any, Area::Folder))
+}
+
+fn starts_like_pem(path: &Path) -> bool {
+    let mut head = Vec::new();
+    let read =
+        fs::File::open(path).and_then(|file| file.take(SSH_HEADER_BYTES).read_to_end(&mut head));
+    read.is_ok() && head.starts_with(b"-----BEGIN")
+}
+
+/// A word in the file that starts with a prefix a provider publishes. JSON web tokens are left out,
+/// since many files that hold no key carry one.
+fn holds_known_prefix(path: &Path) -> bool {
+    let Ok(bytes) = fs::read(path).map(Zeroizing::new) else {
+        return false;
+    };
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
+        .filter(|word| word.len() >= 16)
+        .any(|word| crate::inventory::kind_of(word).is_some_and(|kind| kind != "jwt"))
+}
+
+/// Walks whole folders for files that hold keys, within a budget. Files right under each folder come
+/// first, then its folders one by one; a folder the budget did not reach, or left halfway, is named
+/// in `unfinished`.
+pub fn walk_everywhere(
+    roots: &[PathBuf],
+    avoid: &[PathBuf],
+    budget: Budget,
+    skipped: &mut Skipped,
+) -> Walked {
+    let mut state = Walk {
+        entries: 0,
+        until: std::time::Instant::now() + std::time::Duration::from_secs(budget.seconds),
+        budget,
+        avoid,
+        files: Vec::new(),
+        out: false,
+    };
+    let mut unfinished = Vec::new();
+    for root in roots {
+        let Ok(read) = fs::read_dir(root) else {
+            skipped.unreadable += 1;
+            continue;
+        };
+        let mut children: Vec<_> = read.flatten().collect();
+        children.sort_by_key(|entry| entry.file_name());
+        let mut folders = Vec::new();
+        for entry in children {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if kind.is_dir() {
+                if !skip_everywhere(name) && !avoid.contains(&entry.path()) {
+                    folders.push(entry.path());
+                }
+            } else if kind.is_file() {
+                state.file(&entry.path(), name, skipped);
+            }
+        }
+        for folder in folders {
+            if state.out || !state.dir(&folder, 1, skipped) {
+                unfinished.push(folder);
+            }
+        }
+    }
+    if state.out {
+        skipped.stopped_early = true;
+    }
+    let mut files = state.files;
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Walked { files, unfinished }
+}
+
+struct Walk<'a> {
+    entries: usize,
+    until: std::time::Instant,
+    budget: Budget,
+    avoid: &'a [PathBuf],
+    files: Vec<FileFound>,
+    /// The budget ran out: nothing more is read.
+    out: bool,
+}
+
+impl Walk<'_> {
+    fn spend(&mut self) -> bool {
+        self.entries += 1;
+        if self.entries > self.budget.entries
+            || (self.entries.is_multiple_of(256) && std::time::Instant::now() >= self.until)
+        {
+            self.out = true;
+        }
+        !self.out
+    }
+
+    fn file(&mut self, path: &Path, name: &str, skipped: &mut Skipped) {
+        let size = fs::symlink_metadata(path).map_or(0, |meta| meta.len());
+        if let Some((shape, area)) = choose(path, name, size, skipped) {
+            self.files.push(FileFound {
+                path: path.to_owned(),
+                area,
+                shape,
+            });
+        }
+    }
+
+    /// Returns whether the folder was walked to its end.
+    fn dir(&mut self, dir: &Path, depth: usize, skipped: &mut Skipped) -> bool {
+        let Ok(read) = fs::read_dir(dir) else {
+            skipped.unreadable += 1;
+            return true;
+        };
+        let mut children: Vec<_> = read.flatten().collect();
+        children.sort_by_key(|entry| entry.file_name());
+        for entry in children {
+            if !self.spend() {
+                return false;
+            }
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let path = entry.path();
+            if kind.is_dir() {
+                if skip_everywhere(name) || self.avoid.contains(&path) {
+                    continue;
+                }
+                if depth + 1 > self.budget.depth {
+                    skipped.too_deep += 1;
+                    continue;
+                }
+                if !self.dir(&path, depth + 1, skipped) {
+                    return false;
+                }
+            } else if kind.is_file() {
+                self.file(&path, name, skipped);
+            }
+        }
+        true
+    }
+}
+
 /// Reads one file into pieces. A file that cannot be read gives none, and is counted.
 pub fn pieces(file: &FileFound, skipped: &mut Skipped) -> Vec<Piece> {
     let Ok(meta) = fs::symlink_metadata(&file.path) else {

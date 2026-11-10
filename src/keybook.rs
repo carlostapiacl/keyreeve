@@ -32,8 +32,8 @@ pub struct BookKey {
     /// the first version wrote them joined with `+` in `field`; they are read into here.
     pub parts: Option<Vec<String>>,
     /// How the key is used: `static` (the default, a value sent as it is) or `oauth` (a client and a
-    /// refresh token kept sealed, from which a short access token is made for each use). Only `static`
-    /// works today; `oauth` is kept here so a book need not change again when it does.
+    /// refresh token kept sealed, from which the proxy gets a short access token for each use). The
+    /// provider's file decides which, and this says it for a person reading the book.
     pub auth: Option<Auth>,
     /// `reauthorize` when the provider no longer accepts the grant and a person must sign in again.
     pub state: Option<KeyState>,

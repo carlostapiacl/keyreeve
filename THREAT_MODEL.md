@@ -171,6 +171,15 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   It keeps the key's shape, so its randomness depends on it: each character is drawn evenly, and a key whose shape leaves under
   64 bits is used with `--real` rather than given a stand-in that could be guessed. Guessing means sending requests to this
   machine's proxy while the permission lasts, a day at most.
+- **An OAuth credential stays in the proxy.** For a key like Google's, keyreeve holds the client secret and the refresh token, and
+  the proxy alone sends them, to the recipe's token host, to get access tokens. The command gets a file with stand-ins for both and
+  the real client id, which is not a secret. A token request it sends is answered by the proxy and never forwarded, and one whose
+  values are not this permission's stand-ins is refused. The real access token goes only on requests to the recipe's hosts, and a
+  reply that echoes it gets a stand-in back. While a permission lasts, a compromised command can still use the API through the proxy,
+  with every scope the credential has. It cannot take the refresh token or the client secret away, so what it can do ends with the
+  permission. A provider that sends a new refresh token gets it used in memory only; the vault keeps the one you sealed. An
+  `invalid_grant` is not retried while the proxy runs, and the key is marked in `key-state.json`, a file only the key service
+  writes, until a token comes again. After a restart the mark stays, and the next use tries the provider once more, then stops again.
 - **The proxy reads that traffic.** It ends TLS for a key's hosts, with a CA made for each run whose key stays in memory. Only commands
   started by `use` are pointed at that CA. The system's own trust store is never touched.
 - **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a

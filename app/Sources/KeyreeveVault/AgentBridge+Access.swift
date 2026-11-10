@@ -11,6 +11,16 @@ extension AgentBridge {
     /// Asks the person to open a closed key to this agent. What they choose is saved, so the next
     /// use_key follows it with no new question here.
     func requestAccess(_ arguments: [String: Any]) throws -> String {
+        if let many = arguments["keys"] as? [String] {
+            guard let reason = arguments["reason"] as? String, !reason.isEmpty else { throw VaultError("this needs keys and reason") }
+            guard arguments["duration"] as? String != "no-fingerprint" else {
+                throw VaultError("no-fingerprint goes one key at a time, with key")
+            }
+            guard let hours = AccessDecision.hours(from: arguments["duration"] as? String ?? "1h") else {
+                throw VaultError("duration is 1h, 4h, 8h, 24h or always")
+            }
+            return try requestAccessMany(((arguments["key"] as? String).map { [$0] } ?? []) + many, reason: reason, hours: hours)
+        }
         guard let key = arguments["key"] as? String,
             let reason = arguments["reason"] as? String, !reason.isEmpty
         else { throw VaultError("this needs key and reason") }
@@ -92,6 +102,109 @@ extension AgentBridge {
         log("opened", key, "\(how), for \(agent)", reason)
         kept("opened: \(how)")
         return "The person opened \(key) to \(agent): \(how). Use use_key; it asks nothing more than one fingerprint."
+    }
+
+    /// Asks the person to open several closed keys in one window. Keys left ticked open with one fingerprint, given
+    /// here, so the agent's next use_key asks nothing. What is not offered, not there or open to other agents is
+    /// said in the answer and never shown in the window.
+    func requestAccessMany(_ asked: [String], reason: String, hours: Int?) throws -> String {
+        var keys: [String] = []
+        for key in asked where !keys.contains(key) { keys.append(key) }
+        guard !keys.isEmpty, keys.count <= KeySets.maxKeys else { throw VaultError("keys holds from 1 to \(KeySets.maxKeys) keys") }
+        let known = Set(try names())
+        let date = now()
+        let current = policy
+        let described = describe()
+        var lines: [String] = []
+        var asking: [String] = []
+        for key in keys {
+            if !known.contains(key) {
+                log("refused", key, "not in the vault or not offered", reason)
+                lines.append("\(key): no key by that name is in the vault")
+            } else if current.level(of: key, at: date) != nil, current.admits(agent: agent, for: key) {
+                lines.append("\(key): already open to \(agent)")
+            } else if current.level(of: key, at: date) != nil {
+                log("refused", key, "open to other agents", reason)
+                lines.append("\(key): open to other agents. Ask the person to add \(agent) in Keyreeve, under Agents")
+            } else if held.refused.contains(key) {
+                log("refused", key, "asked again after a no", reason)
+                lines.append("\(key): the person already said no in this session")
+            } else {
+                asking.append(key)
+            }
+        }
+        guard !asking.isEmpty else { return lines.joined(separator: "\n") }
+        let started = Date()
+        func kept(_ output: String) {
+            transcript(AgentTranscript.Entry(
+                at: started, agent: agent, key: asking.joined(separator: " "), command: "request_access " + asking.joined(separator: " "),
+                reason: reason, exit: 0, output: output, milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
+        }
+        let batch = AccessBatch(
+            items: asking.map { AccessBatch.Item(key: $0, provider: described[$0]?.provider, account: described[$0]?.account) },
+            agent: agent, reason: reason, hours: hours)
+        // A no, or a window closed, opens nothing and changes nothing.
+        guard let answer = decideAccessMany(batch) else {
+            held.refused.formUnion(asking)
+            for key in asking { log("denied", key, "access request", reason) }
+            kept("the person said no")
+            throw VaultError("the person said no to opening " + asking.joined(separator: ", "))
+        }
+        let chosen = asking.filter { answer.keys.contains($0) }
+        for key in asking where !chosen.contains(key) {
+            held.refused.insert(key)
+            log("denied", key, "unticked in the window", reason)
+            lines.append("\(key): the person left it unticked")
+        }
+        guard !chosen.isEmpty else {
+            kept("the person left every key unticked")
+            throw VaultError("the person left every key unticked: " + asking.joined(separator: ", "))
+        }
+        guard let service else { throw VaultError("the key service is not available") }
+        // One fingerprint for every key left ticked, before anything changes, so the next use_key asks nothing.
+        let closes = answer.hours.map { now().addingTimeInterval(TimeInterval($0 * 3600)) }
+        var request = KeyService.Request(
+            op: "use-many", seconds: min(KeyService.maxSeconds, (answer.hours ?? 24) * 3600), program: "request_access",
+            agent: agent, reason: reason, anyProgram: true, notAfter: closes, keys: chosen)
+        request.decided = true
+        let opened = try service(request)
+        let granted = (opened.many ?? []).filter(\.ok).compactMap(\.key)
+        for failed in (opened.many ?? []).filter({ !$0.ok }) {
+            lines.append("\(failed.key ?? "-"): \(failed.error ?? "not opened")")
+        }
+        guard !granted.isEmpty else {
+            for key in chosen { log("denied", key, "fingerprint for the access request", reason) }
+            kept("not opened: no fingerprint")
+            throw VaultError(opened.error ?? "the fingerprint was not given, so nothing was opened")
+        }
+        let requester = agent
+        final class Outcome: @unchecked Sendable { var stale: [String] = [] }
+        let outcome = Outcome()
+        try updatePolicy { policy in
+            for key in granted {
+                // Changed by the person while the window was open: that change stands, and this yes is dropped for it.
+                guard policy.level(of: key, at: date) == nil else {
+                    outcome.stale.append(key)
+                    continue
+                }
+                policy.levels[key] = .free
+                policy.agents[key] = [requester]
+                policy.until[key] = closes
+            }
+        }
+        for key in outcome.stale {
+            _ = try? service(KeyService.Request(op: "revoke", key: key))
+            log("refused", key, "changed while the window was open", reason)
+            lines.append("\(key): changed while the person was asked, so it was not opened")
+        }
+        let how = closes.map { "free until \(ISO8601DateFormatter().string(from: $0))" } ?? "free, always"
+        let opens = granted.filter { !outcome.stale.contains($0) }
+        for key in opens { log("opened", key, "\(how), for \(agent)", reason) }
+        kept("opened: " + opens.joined(separator: " "))
+        let head = opens.isEmpty
+            ? "Nothing was opened."
+            : "The person opened \(opens.joined(separator: ", ")) to \(agent): \(how). Use use_key; it asks nothing more for now."
+        return ([head] + lines).joined(separator: "\n")
     }
 
     /// Asks the person to let agents use a saved key with no fingerprint at all. The window starts on no, the person

@@ -459,6 +459,10 @@ struct Snapshot: Sendable {
             parsed.append(item)
         }
         AppModel.markArrivals(&parsed, vault: vault, index: index, journal: files.rotations)
+        // The service writes what providers said of OAuth keys in a file of its own, never in keys.toml.
+        let marked = KeyStates.needingReauthorization(in: files.keyIndex.deletingLastPathComponent().appendingPathComponent(KeyStates.fileName))
+        let reauthorize = Set((index.keys + index.unoffered).filter { marked.contains($0.id) }.map(\.source))
+        for at in parsed.indices where reauthorize.contains(parsed[at].path) { parsed[at].needsReauthorizing = true }
         items = parsed
         activity = files.activity()
         places = files.allPlaces()

@@ -87,6 +87,8 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public let prefixes: [String]?
     /// For a provider each person runs, the servers you approved. Nil from an engine that does not say.
     public let approved_hosts: [String]?
+    /// How this provider's OAuth client ids end, such as `.apps.googleusercontent.com`.
+    public let client_id_ends: String?
 
     public init(
         id: String, name: String, dashboard: String? = nil, hosts: [String] = [], source: String = "builtin",
@@ -94,8 +96,9 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
         can_rotate_by_hand: Bool = false, single_rotation: Bool = false, tested: Tested = Tested(), env_var: String? = nil,
         self_hosted: Bool = false,
         problem: String? = nil, programs: [String]? = nil, actions: [CustomAction]? = nil, prefixes: [String]? = nil,
-        approved_hosts: [String]? = nil
+        approved_hosts: [String]? = nil, client_id_ends: String? = nil
     ) {
+        self.client_id_ends = client_id_ends
         self.id = id
         self.name = name
         self.dashboard = dashboard
@@ -125,10 +128,21 @@ public struct ProviderDirectory: Sendable {
     public init(_ all: [ProviderInfo] = []) { self.all = all }
 
     /// The provider a pasted key belongs to, by the longest prefix any recipe declares, so `sk_live_`
-    /// is Stripe even though `sk_` is ElevenLabs. Nil when no prefix matches.
+    /// is Stripe even though `sk_` is ElevenLabs. A credentials file, by how its client id ends. Nil when nothing matches.
     public func recognize(_ value: String) -> ProviderInfo? {
-        all.flatMap { info in (info.prefixes ?? []).filter { value.hasPrefix($0) }.map { (info, $0.count) } }
+        if let file = recognizeCredentialsFile(value) { return file }
+        return all.flatMap { info in (info.prefixes ?? []).filter { value.hasPrefix($0) }.map { (info, $0.count) } }
             .max { $0.1 < $1.1 }?.0
+    }
+
+    /// An OAuth credentials file, such as Google's `authorized_user` JSON, by how its client id ends. It is
+    /// sealed whole, and read with no field to name.
+    private func recognizeCredentialsFile(_ value: String) -> ProviderInfo? {
+        guard value.hasPrefix("{"),
+            let object = try? JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+            let client = object["client_id"] as? String, object["client_secret"] is String
+        else { return nil }
+        return all.first { info in info.client_id_ends.map { !$0.isEmpty && client.hasSuffix($0) } ?? false }
     }
 
     /// Shown in place of a key: its known start and its length, and nothing that would let it be used.

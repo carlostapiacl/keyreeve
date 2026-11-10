@@ -63,6 +63,15 @@ comando corre con el reemplazo. Desde una terminal funciona igual:
 keyreeve-vault use github --reason "listar repos" -- gh repo list
 ```
 
+Un proyecto que necesita varias claves las pide juntas: una ventana las muestra todas, desmarcas las que no quieras y una huella
+abre el resto, por 5 minutos, hasta que termine el comando, un día, o siempre para ese programa en esa carpeta. Guarda la lista
+como conjunto en **Agentes**.
+
+```bash
+keyreeve-vault use meta-ads,calcom,sentry -- python3 reporte.py
+keyreeve-vault use --set reporte-semanal -- python3 reporte.py
+```
+
 ![La página de una clave, en la pestaña Uso, ofrecida a los agentes](docs/img/es/key-usage.png)
 
 ## Ofrecida o no
@@ -106,6 +115,10 @@ Cada clave ofrecida tiene un nivel, que eliges en la app.
 La clave real (`keyreeve-vault get`, `--real`, `run_with_key`) pide tu huella cada vez. Cerrar Keyreeve, **Bloquear todo** en
 la barra de menú o `keyreeve-vault revoke` terminan todos los permisos.
 
+Una credencial OAuth, como un inicio de sesión de Google con refresh token, toma los mismos niveles. keyreeve guarda el refresh
+token y pide los tokens de acceso por su cuenta, así una tarea sin nadie al lado puede leer Search Console cada lunes sin tener
+ninguno de los dos.
+
 ![La sección Agentes, con las claves ofrecidas y sus niveles](docs/img/es/agents.png)
 
 ## Cómo la usan los agentes
@@ -117,10 +130,12 @@ valor de una clave.
 |---|---|
 | `list_keys` | las claves ofrecidas que este agente puede usar, las que tiene cerradas y los proveedores sin clave guardada |
 | `use_key` | corre un comando con el reemplazo, a través del proxy local |
-| `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |
+| `request_access` | te pide abrir una clave cerrada, o varias a la vez con `keys`, o guardar una para un proveedor |
 | `run_with_key` | corre un programa que tú permitiste, fijado por su SHA-256, con la clave real en una variable |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios, solo mientras tú lo permites |
+| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
+| `propose_bring` | propone cuáles sellar de las encontradas; tú la revisas en Traer y sellas con una sola huella |
 
 Cada sí, cada no y cada uso queda en `~/.keyreeve/audit.jsonl`, sin valores. Cada línea lleva el hash de la anterior, así
 `keyreeve-vault audit --verify` encuentra una edición.

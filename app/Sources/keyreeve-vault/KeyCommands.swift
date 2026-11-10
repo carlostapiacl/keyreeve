@@ -13,9 +13,17 @@ func listKeys() throws {
 
 func useKey() throws {
     guard let dash = arguments.firstIndex(of: "--"), dash + 1 < arguments.count, dash >= 2 else { fail(help, code: 2) }
-    let id = arguments[1]
-    var options: [String: String] = [:]
+    // `use a,b,c` or `use --set name`: several keys for one command, in one window with one fingerprint.
+    var setName: String?
     var index = 2
+    if arguments[1] == "--set" {
+        guard dash >= 3 else { fail(help, code: 2) }
+        setName = arguments[2]
+        index = 3
+    }
+    let ids = setName == nil ? arguments[1].split(separator: ",").map(String.init).filter { !$0.isEmpty } : []
+    var options: [String: String] = [:]
+    var named: [String] = []
     var wantsReal = false
     while index < dash {
         if arguments[index] == "--real" {
@@ -24,6 +32,7 @@ func useKey() throws {
             continue
         }
         guard ["--as", "--for", "--agent", "--reason"].contains(arguments[index]), index + 1 < dash else { fail(help, code: 2) }
+        if arguments[index] == "--as" { named.append(arguments[index + 1]) }
         options[arguments[index]] = arguments[index + 1]
         index += 2
     }
@@ -33,11 +42,18 @@ func useKey() throws {
         guard let parsed = KeyService.seconds(from: text) else { fail("--for takes a time like 90s, 5m or 2h") }
         seconds = parsed
     }
+    let place = programPlace(command)
+    if setName != nil || ids.count > 1 {
+        guard !wantsReal else { fail("--real goes one key at a time, with its own fingerprint", code: 2) }
+        useKeys(ids, set: setName, named: named, seconds: seconds, options: options, command: command, place: place)
+    }
+    guard let id = ids.first else { fail(help, code: 2) }
     var request = KeyService.Request(
         op: "use", key: id, seconds: seconds, program: command[0], arguments: command.count - 1,
         prompt: nil,
         agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
-        reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal)
+        reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, real: wantsReal,
+        programPath: place.program, script: place.script)
     // A key the person marked "always, no fingerprint" opens with none for a program run in the background, such
     // as a bot started at login. The service grants it only if it finds the mark itself; the real key always asks.
     if !wantsReal { request.unattended = true }
@@ -50,12 +66,94 @@ func useKey() throws {
         fail(answer.sshSocket == nil && (options["--as"] ?? answer.variable) == nil
             ? "\(id) has no variable set, so say which with --as" : error.description, code: 2)
     }
+    run(prepared)
+}
+
+/// Where the program is on disk, and the script it runs when its first argument is a file: what a permission given
+/// "always, for this program in this folder" is bound to, with their SHA-256.
+func programPlace(_ command: [String]) -> (program: String?, script: String?) {
+    let folder = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    func found(_ path: String) -> String? {
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue else { return nil }
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+    var program: String?
+    if command[0].contains("/") {
+        program = found(URL(fileURLWithPath: command[0], relativeTo: folder).path)
+    } else {
+        for directory in (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(command[0]).path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                program = found(candidate)
+                break
+            }
+        }
+    }
+    let script = command.count > 1 && !command[1].hasPrefix("-")
+        ? found(URL(fileURLWithPath: command[1], relativeTo: folder).path) : nil
+    return (program, script)
+}
+
+/// Several keys for one command. Each goes in its own variable, from keys.toml, or `--as id=VAR`.
+func useKeys(
+    _ ids: [String], set: String?, named: [String], seconds: Int?, options: [String: String], command: [String],
+    place: (program: String?, script: String?)
+) -> Never {
+    var keys = ids
+    if let set {
+        let sets: KeySets
+        do { sets = try KeySets.loadStrict(from: home.appendingPathComponent(KeySets.fileName)) } catch { fail("\(error)") }
+        guard let found = sets.set(set) else { fail("no set is called \(set). Keyreeve shows them under Agents, in Key sets") }
+        keys = found.keys
+    }
+    var variables: [String: String] = [:]
+    for pair in named.flatMap({ $0.split(separator: ",").map(String.init) }) {
+        let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+        guard parts.count == 2, keys.contains(parts[0]) else {
+            fail("with several keys, --as takes id=VARIABLE for a key in the list, such as --as \(keys[0])=MY_TOKEN", code: 2)
+        }
+        variables[parts[0]] = parts[1]
+    }
+    let index = (try? KeyIndex.load(from: keysFile)) ?? KeyIndex()
+    // Said before anything is asked, so no finger is spent on a command that cannot start.
+    let unnamed = keys.filter { index.key($0) != nil && variables[$0] == nil && index.key($0)?.variable == nil }
+    guard unnamed.isEmpty else {
+        fail("\(unnamed.joined(separator: ", ")) has no variable set, so say which with --as \(unnamed[0])=VARIABLE", code: 2)
+    }
+    let request = KeyService.Request(
+        op: "use-many", seconds: seconds, program: command[0], arguments: command.count - 1,
+        agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
+        reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, keys: keys, set: set,
+        programPath: place.program, script: place.script)
+    let answer: KeyService.Response
+    do { answer = try askService(request) } catch { fail("\(error)") }
+    guard answer.ok, let many = answer.many else { fail(answer.error ?? "the keys could not be used", code: 77) }
+    var prepared = UseEnvironment.plain(command: command)
+    for one in many {
+        guard one.ok, let id = one.key else {
+            FileHandle.standardError.write(Data("keyreeve-vault: \(one.key ?? "-"): \(one.error ?? "not opened"), so it is not set\n".utf8))
+            continue
+        }
+        guard let each = try? UseEnvironment(answer: one, command: command, variable: variables[id] ?? one.variable) else {
+            FileHandle.standardError.write(Data("keyreeve-vault: \(id) could not be set\n".utf8))
+            continue
+        }
+        prepared.set.merge(each.set) { _, new in new }
+        prepared.setIfMissing.merge(each.setIfMissing) { _, new in new }
+        prepared.unset = Array(Set(prepared.unset + each.unset))
+    }
+    run(prepared)
+}
+
+/// Runs the command in this process, so a permission "until it finishes" ends when it does.
+func run(_ prepared: UseEnvironment) -> Never {
     for name in prepared.unset { unsetenv(name) }
     for (name, value) in prepared.setIfMissing { setenv(name, value, 0) }
     for (name, value) in prepared.set { setenv(name, value, 1) }
     var pointers: [UnsafeMutablePointer<CChar>?] = prepared.command.map { strdup($0) } + [nil]
     execvp(prepared.command[0], &pointers)
-    fail("could not run \(command[0])")
+    fail("could not run \(prepared.command[0])")
 }
 
 /// Opens a permission ahead of time, so what runs later does not stop to ask.
@@ -140,8 +238,47 @@ func serveKeys() throws {
                 let recipient = try? EnclaveRecipient.loadUnattended(blob: blob)
             else { return nil }
             return try? vault.openUnattended(name: source, with: recipient)
-        })
+        },
+        openMany: { sources, prompt in
+            // One fingerprint, then every source opens with it.
+            let context = try EnclaveRecipient.confirm(reason: prompt)
+            let recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), context: context)
+            let vault = try store.load()
+            return try Dictionary(sources.map { ($0, try vault.open(name: $0, with: recipient)) }, uniquingKeysWith: { a, _ in a })
+        },
+        choose: askChoice,
+        sets: { KeySets.load(from: home.appendingPathComponent(KeySets.fileName)) },
+        keepStanding: { standing, values in
+            // The copies that ask nothing first, then the permission that uses them.
+            _ = try store.ensureUnattended()
+            try store.update { vault in
+                for (source, value) in values { try vault.sealUnattended(name: source, value: value) }
+            }
+            try KeySets.update(at: home.appendingPathComponent(KeySets.fileName)) { sets in
+                var kept = standing
+                // Keys given before for the same program as it is now stay; a program that changed starts over.
+                if let old = sets.standing.first(where: { $0.id == standing.id }), old.hash == standing.hash,
+                    old.scriptHash == standing.scriptHash
+                {
+                    kept.keys = Array(Set(old.keys + standing.keys)).sorted()
+                }
+                sets.standing.removeAll { $0.id == standing.id }
+                sets.standing.append(kept)
+            }
+        },
+        openStanding: { source in
+            // Paused, nothing opens with no fingerprint. Otherwise the copy that asks nothing, through the proxy only.
+            guard !AgentBridge.isPaused(home: home), let vault = try? store.load(), let blob = try? store.loadUnattendedBlob(for: vault),
+                let recipient = try? EnclaveRecipient.loadUnattended(blob: blob)
+            else { return nil }
+            return try? vault.openUnattended(name: source, with: recipient)
+        },
+        gather: 2)
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
+    // The app shows a key its provider no longer accepts like one that expired, until it works again.
+    proxy?.onAuthorization = { key, state in
+        try? KeyStates.mark(id: key, active: state == "active", in: home.appendingPathComponent(KeyStates.fileName))
+    }
     // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
     // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an
     // old version running, with fixes built since never in force. The next use starts the new one.

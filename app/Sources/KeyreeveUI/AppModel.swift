@@ -78,6 +78,8 @@ public final class AppModel: ObservableObject {
     @Published public var addingKey: AddKeyDraft?
     /// Bring in, while its sheet is open: where to look, what was found, and what the person chose.
     @Published public var bringing: BringState?
+    /// Bumped to bring the window to the keys that are new and not reviewed.
+    @Published public var showNewKeys = 0
     /// The requests file as last read, so an unchanged file is not read again.
     var requestsStamp = ""
     @Published public var keyIndex = KeyIndex()
@@ -447,6 +449,7 @@ struct Snapshot: Sendable {
             item.originalMoved = true
             parsed.append(item)
         }
+        AppModel.markArrivals(&parsed, vault: vault, index: index, journal: files.rotations)
         items = parsed
         activity = files.activity()
         places = files.allPlaces()

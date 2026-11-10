@@ -20,6 +20,9 @@ struct KeyRow: View {
                             .help(T(item.vault == .sealed ? "In the vault" : "The file changed after it was sealed"))
                             .accessibilityLabel(T(item.vault == .sealed ? "In the vault" : "The file changed after it was sealed"))
                     }
+                    if item.isNew || item.waitingFrom != nil {
+                        Badge(text: T("New"), icon: "sparkles", tone: .neutral).help(item.attention ?? "")
+                    }
                 }
                 if !item.name.isEmpty {
                     Text(item.path).font(Theme.code).foregroundStyle(Theme.faint).lineLimit(1).truncationMode(.middle)

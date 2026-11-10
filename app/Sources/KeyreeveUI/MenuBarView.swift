@@ -11,6 +11,8 @@ public struct MenuBarView: View {
     let openWindow: () -> Void
     @State private var grants: [KeyService.GrantInfo] = []
     @State private var runs: [AgentTranscript.Entry] = []
+    /// Keys that came in without the person, and values that wait: counts and names only.
+    @State private var news = ArrivalNews()
     /// The menu's contents are read only while it is open.
     @State private var open = false
     private let ticker = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
@@ -24,6 +26,12 @@ public struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 12) {
             if model.agentsPaused { pausedBanner }
             if !model.pendingRequests.isEmpty { requests }
+            if !news.isEmpty {
+                ArrivalNotice(news: news) {
+                    model.showNewKeysNow()
+                    openWindow()
+                }
+            }
             openNow
             if !runs.isEmpty { latest }
             Divider()
@@ -143,12 +151,15 @@ public struct MenuBarView: View {
     private func read() {
         model.reloadRequests()
         let files = model.files
+        let store = model.vaultStore
         Task.detached {
             let grants = (try? KeySocket.send(KeyService.Request(op: "grants"), path: files.keySocket.path, timeout: 1))?.grants ?? []
             let runs = AgentTranscript(url: files.directory.appendingPathComponent(AgentTranscript.fileName)).entries(limit: 4)
+            let news = ArrivalNews.read(files: files, store: store)
             await MainActor.run {
                 self.grants = grants.sorted { $0.expires < $1.expires }
                 self.runs = runs
+                if self.news != news { self.news = news }
             }
         }
     }

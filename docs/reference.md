@@ -148,13 +148,41 @@ app/dist/keyreeve-vault add hosting-token
 app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
 
-`put <name>` adds or replaces a key, keeping the old one sealed, and `reseal <name>` seals a key's file again exactly as it is now,
-from the folder it was sealed from, for a file a script changed. Adding a key needs no fingerprint, so an agent can store a key it
-cannot read back. Using one asks for your finger. `init` refuses to run outside a terminal so the recovery key does not land in a
+`put <name>` adds a key, or for a key already there leaves a new value waiting ([below](#how-keys-get-in)), and `reseal <name>`
+seals a key's file again exactly as it is now, from the folder it was sealed from, for a file a script changed. Adding a key needs no
+fingerprint, so an agent can store a key it cannot read back. Using one asks for your finger. `init` refuses to run outside a terminal so the recovery key does not land in a
 log. No command prints a key, and the app copies one only when you press its button.
 
 A copy sealed from the app holds the whole file, so `run` hands a program everything in it. For a file with several values, use
 `env` (below) and name the field.
+
+### How keys get in
+
+Every way in leaves the same trace: the app's **+**, Bring in, **Seal**, a request answered with **Save and allow**, and from a
+terminal `add`, `put` and `reseal`. Each key gets a record in `keys.toml`, made from its name (`added/openai-prod` is
+`openai-prod`, with a number when that is taken), with `added_by` and `added_at`. It is not offered to agents, so `list_keys` and
+`keyreeve-vault list` do not show it. The usage log names who added it as it names every other event: the program and its parents
+as the system reports them, and the agent when the process tree or `KEYREEVE_AGENT` names one.
+
+```bash
+pbpaste | keyreeve-vault add added/openai-prod --description "OpenAI, production" --tags work,ai
+keyreeve-vault orphans    # vault names with no record in keys.toml
+```
+
+A key that anything other than you in the app added carries `reviewed = false`. **My keys** shows it under **New, not reviewed**,
+and the menu bar and **Agents** say "claude added 21 keys". On the key's page you look at it, name it, and press **Mark reviewed**.
+None of that offers it: that is still **Offered to agents**, under **Usage**.
+
+`put` over a key that is already there seals the new value as `<name>#pending`, the same name a rotation uses for its new key, and
+the key keeps the value it had. The app says "A new value for X is waiting, from claude". **Accept the new value** asks for your
+fingerprint and keeps the old value sealed as history; **Discard it** throws the new one away. A newer `put` takes the place of a
+value still waiting. While a rotation of that key is open, `put` from anything else is refused, and the engine, run as
+`keyreeve-cli rotate`, still writes its own copies and puts the new key in place as before. A rotation does not start while a value
+waits.
+
+An entry in the vault with no record, such as one an older version sealed, shows as **Sealed without a record**, with **Give it an
+identifier**, not offered. In a `keys.toml` written by `keyreeve migrate` (schema 2) that is any entry; before it, only keys with no
+file in the keys folder, since a file there has its own line in the list.
 
 ### Your keys do not depend on this tool
 

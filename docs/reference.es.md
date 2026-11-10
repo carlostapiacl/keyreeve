@@ -155,13 +155,41 @@ app/dist/keyreeve-vault add hosting-token
 app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
 
-`put <name>` agrega o reemplaza una clave y deja la antigua sellada, y `reseal <name>` vuelve a sellar el archivo de una clave tal como
-está ahora, desde la carpeta de donde se selló, para un archivo que cambió un script. Agregar una clave no pide huella, así que un agente
+`put <name>` agrega una clave, o para una que ya está deja un valor nuevo esperando ([más abajo](#cómo-entran-las-claves)), y
+`reseal <name>` vuelve a sellar el archivo de una clave tal como está ahora, desde la carpeta de donde se selló, para un archivo que cambió un script. Agregar una clave no pide huella, así que un agente
 puede guardar una clave que después no puede leer. Usarla pide tu dedo. `init` se niega a correr fuera de una terminal para que la clave
 de recuperación no termine en un log. Ningún comando imprime una clave, y la app copia una solo cuando aprietas su botón.
 
 Una copia sellada desde la app guarda el archivo completo, así que `run` le entrega a un programa todo lo que contiene. Para un archivo
 con varios valores, usa `env` (más abajo) y nombra el campo.
+
+### Cómo entran las claves
+
+Toda entrada deja el mismo rastro: el **+** de la app, Traer, **Sellar**, una petición respondida con **Guardar y permitir**, y desde una
+terminal `add`, `put` y `reseal`. Cada clave recibe un registro en `keys.toml`, hecho a partir de su nombre (`added/openai-prod` es
+`openai-prod`, con un número si ya está tomado), con `added_by` y `added_at`. No se ofrece a los agentes, así que `list_keys` y
+`keyreeve-vault list` no la muestran. El registro de uso nombra a quien la agregó como nombra cualquier otro evento: el programa y sus
+padres según el sistema, y el agente cuando el árbol de procesos o `KEYREEVE_AGENT` lo nombran.
+
+```bash
+pbpaste | keyreeve-vault add added/openai-prod --description "OpenAI, producción" --tags trabajo,ia
+keyreeve-vault orphans    # nombres de la bóveda sin registro en keys.toml
+```
+
+Una clave que agregó algo distinto de ti en la app lleva `reviewed = false`. **Mis claves** la muestra bajo **Nuevas, sin revisar**,
+y la barra de menús y **Agentes** dicen "claude agregó 21 claves". En la página de la clave la miras, la nombras y aprietas **Marcar
+como revisada**. Nada de eso la ofrece: eso sigue siendo **Ofrecida a los agentes**, en **Uso**.
+
+`put` sobre una clave que ya está sella el valor nuevo como `<name>#pending`, el mismo nombre que usa una rotación para su clave nueva,
+y la clave conserva el valor que tenía. La app dice "Hay un valor nuevo para X esperando, de claude". **Aceptar el valor nuevo** pide tu
+huella y deja el valor anterior sellado como historial; **Descartarlo** bota el nuevo. Un `put` más nuevo reemplaza a un valor que
+todavía espera. Mientras una rotación de esa clave está abierta, se rechaza el `put` de cualquier otro, y el motor, que corre como
+`keyreeve-cli rotate`, sigue escribiendo sus copias y dejando la clave nueva en su lugar como antes. Una rotación no parte mientras un
+valor espera.
+
+Una entrada de la bóveda sin registro, como una que selló una versión anterior, aparece como **Sellada sin registro**, con **Darle un
+identificador**, sin ofrecer. En un `keys.toml` escrito por `keyreeve migrate` (schema 2) eso es cualquier entrada; antes, solo las
+claves sin archivo en la carpeta de claves, porque un archivo de ahí tiene su propia línea en la lista.
 
 ### Tus claves no dependen de esta herramienta
 

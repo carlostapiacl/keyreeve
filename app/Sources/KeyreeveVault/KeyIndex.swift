@@ -49,6 +49,13 @@ public struct KeyIndex: Equatable, Sendable {
         public var auth: String?
         /// `active` or `reauthorize`.
         public var state: String?
+        /// Who sealed it: an agent's name, a program and its parents, or the person in the app. Written when it
+        /// arrives and never changed.
+        public var addedBy: String?
+        /// When it arrived, ISO 8601.
+        public var addedAt: String?
+        /// False while a key that something other than the person in the app added waits for a look.
+        public var reviewed = true
         public init() {}
     }
 
@@ -211,9 +218,9 @@ public struct KeyIndex: Equatable, Sendable {
         var flags: [String: Bool] = [:]
         var numbers: [String: Int] = [:]
         let texts = ["id", "source", "field", "provider", "project", "account", "description", "variable", "servers",
-                     "name", "level", "host", "expires", "auth", "state"]
+                     "name", "level", "host", "expires", "auth", "state", "added_by", "added_at"]
         let listNames = ["recipes", "tags", "parts"]
-        let flagNames = ["archived", "offered"]
+        let flagNames = ["archived", "offered", "reviewed"]
         let numberNames = ["criticality"]
         func finish() throws {
             guard let current else { return }
@@ -250,6 +257,9 @@ public struct KeyIndex: Equatable, Sendable {
             more.archived = flags["archived"] ?? false
             more.auth = current["auth"]
             more.state = current["state"]
+            more.addedBy = current["added_by"]
+            more.addedAt = current["added_at"]
+            more.reviewed = flags["reviewed"] ?? true
             var key = Key(
                 id: id, source: source, field: current["field"] ?? lists["parts"]?.joined(separator: "+"),
                 provider: current["provider"], project: current["project"], account: current["account"],
@@ -342,6 +352,9 @@ public struct KeyIndex: Equatable, Sendable {
             if let expires = key.more.expires { out += "expires = \(tomlQuoted(expires))\n" }
             if let criticality = key.more.criticality { out += "criticality = \(criticality)\n" }
             if key.more.archived { out += "archived = true\n" }
+            if let addedBy = key.more.addedBy { out += "added_by = \(tomlQuoted(addedBy))\n" }
+            if let addedAt = key.more.addedAt { out += "added_at = \(tomlQuoted(addedAt))\n" }
+            if !key.more.reviewed { out += "reviewed = false\n" }
             if !offered { out += "offered = false\n" }
         }
         return out

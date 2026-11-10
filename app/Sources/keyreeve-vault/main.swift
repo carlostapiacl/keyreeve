@@ -11,6 +11,7 @@ do {
     case "reseal": try resealKeys()
     case "drop": try dropTemporary()
     case "names": try listNames()
+    case "orphans": try listOrphans()
     case "list": try listKeys()
     case "use": try useKey()
     case "get": try getKey()

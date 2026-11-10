@@ -94,6 +94,18 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **A moved original is still a key.** It stays in plain text in `~/.keyreeve/originals` until you delete it, and a rotation does
   not update it.
 - **Replacing keeps the old value.** Old copies stay sealed in the vault, including keys already revoked.
+- **Adding needs no finger, and is always seen.** Sealing uses only public keys, so any program running as you can add a key, and
+  it cannot read anything back. Every key that goes in gets a record in `keys.toml`, not offered to agents, with who added it and
+  when, and the app shows it as new until you review it. Who added it comes from the process tree and `KEYREEVE_AGENT`, a hint and
+  not proof. A program running as you can still write `vault.json` or `keys.toml` directly; a key in the vault with no record shows
+  as sealed without one.
+- **Replacing waits for the finger.** `keyreeve-vault put` over a key already there leaves the new value waiting as `<name>#pending`,
+  and the key keeps its value until you accept the new one with your fingerprint. The exception is the key's own rotation: while
+  the rotation journal has one open for that key, its old value is saved as `#previous` and the program that runs `put` is keyreeve's
+  engine, the engine replaces it as before. A program running as you could write that journal, name itself `keyreeve-cli` and save a
+  `#previous`, and then replace the key; the app would show a rotation open for it. It could also rewrite `vault.json` as before.
+  `reseal` still seals a key's file again with no finger, from the folder it came from: a file changed there already wins over its
+  sealed copy in the app.
 - **A copy's folder is written in plain text.** Each copy notes the folder it came from, so the same path in another folder is
   not mistaken for it. A program running as you could edit that note.
 - **Sealing is not moving.** Until you remove an original, the file is as readable as before, and anything that reads it

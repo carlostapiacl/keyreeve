@@ -72,9 +72,12 @@ extension AppModel {
             let id = index.identifier(for: name)
             let entry = Self.addedFolder + id
             // The name is checked before anything is sealed, so a bad one leaves nothing behind.
-            try index.add(KeyIndex.Key(
+            var key = KeyIndex.Key(
                 id: id, source: entry, provider: provider, description: name == id ? nil : name,
-                variable: provider.flatMap { provider in providers.all.first { $0.id == provider }?.env_var }))
+                variable: provider.flatMap { provider in providers.all.first { $0.id == provider }?.env_var })
+            key.more.addedBy = KeyArrival.byPerson
+            key.more.addedAt = KeyArrival.stamp()
+            try index.add(key)
             try Self.savePasted(Data(value.utf8), as: entry, index: index, store: vaultStore) {
                 try self.files.writePrivate($0, to: self.files.keyIndex)
             }

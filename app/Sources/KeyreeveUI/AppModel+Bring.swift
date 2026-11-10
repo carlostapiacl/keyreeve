@@ -204,6 +204,7 @@ extension AppModel {
             if let provider = candidate.provider, selfHosted.contains(provider), let server = candidate.server {
                 key.more.host = server
             }
+            (key.more.addedBy, key.more.addedAt) = (KeyArrival.byPerson, KeyArrival.stamp())
             try index.addUnoffered(key)
             values.append((entry, read.data, candidate.origins.map(\.path).joined(separator: "\n")))
             sealed.append((id, candidate.from_project))

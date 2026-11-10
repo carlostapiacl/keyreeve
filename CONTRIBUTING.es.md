@@ -35,4 +35,5 @@ cd app && swift test
 - Un cambio por pull request, en borrador mientras trabajas.
 - Si arreglas un bug, suma un test que falle sin el arreglo.
 
-`app/build-app.sh` reemplaza la copia de Aplicaciones y la vuelve a abrir, así que no lo corras si solo quieres los tests.
+`app/build-app.sh` compila la app. Si hay una copia en Aplicaciones la reemplaza, y si Keyreeve estaba abierto lo cierra y lo
+vuelve a abrir, así que no lo corras si solo quieres los tests.

@@ -11,7 +11,8 @@ run code.
 - Hosts must be bare domains. Schemes, ports, IP addresses and wildcards are refused.
 - The client uses HTTPS only and does not follow redirects, so a 302 cannot carry the credential
   to another host.
-- A secret has no placeholder. Only `{key_name}` and `{id}` exist, and only where they apply.
+- A secret goes in the header the recipe names. The only placeholder for it is `{key}`, allowed in the address of a recipe with
+  `auth: { type: url }`, for providers such as Telegram that take it nowhere else. `{key_name}` and `{id}` exist where they apply.
 - Values placed in a path are percent-encoded, so an id returned by a provider cannot change the
   path.
 - Headers that could replace the credential or reshape the request are refused.
@@ -25,8 +26,8 @@ wiped from memory on drop. Provider responses are kept out of errors, and client
 because they can quote the request. The simulator checks the journal, errors and outcomes for its
 test values.
 
-**A check that changes something.** `keyreeve verify` only sends a GET, and refuses a recipe whose check is another
-method. A provider using OAuth first gets a token, with a POST holding the credentials. Provider answers are ignored apart from their status. A provider can still count or log the request, and
+**A check that changes something.** `keyreeve verify` only sends a GET. A recipe whose check is another method passes
+`keyreeve check`, but its check is never run. A provider using OAuth first gets a token, with a POST holding the credentials. Provider answers are ignored apart from their status. A provider can still count or log the request, and
 a bad GET endpoint on its side could have effects.
 
 **A provider answer that holds too much.** `identify` keeps only the fields the provider's file declares, drops any that
@@ -121,6 +122,10 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   names, tags, provider and state. Never a value, but names can say a lot. `propose` changes nothing on its own: it waits for you,
   and Apply may check keys, sending each one only to its provider's hosts, or to a server of yours you approved. `rotate_key` and
   `request_access` also only leave a request. The reason an agent gives is its own text.
+- **A key not offered is hidden from the agent tools, not from the disk.** `list_keys`, `request_access`, `use_key` and
+  `run_with_key` leave out a key that is not offered, and its name answers as one that is not there. `keys.toml` holds no value
+  but every name, and any program running as you can read it, or edit it to offer a key. Using that key still takes its level,
+  and a fingerprint for every level but the one you set to need none.
 - **Your terminal AI may read your files.** keyreeve hands it names and asks it for words, never a key, in an empty folder with a
   small environment. Claude Code is limited to web search; Codex, OpenCode and a command of your own can read what you can.
 - **Naming the agent is a hint.** keyreeve reads which program started its server, so "only Claude" keeps an honest Codex out. A program

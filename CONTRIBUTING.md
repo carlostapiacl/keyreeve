@@ -11,7 +11,7 @@ The most useful contribution is a recipe for a provider you use. Label words for
 
 A recipe that only checks a key needs `verify` and no `create` or `revoke`. See `recipes/hetzner.yaml`. Add it to
 `BUILTIN` in `src/providers.rs` so it ships with the tool. `name`, `dashboard`, `prefixes`, `identify` and `suggested_name` are
-what the app shows, and a test requires the first two. List in `prefixes` only starts that belong to this provider alone. The check must be a GET. Run it with a made-up key first: if
+what the app shows, and a test requires the first two. List in `prefixes` only starts that belong to this provider alone. The check must be a GET: `keyreeve check` accepts another method, but keyreeve never runs that check. Run it with a made-up key first: if
 the provider answers something other than 401, list that status in `reject`.
 
 To rotate too, copy `examples/recipe.yaml` to `recipes/<provider>.yaml`.
@@ -64,8 +64,9 @@ cargo test
 cd app && swift test
 ```
 
-The same commands run in CI on each pull request. `app/build-app.sh` builds the app, and it replaces a copy in
-/Applications and reopens it, so do not run it when you only want the tests.
+CI runs the same commands on pull requests that touch the code they cover. `app/build-app.sh` builds the app. If a copy is
+in /Applications it replaces it, and if Keyreeve was open it quits it and opens it again, so do not run it when you only want
+the tests.
 
 ## Pull requests
 

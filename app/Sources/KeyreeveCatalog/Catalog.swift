@@ -297,6 +297,8 @@ public enum Sidebar: Hashable, Sendable {
     case stale
     case internalOnly
     case expiring
+    /// Secrets with no place known where they live. The app narrows it with the places it holds.
+    case noPlace
     case result(String)
     case level(String)
     case tag(String)
@@ -322,6 +324,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .stale: return item.isOlderThanSuggested()
         case .internalOnly: return item.isInternal && !item.isArchived
         case .expiring: return !item.isArchived && item.isSecret && (item.daysLeft() ?? Int.max) <= 30
+        case .noPlace: return !item.isArchived && item.isSecret
         case .result(let result):
             guard !item.isArchived, item.isSecret else { return false }
             if result == "gone" { return item.isGone }

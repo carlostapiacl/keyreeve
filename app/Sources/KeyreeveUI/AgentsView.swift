@@ -59,7 +59,9 @@ struct AgentsView: View {
                 }
                 ForEach(Array(model.pendingRequests.enumerated()), id: \.element.id) { index, request in
                     if index > 0 { Divider() }
-                    if request.kind == "sort" {
+                    if request.kind == "places" {
+                        PlacesProposalRow(request: request, model: model)
+                    } else if request.kind == "sort" {
                         SortProposalRow(request: request, model: model)
                     } else if request.isRotation {
                         RotationRequestRow(request: request, model: model)

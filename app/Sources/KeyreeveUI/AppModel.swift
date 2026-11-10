@@ -81,6 +81,8 @@ public final class AppModel: ObservableObject {
     /// The requests file as last read, so an unchanged file is not read again.
     var requestsStamp = ""
     @Published public var keyIndex = KeyIndex()
+    /// Where each key lives, and the procedures that update those places.
+    @Published public var placesState = PlacesState()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
     public let files: KeyreeveFiles

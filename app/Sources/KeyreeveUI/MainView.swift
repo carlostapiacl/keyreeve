@@ -70,7 +70,10 @@ public struct MainView: View {
     }
 
     private var shown: [CatalogItem] {
-        memo.value("shown", key: [AnyHashable(model.itemsVersion), current, search]) { filter(items, by: current, search: search) }
+        memo.value("shown", key: [AnyHashable(model.itemsVersion), current, search, model.placesState.book]) {
+            let found = filter(items, by: current, search: search)
+            return current == .noPlace ? found.filter(model.hasNoPlace) : found
+        }
     }
 
     private var chosenItem: CatalogItem? {
@@ -213,6 +216,7 @@ public struct MainView: View {
             filterChip(T("Never checked"), .result(""))
             filterChip(T("Older than suggested"), .stale)
             filterChip(T("Expire soon"), .expiring)
+            noPlaceChip
             filterChip(T("Archive"), .archive)
         }
         .padding(.horizontal, 14)
@@ -220,6 +224,18 @@ public struct MainView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
+
+    /// Counted here, since only the app knows where keys live.
+    private var noPlaceChip: some View {
+        FilterChip(
+            title: T("No place known"), count: items.filter { !$0.isArchived && $0.isSecret && model.hasNoPlace($0) }.count,
+            isOn: (pressedChip ?? current) == .noPlace
+        ) {
+            model.reloadPlaces()
+            go(.noPlace)
+            chosenRows = []
+        }
     }
 
     private func filterChip(_ title: String, _ target: Sidebar) -> some View {
@@ -254,6 +270,7 @@ public struct MainView: View {
         case .stale: return T("Older than suggested")
         case .internalOnly: return T("Internal secrets")
         case .expiring: return T("Expire soon")
+        case .noPlace: return T("No place known")
         case .result(let result): return resultName(result)
         case .level(let level): return levelName(level)
         case .tag(let tag): return tag

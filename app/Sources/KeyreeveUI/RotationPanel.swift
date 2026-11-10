@@ -96,6 +96,7 @@ struct RotationPanel: View {
         Text(T("Where else is this key used? Each place gets the new key before the old one is revoked."))
             .font(Theme.caption).foregroundStyle(Theme.muted)
             .fixedSize(horizontal: false, vertical: true)
+        RotationPlacesList(item: item, model: model)
         ForEach(places.files, id: \.self) { file in
             placeRow(URL(fileURLWithPath: file).lastPathComponent, help: file) {
                 change { $0.files.removeAll { $0 == file } }
@@ -150,7 +151,9 @@ struct RotationPanel: View {
             Label(T("Rotate this key"), systemImage: "arrow.triangle.2.circlepath")
         }
         .buttonStyle(KRButtonStyle(primary: true))
-        .disabled(model.busy || !places.isDecided || (!provider.can_rotate && newKey.isEmpty))
+        .disabled(
+            model.busy || !(places.isDecided || !model.plannedProcedures(for: item).isEmpty)
+                || (!provider.can_rotate && newKey.isEmpty))
         .confirmationDialog(T("Rotate this key with %@?", provider.name), isPresented: $confirming, titleVisibility: .visible) {
             Button(T("Rotate this key")) {
                 model.rotate(item, handedOver: provider.can_rotate ? nil : newKey)

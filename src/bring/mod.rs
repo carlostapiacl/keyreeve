@@ -116,6 +116,10 @@ pub struct Check {
 pub struct Origin {
     pub path: String,
     pub area: Area,
+    /// The file's size and when it last changed, in seconds since 1970, as read. The app reads a value
+    /// from its span only if both are the same, so a file changed since cannot give it the wrong text.
+    pub bytes: u64,
+    pub modified: u64,
     /// The pieces that make the key, in order. A key of two parts names two.
     pub parts: Vec<Part>,
 }
@@ -295,6 +299,17 @@ fn finish(id: usize, draft: Draft, check: Option<Check>) -> Candidate {
 /// The pieces of one file, sorted and paired into keys.
 fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Draft> {
     let pieces = read::pieces(file, skipped);
+    let meta = std::fs::symlink_metadata(&file.path).ok();
+    let stamp = Origin {
+        path: file.path.display().to_string(),
+        area: file.area,
+        bytes: meta.as_ref().map_or(0, std::fs::Metadata::len),
+        modified: meta
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs()),
+        parts: Vec::new(),
+    };
     let file_words: Vec<String> = file
         .path
         .file_name()
@@ -367,9 +382,8 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
             recipes,
             server,
             origins: vec![Origin {
-                path: file.path.display().to_string(),
-                area: file.area,
                 parts: parts.iter().map(|p| Part::of(p)).collect(),
+                ..stamp.clone()
             }],
         });
         for i in members.parts.into_iter().chain(members.endpoint) {
@@ -414,9 +428,8 @@ fn drafts_of(file: &FileFound, known: &[Known], skipped: &mut Skipped) -> Vec<Dr
             recipes,
             server: piece.server.clone(),
             origins: vec![Origin {
-                path: file.path.display().to_string(),
-                area: file.area,
                 parts: vec![Part::of(&piece)],
+                ..stamp.clone()
             }],
         });
     }

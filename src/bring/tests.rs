@@ -368,6 +368,8 @@ fn the_same_key_in_two_places_is_one_key_with_two_origins() {
     // Each origin says where its own copy stands, so the app can read either.
     for origin in &openai.origins {
         let text = fs::read_to_string(&origin.path).unwrap();
+        assert_eq!(origin.bytes, text.len() as u64);
+        assert!(origin.modified > 0);
         let [from, to] = origin.parts[0].span.unwrap();
         assert_eq!(&text[from..to], OPENAI);
     }

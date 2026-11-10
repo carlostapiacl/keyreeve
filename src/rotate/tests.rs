@@ -155,6 +155,14 @@ fn tool(dir: &Path) -> PathBuf {
 }
 
 fn rotate_with(name: &str, verify_status: u16) -> (PathBuf, Outcome, Fake, String) {
+    rotate_with_plan(name, verify_status, |_, _| {})
+}
+
+fn rotate_with_plan(
+    name: &str,
+    verify_status: u16,
+    change: impl FnOnce(&mut Plan, &Path),
+) -> (PathBuf, Outcome, Fake, String) {
     let dir = folder(name);
     let tool = tool(&dir);
     let place = dir.join("service.env");
@@ -162,7 +170,7 @@ fn rotate_with(name: &str, verify_status: u16) -> (PathBuf, Outcome, Fake, Strin
     let original = dir.join("key.env");
     fs::write(&original, "# note\nTOKEN=CANARY-old-0123456\n").unwrap();
     let recipe = Recipe::parse(RECIPE).unwrap();
-    let plan = Plan {
+    let mut plan = Plan {
         key: "dir/key.env".into(),
         recipe: "fake".into(),
         field: Some("TOKEN".into()),
@@ -175,8 +183,11 @@ fn rotate_with(name: &str, verify_status: u16) -> (PathBuf, Outcome, Fake, Strin
         original: Some(original.to_string_lossy().into_owned()),
         place_files: vec![place.to_string_lossy().into_owned()],
         place_actions: Vec::new(),
+        place_procedures: Vec::new(),
+        procedures_folder: None,
         expected_events: None,
     };
+    change(&mut plan, &dir);
     let input =
         serde_json::json!({ "dir/key.env": "# note\nTOKEN=CANARY-old-0123456\n" }).to_string();
     let sealed = Sealed::read(input.as_bytes()).unwrap();
@@ -278,6 +289,8 @@ fn a_place_that_does_not_hold_the_key_stops_it_before_the_provider() {
         original: None,
         place_files: vec![place.to_string_lossy().into_owned()],
         place_actions: Vec::new(),
+        place_procedures: Vec::new(),
+        procedures_folder: None,
         expected_events: None,
     };
     let sealed = Sealed::read(r#"{"k":"CANARY-old-0123456"}"#.as_bytes()).unwrap();
@@ -384,6 +397,8 @@ fn a_plan_outlives_the_settings() {
         original: Some("/kept".into()),
         place_files: vec!["/first".into()],
         place_actions: Vec::new(),
+        place_procedures: Vec::new(),
+        procedures_folder: None,
         expected_events: None,
     };
     freeze_plan(&journal, &plan).unwrap();
@@ -433,6 +448,8 @@ fn a_retired_place_does_not_block_finishing() {
         original: None,
         place_files: vec![dir.join("gone.env").to_string_lossy().into_owned()],
         place_actions: Vec::new(),
+        place_procedures: Vec::new(),
+        procedures_folder: None,
         expected_events: None,
     };
     let sealed = Sealed::read(r#"{"k":"old-value-0123456789"}"#.as_bytes()).unwrap();
@@ -722,6 +739,8 @@ fn an_open_rotation_with_its_plan_lost_stops_and_touches_nothing() {
         // Today's settings, which name a place the rotation never knew.
         place_files: vec!["/somewhere-else".into()],
         place_actions: Vec::new(),
+        place_procedures: Vec::new(),
+        procedures_folder: None,
         expected_events: None,
     };
     let plan_file = dir.join("plan.json");
@@ -759,4 +778,91 @@ fn forgetting_an_id_waits_for_no_rotation_and_refuses_while_one_runs() {
     let after = forget_id(&journal, "k");
     assert!(after.is_ok(), "{after:?}");
     fs::remove_dir_all(dir).unwrap();
+}
+
+/// A procedure of the person's that keeps the value it is given in a file beside it, standing in for a server.
+#[cfg(unix)]
+fn procedure_place(dir: &Path) -> PlannedProcedure {
+    use std::os::unix::fs::PermissionsExt;
+    let folder = dir.join("procedures");
+    fs::create_dir_all(&folder).unwrap();
+    let held = dir.join("server.env");
+    fs::write(&held, "KEY=CANARY-old-0123456\n").unwrap();
+    let script = folder.join("remote.sh");
+    fs::write(
+        &script,
+        "#!/bin/sh\n# keyreeve-procedure: test\n# param file: where\ncase \"$1\" in apply) printf 'KEY=%s\\n' \"$(cat)\" > \"$PLACE_FILE\" ;; check) echo absent ;; esac\n",
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    PlannedProcedure {
+        label: "VPS2 · server.env · KEY".into(),
+        procedure: "remote".into(),
+        sha256: crate::procedure::sha256_hex(&fs::read(&script).unwrap()),
+        params: Params::from([("file".to_owned(), held.to_string_lossy().into_owned())]),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_rotation_updates_a_place_through_its_approved_procedure() {
+    let (dir, outcome, _, journal) = rotate_with_plan("procedure", 200, |plan, dir| {
+        plan.place_procedures = vec![procedure_place(dir)];
+        plan.procedures_folder = Some(dir.join("procedures").to_string_lossy().into_owned());
+    });
+    assert_eq!(outcome, Outcome::Completed);
+    assert_eq!(
+        fs::read_to_string(dir.join("server.env")).unwrap(),
+        "KEY=CANARY-new-0123456789\n"
+    );
+    assert!(!journal.contains("CANARY"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_rotation_does_not_start_when_a_place_procedure_changed() {
+    let dir = folder("procedure-changed");
+    let tool = tool(&dir);
+    let mut place = procedure_place(&dir);
+    place.sha256 = crate::procedure::sha256_hex(b"what the person approved");
+    let recipe = Recipe::parse(RECIPE).unwrap();
+    let plan = Plan {
+        key: "dir/key.env".into(),
+        recipe: "fake".into(),
+        field: Some("TOKEN".into()),
+        host: None,
+        admin: None,
+        admin_field: None,
+        overlap_secs: 0,
+        known_id: None,
+        issued_name: "keyreeve-today".into(),
+        original: None,
+        place_files: Vec::new(),
+        place_actions: Vec::new(),
+        place_procedures: vec![place],
+        procedures_folder: Some(dir.join("procedures").to_string_lossy().into_owned()),
+        expected_events: None,
+    };
+    let input = serde_json::json!({ "dir/key.env": "TOKEN=CANARY-old-0123456\n" }).to_string();
+    let sealed = Sealed::read(input.as_bytes()).unwrap();
+    let Err(error) = prepare(&plan, &recipe, &tool, &sealed, true, true) else {
+        panic!("a changed procedure was accepted");
+    };
+    assert!(error.contains("changed since it was approved"), "{error}");
+    assert!(!error.contains("CANARY"));
+    assert_eq!(
+        fs::read_to_string(dir.join("server.env")).unwrap(),
+        "KEY=CANARY-old-0123456\n"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_plan_written_before_procedures_still_reads() {
+    let old = r#"{"key":"k","recipe":"fake","field":null,"host":null,"admin":null,"admin_field":null,"overlap_secs":60,"known_id":null,"issued_name":"n","original":null,"place_files":["/a/.env"],"place_actions":["mine/update"],"expected_events":3}"#;
+    let plan: Plan = serde_json::from_str(old).unwrap();
+    assert!(plan.place_procedures.is_empty() && plan.procedures_folder.is_none());
+    assert_eq!(plan.place_files, vec!["/a/.env".to_owned()]);
+    assert_eq!(plan.place_actions, vec!["mine/update".to_owned()]);
 }

@@ -14,6 +14,7 @@ pub mod keybook;
 pub mod keys;
 pub mod migrate;
 pub mod places;
+pub mod procedure;
 pub mod providers;
 pub mod proxy;
 pub mod recipe;

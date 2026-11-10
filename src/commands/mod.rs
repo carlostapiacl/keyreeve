@@ -3,6 +3,7 @@
 mod bring;
 mod catalog;
 mod checks;
+mod places;
 mod proxy;
 mod recipes;
 mod rotation;
@@ -14,6 +15,7 @@ use std::process::ExitCode;
 pub use bring::run_bring;
 pub use catalog::{run_catalog, run_inventory, run_migrate};
 pub use checks::{run_check_free, run_custom_action, run_identify, run_verify};
+pub use places::{run_place, run_procedures};
 pub use proxy::run_proxy;
 pub use recipes::{run_recipe_files, run_recipes};
 pub use rotation::{run_rotate, run_rotations};
@@ -69,6 +71,13 @@ Usage:
       Allow a provider file of yours to receive keys at the hosts it lists.
   keyreeve recipes approve-host <provider> <server>
       Allow your own server, for a provider each person runs themselves.
+  keyreeve procedures [--folder <folder>] [--json]
+      List the procedures that update a place where a key lives: those that ship and yours, in
+      ~/.keyreeve/procedures. Each with its SHA-256, which a place is pinned to.
+  keyreeve place check <procedure> --sha256 <hash> [--param name=value]... [--folder <folder>]
+      Ask a place for the SHA-256 of the value it holds, or absent. Never the value.
+  keyreeve place apply <procedure> --sha256 <hash> [--param name=value]... [--folder <folder>] [--vault-tool <program>]
+      Put the value that comes on stdin in a place. A procedure whose hash is not <hash> does not run.
   keyreeve --version
 ";
 

@@ -33,6 +33,8 @@ fn main() -> ExitCode {
         "check-free" => return commands::run_check_free(paths),
         "action" => return commands::run_custom_action(paths),
         "recipes" => return commands::run_recipes(paths),
+        "procedures" => return commands::run_procedures(paths),
+        "place" => return commands::run_place(paths),
         "check" | "simulate" if !paths.is_empty() => {}
         _ => {
             return commands::usage();

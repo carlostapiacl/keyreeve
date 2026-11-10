@@ -11,6 +11,7 @@ use crate::engine::{Engine, KeyConfig, Outcome, Sink};
 use crate::journal::{Event, FileBackend, Journal, Phase};
 use crate::keys::{holds_key, MIN_SWAP_CHARS};
 use crate::places::{action_sink, FileSink};
+use crate::procedure::{self, Params, ProcedureSink, Runner};
 use crate::recipe::Recipe;
 use crate::secret::Secret;
 use crate::transport::HttpTransport;
@@ -54,9 +55,26 @@ pub struct Plan {
     /// `provider/action`: a button of yours that receives the new key on stdin.
     #[serde(default)]
     pub place_actions: Vec<String>,
+    /// Places a procedure updates, each pinned to the procedure a person approved.
+    #[serde(default)]
+    pub place_procedures: Vec<PlannedProcedure>,
+    /// The person's procedures folder, when it is not the usual one.
+    #[serde(default)]
+    pub procedures_folder: Option<String>,
     /// How many lines the journal held for this key when its copy was opened. A different count
     /// means another window rotated it since then, and the opened copy may be a revoked key.
     pub expected_events: Option<usize>,
+}
+
+/// A place a procedure updates. It holds no value: the procedure, its approved hash and its parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedProcedure {
+    pub label: String,
+    pub procedure: String,
+    pub sha256: String,
+    #[serde(default)]
+    pub params: Params,
 }
 
 fn frozen_path(journal: &Path, key: &str) -> PathBuf {
@@ -375,6 +393,28 @@ fn prepare(
         }
         for place in &plan.place_actions {
             sinks.push(Box::new(action_sink(place)?));
+        }
+        let mut runner = Runner::new(
+            plan.procedures_folder
+                .as_ref()
+                .map_or_else(procedure::default_folder, PathBuf::from),
+        );
+        runner.vault_tool = Some(tool.to_owned());
+        for place in &plan.place_procedures {
+            // A procedure that changed since it was approved receives no key. An open rotation still tries,
+            // and the sink refuses it the same way, so its undo reports the place.
+            if starting {
+                runner
+                    .pinned(&place.procedure, &place.sha256)
+                    .map_err(|error| format!("{}: {error}", place.label))?;
+            }
+            sinks.push(Box::new(ProcedureSink {
+                label: format!("place:{}", place.label),
+                runner: runner.clone(),
+                procedure: place.procedure.clone(),
+                pin: place.sha256.clone(),
+                params: place.params.clone(),
+            }));
         }
     }
     let store = VaultStore {

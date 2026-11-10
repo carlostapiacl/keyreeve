@@ -121,3 +121,32 @@ struct OAuthKeyTests {
         #expect(KeyStates.needingReauthorization(in: states).count == 40)
     }
 }
+
+/// An OAuth credential rides on a set like any other key: one window, one fingerprint, and an "always" for one
+/// program, script and folder. The proxy gets the sealed file whole, with no field, as it does for a single use.
+struct OAuthKeySetTests {
+    @Test func anOAuthKeyGoesInABatchAndUnderAlways() throws {
+        let f = SetFixture()
+        f.indexText += """
+
+
+            [[key]]
+            id = "search-console"
+            source = "search-console.json"
+            provider = "google"
+            variable = "GOOGLE_APPLICATION_CREDENTIALS"
+            """
+        f.answer = { _ in KeyBatch.Answer(chosen: [0, 1], lasts: .always) }
+        let answer = f.many(["meta-ads", "search-console"])
+        #expect(answer.ok && answer.many?.allSatisfy(\.ok) == true)
+        #expect(answer.many?.map(\.variable) == ["META_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"])
+        let oauth = try #require(f.proxy.added.first { $0.provider == "google" })
+        #expect(oauth.field == nil)
+        #expect(f.sets.standing.first?.keys == ["meta-ads", "search-console"])
+        // After a restart, the same command in the same folder needs no window and no finger.
+        _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
+        #expect(f.many(["meta-ads", "search-console"]).ok)
+        #expect(f.fingerprints.count == 1 && f.windows.count == 1)
+        #expect(f.proxy.added.filter { $0.provider == "google" }.count == 2)
+    }
+}

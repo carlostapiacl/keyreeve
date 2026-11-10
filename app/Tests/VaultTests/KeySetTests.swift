@@ -23,6 +23,8 @@ final class SetFixture: @unchecked Sendable {
     var gather: TimeInterval = 0
     let lock = NSLock()
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
+    /// keys.toml as the service reads it; a test may add keys before the first use.
+    lazy var indexText = Self.index
     static let index = """
         [[key]]
         id = "meta-ads"
@@ -59,7 +61,7 @@ final class SetFixture: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let value = { (source: String) in Data((source == "sentry.env" ? "OTHER=1\nTOKEN=CANARY-\(source)\n" : "CANARY-\(source)\n").utf8) }
         return KeyService(
-            index: { try KeyIndex.parse(Self.index) },
+            index: { try KeyIndex.parse(self.indexText) },
             open: { source, prompt in
                 self.lock.lock()
                 defer { self.lock.unlock() }

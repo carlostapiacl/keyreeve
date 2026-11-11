@@ -138,7 +138,8 @@ volver a entrar.
 Después elige claves y aprieta **Sellar**. Cada archivo se sella para una llave dentro del Secure Enclave de tu Mac, de donde no puede
 salir, y para la clave de recuperación. Tus archivos originales se quedan donde están. **Comparar con los archivos** abre cada copia
 sellada y te dice si coincide. Desde ahí, las pruebas, la identificación y tus propias acciones usan la copia sellada, y piden tu dedo
-una vez por lote. Los archivos binarios, como un `.pfx` o un `.jks`, también se pueden sellar.
+una vez por lote. Los archivos binarios, como un `.pfx` o un `.jks`, también se pueden sellar. Un archivo que está fuera de la carpeta de claves entra con **+** → **Elegir un archivo…**, o desde una terminal
+con `keyreeve-vault add --file <ruta>`: se sella byte a byte con el nombre del archivo, y el archivo solo se lee.
 
 Si un archivo cambia después de sellarlo, la app lo dice y usa el archivo, porque la copia sellada puede ser una clave antigua.
 **Sellar de nuevo los archivos que cambiaron** reemplaza la copia, y la antigua sigue sellada. Después de una comparación, puedes mover
@@ -158,6 +159,9 @@ app/dist/keyreeve-vault init
 app/dist/keyreeve-vault add hosting-token
 app/dist/keyreeve-vault run hosting-token --as HOSTING_TOKEN -- ./deploy.sh
 ```
+
+`run <nombre> --as-file VAR -- <comando>` es para una clave que es un archivo, como un keystore `.jks` o un certificado `.pfx`:
+`VAR` tiene la ruta de una copia byte a byte que solo tú puedes leer, en una carpeta propia, y se borra cuando el comando termina.
 
 `put <name>` agrega una clave, o para una que ya está deja un valor nuevo esperando ([más abajo](#cómo-entran-las-claves)), y
 `reseal <name>` vuelve a sellar el archivo de una clave tal como está ahora, desde la carpeta de donde se selló, para un archivo que cambió un script. Agregar una clave no pide huella, así que un agente

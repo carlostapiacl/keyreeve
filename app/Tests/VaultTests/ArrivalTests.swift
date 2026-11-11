@@ -207,4 +207,24 @@ struct ArrivalTests {
         // A file written before these fields reads as reviewed.
         #expect(try KeyIndex.parse("[[key]]\nid = \"b\"\nsource = \"b\"\n").keys.first?.more.reviewed == true)
     }
+
+    /// A keystore with a record from before, and no sealed copy: `add --file` seals it under that record, byte for
+    /// byte, and makes no second identifier.
+    @Test func aFileWithARecordAlreadyKeepsItsIdentifier() throws {
+        let (home, store, index, _) = try home()
+        defer { try? FileManager.default.removeItem(at: home) }
+        _ = try KeyIndex.change(at: index) { book in
+            try book.addUnoffered(KeyIndex.Key(id: "pos-upload-keystore", source: "pos-upload-keystore.jks"))
+        }
+        let elsewhere = home.appendingPathComponent("elsewhere/pos-upload-keystore.jks")
+        try FileManager.default.createDirectory(at: elsewhere.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let bytes = Data([0xFE, 0xED, 0xFE, 0xED, 0x00, 0x00, 0x00, 0x02, 0x0A, 0x0D, 0x0A])
+        try bytes.write(to: elsewhere)
+        let read = try VaultKeeper.readFile(at: elsewhere).get()
+        let key = try KeyArrival.add(read, as: elsewhere.lastPathComponent, addedBy: "claude", store: store, index: index)
+        #expect(key.id == "pos-upload-keystore")
+        #expect(try KeyIndex.load(from: index).unoffered.count == 1)
+        #expect(try store.load().open(name: "pos-upload-keystore.jks", with: chip) == bytes, "trailing newlines stay")
+        #expect(try Data(contentsOf: elsewhere) == bytes, "the file is only read")
+    }
 }

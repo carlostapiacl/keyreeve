@@ -229,6 +229,8 @@ final class Fixture: @unchecked Sendable {
     var account = "mi-cuenta"
     /// Whether the person's files mark a key "always, no fingerprint": what the service itself reads.
     var markedAlways: Set<String> = []
+    /// What the person's files say about a key marked "always" that did not open with no fingerprint.
+    var whyAsked: String?
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -251,7 +253,8 @@ final class Fixture: @unchecked Sendable {
             log: log, now: { self.now }, paused: { self.paused }, revision: { _ in self.sealing },
             openUnattended: { key, _, source in
                 self.markedAlways.contains(key) ? Data((source == "m.env" ? "API=CANARY-mail\n" : "CANARY-netlify\n").utf8) : nil
-            })
+            },
+            whyAsked: { _, _, _ in self.whyAsked })
     }()
     let caller = AuditLog.Observed(pid: 42, program: "/bin/zsh", chain: ["zsh", "claude"])
 
@@ -402,6 +405,24 @@ struct KeyServiceTests {
         // The real key always asks, marked or not.
         _ = f.use("netlify", real: true)
         #expect(f.prompts.count == 2)
+    }
+
+    /// A key marked "always" that still needs a finger says why in the log, beside the permission it got: a bot whose
+    /// agent the mark does not name otherwise asks for a fingerprint every day with no word.
+    @Test func aKeyMarkedAlwaysThatStillAsksSaysWhy() throws {
+        let f = Fixture()
+        f.whyAsked = "always is only for claude, and this was wapentakebot"
+        var request = KeyService.Request(op: "use", key: "netlify", program: "/usr/bin/curl", agent: "wapentakebot", reason: "bot")
+        request.unattended = true
+        request.anyProgram = true
+        #expect(f.service.handle(request, caller: f.caller).ok)
+        #expect(f.prompts.count == 1)
+        let granted = try f.log.entries().first { $0.event == "granted" }
+        #expect(granted?.detail?.hasSuffix(", always is only for claude, and this was wapentakebot") == true)
+        // A caller that does not ask for "always" gets no such words.
+        _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
+        #expect(f.use("netlify").ok)
+        #expect(try f.log.entries().filter { $0.event == "granted" }.last?.detail?.contains("always") == false)
     }
 
     /// A key replaced in the vault ends the permission for the old value: the next use asks for the new one.

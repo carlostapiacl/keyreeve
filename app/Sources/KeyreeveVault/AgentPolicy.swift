@@ -52,6 +52,20 @@ public struct AgentPolicy: Equatable, Sendable {
         Set(levels.keys).union(commands.filter { !$0.value.isEmpty }.keys).sorted()
     }
 
+    /// Why a key marked "always, no fingerprint" did not open with none for this agent, or nil when it is not marked
+    /// or nothing stood in the way. The words go in the log beside the permission the fingerprint gave.
+    public func whyAsked(key: String, agent: String?, hasCopy: Bool, paused: Bool, at date: Date = Date()) -> String? {
+        guard levels[key] == .always else { return nil }
+        if let closes = until[key], date >= closes { return "always ended when its time was up" }
+        if !admits(agent: agent ?? "", for: key) {
+            let named = (agents[key] ?? []).joined(separator: ", ")
+            return "always is only for \(named), and this was \(agent ?? "an agent with no name")"
+        }
+        if paused { return "always, but agents are paused" }
+        if !hasCopy { return "always, but its copy for no fingerprint is missing: mark it again" }
+        return nil
+    }
+
     public func admits(agent: String, for key: String) -> Bool {
         let limited = agents[key] ?? []
         // "claude" takes in every Claude session, "claude/sales" only that one.

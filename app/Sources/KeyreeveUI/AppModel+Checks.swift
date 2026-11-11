@@ -41,7 +41,10 @@ extension AppModel {
             self.message = T("Opening the vault…")
             Task.detached {
                 let result = Result {
-                    try VaultKeeper.open(names: names, recipient: try unlocked.recipient(store), store: store, by: command)
+                    // A check or an identify only asks the provider about the key: it is not a use.
+                    try VaultKeeper.open(
+                        names: names, recipient: try unlocked.recipient(store), store: store, by: command,
+                        event: ["check", "identify"].contains(command) ? "checked" : "used")
                 }
                 await MainActor.run {
                     self.busy = false

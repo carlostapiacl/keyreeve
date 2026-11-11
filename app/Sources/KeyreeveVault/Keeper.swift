@@ -165,7 +165,16 @@ public enum VaultKeeper {
         let base = folder.resolvingSymlinksInPath().standardizedFileURL.path + "/"
         let url = folder.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
         guard url.path.hasPrefix(base) else { return .failure(.outsideFolder) }
+        return readFile(at: url)
+    }
+
+    /// Reads one whole file, wherever it is, to seal it as it is: for a key that is not in the keys folder, such as
+    /// a keystore or a certificate kept somewhere else. The same limits as the keys folder: a regular file, not
+    /// empty, at most 1 MB.
+    public static func readFile(at url: URL) -> Result<Data, Skip> {
+        let url = url.resolvingSymlinksInPath().standardizedFileURL
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            attributes[.type] as? FileAttributeType == .typeRegular,
             let size = attributes[.size] as? NSNumber
         else { return .failure(.unreadable) }
         guard size.intValue <= maxBytes else { return .failure(.tooLarge) }

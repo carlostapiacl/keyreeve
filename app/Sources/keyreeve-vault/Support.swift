@@ -8,9 +8,11 @@ let help = """
     Usage:
       keyreeve-vault init
           Create the vault and show its recovery key, once. Needs a terminal.
-      keyreeve-vault add <name> [--description TEXT] [--tags a,b]
+      keyreeve-vault add <name> [--file PATH] [--description TEXT] [--tags a,b]
           Add a key, read from stdin. Needs no fingerprint, and cannot read anything back. It gets an identifier
           in keys.toml, not offered to agents, and Keyreeve shows it as new until you review it.
+          --file seals a whole file byte for byte, from anywhere, such as a .jks keystore or a .pfx
+          certificate; the name can then be left out and the file's name is used. The file is only read.
       keyreeve-vault put <name>
           Add a key, read from stdin, as add does. For a key already there, the new value waits as
           <name>#pending and the current one stays in force until you accept it in Keyreeve, with your finger.
@@ -26,6 +28,9 @@ let help = """
       keyreeve-vault run <name> --as <VARIABLE> -- <command> [args...]
           Run a command with the key in one variable. Asks for a fingerprint.
           The command's own output is not filtered, so choose a command that does not print it.
+      keyreeve-vault run <name> --as-file <VARIABLE> -- <command> [args...]
+          For a key that is a file, such as a .jks keystore or a .pfx certificate: the variable holds the path
+          of a copy only you can read, byte for byte, removed when the command ends. Asks for a fingerprint.
       keyreeve-vault use <id> [--as VAR] [--for 5m] [--agent NAME] [--reason TEXT] [--real] -- <command> [args...]
           Run a command with a key, by its identifier. The command holds a stand-in, and a local proxy
           puts the real key on requests to that provider's hosts. Asks for your finger once for this key

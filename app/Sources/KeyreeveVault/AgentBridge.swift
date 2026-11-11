@@ -560,8 +560,6 @@ public struct AgentBridge {
         }
     }
 
-    /// Which account a key belongs to and what the person wrote about it, so an agent picks the right one of
-    /// several keys of a provider without trying each. Names and words only, never a value.
     /// The name of every key not offered to agents, after the person's finger: names, providers, accounts and
     /// descriptions, never a value. One yes covers this session for an hour, and every listing goes in the log.
     func everyName(reason: String?, offered: Set<String>) throws -> [String] {
@@ -582,18 +580,26 @@ public struct AgentBridge {
         let kept = rest.filter { !$0.more.archived }.sorted { $0.id < $1.id }
         let archived = rest.filter(\.more.archived).map(\.id).sorted()
         log("listed", "every key", "\(kept.count) not offered, \(archived.count) archived", reason)
+        let named: [String] = kept.map { (key: KeyIndex.Key) -> String in
+            let account: String? = key.account?.trimmingCharacters(in: CharacterSet.whitespaces)
+            let about: [String] = [key.provider, account].compactMap { $0 }.filter { !$0.isEmpty }
+            var line = key.id
+            if !about.isEmpty { line += " (" + about.joined(separator: ", ") + ")" }
+            if let text = key.description {
+                line += " \u{201C}" + (text.count > 100 ? String(text.prefix(99)) + "…" : text) + "\u{201D}"
+            }
+            return line
+        }
         var lines = ["Not offered to agents, names only (the person offers one in Keyreeve, on the key, under Use): "
-            + (kept.isEmpty ? "none" : kept.map { key in
-                let about = [key.provider, key.account.map { $0.trimmingCharacters(in: .whitespaces) }].compactMap { $0 }.filter { !$0.isEmpty }
-                let words = key.description.map { " \u{201C}" + ($0.count > 100 ? String($0.prefix(99)) + "…" : $0) + "\u{201D}" } ?? ""
-                return key.id + (about.isEmpty ? "" : " (" + about.joined(separator: ", ") + ")") + words
-            }.joined(separator: "; "))]
+            + (named.isEmpty ? "none" : named.joined(separator: "; "))]
         if !archived.isEmpty { lines.append("Archived: " + archived.joined(separator: ", ")) }
         return lines
     }
 
     static let everyNameSlot = "\u{0}every name"
 
+    /// Which account a key belongs to and what the person wrote about it, so an agent picks the right one of
+    /// several keys of a provider without trying each. Names and words only, never a value.
     static func about(_ key: KeyIndex.Key?) -> String {
         guard let key else { return "" }
         let account = key.account.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }

@@ -209,6 +209,17 @@ func serveAgents() throws {
         hasUnattendedCopy: { id in
             guard let key = try? indexed(id) else { return false }
             return (try? store.load())?.entries[key.source]?.unattendedSealed != nil
+        },
+        everyKey: {
+            guard let index = try? KeyIndex.load(from: keysFile) else { return [] }
+            return index.keys + index.unoffered
+        },
+        allowEveryName: { who, why in
+            let spanish = Locale.preferredLanguages.first?.hasPrefix("es") ?? false
+            let words = spanish
+                ? "mostrarle a \(who) el nombre de todas tus claves, no sus valores, por una hora. Dice: \(why.prefix(120))"
+                : "show \(who) the name of every key, not its value, for an hour. It says: \(why.prefix(120))"
+            return (try? EnclaveRecipient.confirm(reason: words)) != nil
         })
     bridge.places = { PlaceBook.load(from: PlaceBook.file(home: home)) }
     bridge.proceduresFolder = PlaceBook.proceduresFolder(home: home)

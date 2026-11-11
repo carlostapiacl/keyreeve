@@ -384,7 +384,7 @@ Las herramientas que recibe un agente:
 
 | herramienta | qué hace |
 |---|---|
-| `list_keys` | las claves que puede usar, las que tiene cerradas y los proveedores para los que todavía no tienes clave |
+| `list_keys` | las claves que puede usar, las que tiene cerradas y los proveedores para los que todavía no tienes clave. Con `all` y un motivo, pide tu huella para mostrar también los nombres de las claves no ofrecidas a los agentes (nombre, proveedor, cuenta y descripción, nunca un valor), por una hora en esa sesión; cada listado queda en el registro |
 | `use_key` | corre un comando con un reemplazo, a través del proxy, así la clave real solo llega a su proveedor |
 | `run_with_key` | corre un programa que permitiste, fijado por su SHA-256, con la clave real en una variable |
 | `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |

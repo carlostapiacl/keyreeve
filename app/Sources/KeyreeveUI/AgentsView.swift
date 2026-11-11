@@ -15,7 +15,7 @@ struct AgentsView: View {
 
     private static let agentEvents: Set<String> = [
         "granted", "used", "denied", "refused", "handed", "closed", "request", "signed", "requested", "opened",
-        "policy", "allowed", "declined", "paused", "resumed", "closed all",
+        "policy", "allowed", "declined", "paused", "resumed", "closed all", "listed",
     ]
     private var recent: [AuditLog.Entry] {
         Array(model.usage.entries.filter { Self.agentEvents.contains($0.event) }.prefix(12))

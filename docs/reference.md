@@ -363,7 +363,7 @@ The tools an agent gets:
 
 | tool | what it does |
 |---|---|
-| `list_keys` | the keys it may use, the ones closed to it, and the providers you have no key for yet |
+| `list_keys` | the keys it may use, the ones closed to it, and the providers you have no key for yet. With `all` and a reason, it asks for your finger to show the names of the keys not offered to agents too (names, providers, accounts and descriptions, never a value), for that session for an hour; each listing is logged |
 | `use_key` | runs a command with a stand-in, through the proxy, so the real key only reaches its provider |
 | `run_with_key` | runs a program you allowed, pinned by its SHA-256, with the real key in one variable |
 | `request_access` | asks you to open a closed key, or to save one for a provider |

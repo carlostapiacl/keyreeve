@@ -244,6 +244,51 @@ struct UnsavedRequestTests {
         #expect(try AgentTests().call(fresh, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).text.contains("already needs no fingerprint"))
     }
 
+    /// Keys not offered to agents stay out of list_keys, unless the person shows their names with a fingerprint: names,
+    /// providers and descriptions, for an hour, and each listing is logged.
+    @Test func everyNameIsShownOnlyAfterTheFinger() throws {
+        final class Box: @unchecked Sendable {
+            var asked: [String] = []
+            var answer = true
+            var logged: [String] = []
+        }
+        let box = Box()
+        var personal = KeyIndex.Key(id: "bank-login", source: "bank.txt", provider: "bank", account: "me", description: "Login del banco")
+        personal.more.reviewed = true
+        var old = KeyIndex.Key(id: "old-token", source: "old.txt")
+        old.more.archived = true
+        let offered = KeyIndex.Key(id: "netlify", source: "n.txt", provider: "netlify")
+        let make = {
+            AgentBridge(
+                policy: { AgentPolicy(levels: ["netlify": .free]) }, names: { ["netlify"] },
+                open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+                agent: "claude", log: { event, _, _, _ in box.logged.append(event) },
+                describe: { ["netlify": offered] },
+                everyKey: { [offered, personal, old] },
+                allowEveryName: { who, why in
+                    box.asked.append(who + ": " + why)
+                    return box.answer
+                })
+        }
+        let bridge = make()
+        let plain = try AgentTests().call(bridge, "list_keys", [:]).text
+        #expect(!plain.contains("bank-login") && plain.contains("list_keys with all"))
+        #expect(box.asked.isEmpty)
+        #expect(try AgentTests().call(bridge, "list_keys", ["all": true]).error)
+        let all = try AgentTests().call(bridge, "list_keys", ["all": true, "reason": "find the bank key"]).text
+        #expect(all.contains("bank-login (bank, me) \u{201C}Login del banco\u{201D}") && all.contains("Archived: old-token"))
+        #expect(box.asked == ["claude: find the bank key"] && box.logged == ["listed"])
+        // One yes covers the hour: no second prompt, and the listing is logged again.
+        _ = try AgentTests().call(bridge, "list_keys", ["all": true, "reason": "again"])
+        #expect(box.asked.count == 1 && box.logged == ["listed", "listed"])
+        // A no shows nothing and is not asked again in the session.
+        box.answer = false
+        let other = make()
+        #expect(try AgentTests().call(other, "list_keys", ["all": true, "reason": "r"]).error)
+        #expect(try AgentTests().call(other, "list_keys", ["all": true, "reason": "r"]).text.contains("already said no"))
+        #expect(box.asked.count == 2)
+    }
+
     /// A server older than the Keyreeve in place changes no permission, and the agent hears why.
     @Test func anOutdatedServerChangesNoPermission() throws {
         final class Box: @unchecked Sendable { var policy = AgentPolicy(levels: ["kept": .free]) }

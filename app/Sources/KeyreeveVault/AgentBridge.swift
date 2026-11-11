@@ -10,7 +10,12 @@ public struct AgentBridge {
         var refused: Set<String> = []
         /// This agent's latest search for keys, which its proposal is checked against.
         var scan: AgentBringing.Scan?
+        /// Until when the person let this session see the name of every key, offered or not.
+        var everyNameUntil: Date?
     }
+
+    /// How long one fingerprint lets a session see the name of every key.
+    public static let everyNameSeconds: TimeInterval = 3600
 
     /// Ends everything agents were approved for a while: the app's lock and `revoke` touch this file, and
     /// each agent server compares its approvals with it.
@@ -108,6 +113,10 @@ public struct AgentBridge {
     let decideNoFingerprint: (AccessRequest) -> Bool
     /// Opens the key with the person's fingerprint and seals its copy to the chip's key that asks nothing.
     let markUnattended: (_ key: String, _ prompt: String) throws -> Void
+    /// Every key keys.toml holds, offered to agents or not, archived or not. Read only after the person said yes.
+    let everyKey: () -> [KeyIndex.Key]
+    /// Asks the person, with their finger, to let this agent see the name of every key. The words say who and why.
+    let allowEveryName: (_ agent: String, _ reason: String) -> Bool
     /// Runs `keyreeve bring` with these arguments, always a dry run, and returns its report. Tests answer for it.
     let scanKeys: (_ arguments: [String]) throws -> Data
     /// The files keys in keys.toml and the vault came from, to tell which keys found look sealed. Places only.
@@ -168,8 +177,12 @@ public struct AgentBridge {
             throw VaultError("keys cannot be marked here")
         },
         scanKeys: @escaping (_ arguments: [String]) throws -> Data = { _ in throw VaultError("keys cannot be looked for here") },
-        sealedSources: @escaping () -> Set<String> = { [] }
+        sealedSources: @escaping () -> Set<String> = { [] },
+        everyKey: @escaping () -> [KeyIndex.Key] = { [] },
+        allowEveryName: @escaping (_ agent: String, _ reason: String) -> Bool = { _, _ in false }
     ) {
+        self.everyKey = everyKey
+        self.allowEveryName = allowEveryName
         self.scanKeys = scanKeys
         self.sealedSources = sealedSources
         self.decideNoFingerprint = decideNoFingerprint
@@ -354,6 +367,12 @@ public struct AgentBridge {
             let unsaved = offered().filter { !known.contains($0) && !saved.contains($0) }.sorted()
             if !unsaved.isEmpty {
                 lines.append("Not saved yet, ask with request_access by provider: " + unsaved.joined(separator: ", "))
+            }
+            if arguments["all"] as? Bool == true {
+                lines.append(contentsOf: try everyName(reason: arguments["reason"] as? String, offered: Set(described.keys)))
+            } else if everyKey().contains(where: { described[$0.id] == nil }) {
+                // Said only when there are such keys, and with no count or name: that much the agent may know.
+                lines.append("Keys not offered to agents are not listed: list_keys with all and a reason asks the person to show their names.")
             }
             return lines.joined(separator: "\n")
         case "use_key":
@@ -543,6 +562,38 @@ public struct AgentBridge {
 
     /// Which account a key belongs to and what the person wrote about it, so an agent picks the right one of
     /// several keys of a provider without trying each. Names and words only, never a value.
+    /// The name of every key not offered to agents, after the person's finger: names, providers, accounts and
+    /// descriptions, never a value. One yes covers this session for an hour, and every listing goes in the log.
+    func everyName(reason: String?, offered: Set<String>) throws -> [String] {
+        guard let reason, !reason.isEmpty else { throw VaultError("all needs a reason, shown to the person") }
+        let date = now()
+        if (held.everyNameUntil ?? .distantPast) <= date {
+            guard !held.refused.contains(Self.everyNameSlot) else {
+                throw VaultError("the person already said no to showing every name in this session. Ask them in the conversation instead")
+            }
+            guard allowEveryName(agent, reason) else {
+                held.refused.insert(Self.everyNameSlot)
+                log("denied", "every key", "names", reason)
+                throw VaultError("the person kept the names of the keys not offered to agents to themselves")
+            }
+            held.everyNameUntil = date.addingTimeInterval(Self.everyNameSeconds)
+        }
+        let rest = everyKey().filter { !offered.contains($0.id) }
+        let kept = rest.filter { !$0.more.archived }.sorted { $0.id < $1.id }
+        let archived = rest.filter(\.more.archived).map(\.id).sorted()
+        log("listed", "every key", "\(kept.count) not offered, \(archived.count) archived", reason)
+        var lines = ["Not offered to agents, names only (the person offers one in Keyreeve, on the key, under Use): "
+            + (kept.isEmpty ? "none" : kept.map { key in
+                let about = [key.provider, key.account.map { $0.trimmingCharacters(in: .whitespaces) }].compactMap { $0 }.filter { !$0.isEmpty }
+                let words = key.description.map { " \u{201C}" + ($0.count > 100 ? String($0.prefix(99)) + "…" : $0) + "\u{201D}" } ?? ""
+                return key.id + (about.isEmpty ? "" : " (" + about.joined(separator: ", ") + ")") + words
+            }.joined(separator: "; "))]
+        if !archived.isEmpty { lines.append("Archived: " + archived.joined(separator: ", ")) }
+        return lines
+    }
+
+    static let everyNameSlot = "\u{0}every name"
+
     static func about(_ key: KeyIndex.Key?) -> String {
         guard let key else { return "" }
         let account = key.account.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
@@ -593,8 +644,15 @@ public struct AgentBridge {
     private static let tools: [[String: Any]] = [
         [
             "name": "list_keys",
-            "description": "List the keys this agent may use, how, and whether the person is asked. No values.",
-            "inputSchema": ["type": "object", "properties": [String: Any]()],
+            "description":
+                "List the keys this agent may use, how, and whether the person is asked. No values. Keys not offered to agents are left out: with all and a reason, the person is asked with their finger to show the name of every key, offered or not, for this session for an hour. Ask for that before saying a key does not exist.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "all": ["type": "boolean", "description": "Also the names of the keys not offered to agents, after the person's fingerprint"],
+                    "reason": ["type": "string", "description": "With all: why, shown to the person and kept in the usage log"],
+                ],
+            ],
         ],
         [
             "name": "use_key",

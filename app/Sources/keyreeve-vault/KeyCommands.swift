@@ -239,6 +239,11 @@ func serveKeys() throws {
             else { return nil }
             return try? vault.openUnattended(name: source, with: recipient)
         },
+        whyAsked: { id, agent, source in
+            guard let policy = try? AgentPolicy.loadStrict(from: home.appendingPathComponent(AgentPolicy.fileName)) else { return nil }
+            let copy = (try? store.load())?.entries[source]?.unattendedSealed != nil
+            return policy.whyAsked(key: id, agent: agent, hasCopy: copy, paused: AgentBridge.isPaused(home: home))
+        },
         openMany: { sources, prompt in
             // One fingerprint, then every source opens with it.
             let context = try EnclaveRecipient.confirm(reason: prompt)

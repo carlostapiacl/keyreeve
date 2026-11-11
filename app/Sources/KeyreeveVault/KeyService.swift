@@ -222,6 +222,8 @@ public final class KeyService: @unchecked Sendable {
     /// The value of a key the person marked to need no fingerprint, for this agent, or nil. It reads the mark
     /// from the person's own files, so a caller that claims it gets nothing more.
     let openUnattended: (_ key: String, _ agent: String?, _ source: String) -> Data?
+    /// When `openUnattended` gave nothing, why: nil for a key not marked "always", or the reason it still asks.
+    let whyAsked: (_ key: String, _ agent: String?, _ source: String) -> String?
     let proxy: KeyProxy?
     private let agents: SSHKeyAgents?
     private let confirm: @Sendable (_ prompt: String) -> Bool
@@ -266,6 +268,7 @@ public final class KeyService: @unchecked Sendable {
         log: AuditLog, now: @escaping () -> Date = Date.init, paused: @escaping () -> Bool = { false },
         promptWait: TimeInterval = 90, revision: @escaping (_ source: String) -> String? = { _ in nil },
         openUnattended: @escaping (_ key: String, _ agent: String?, _ source: String) -> Data? = { _, _, _ in nil },
+        whyAsked: @escaping (_ key: String, _ agent: String?, _ source: String) -> String? = { _, _, _ in nil },
         openMany: ((_ sources: [String], _ prompt: String) throws -> [String: Data])? = nil,
         choose: ((KeyBatch) -> KeyBatch.Answer?)? = nil,
         sets: @escaping () -> KeySets = { KeySets() },
@@ -286,6 +289,7 @@ public final class KeyService: @unchecked Sendable {
         self.isRunning = isRunning
         self.gather = gather
         self.openUnattended = openUnattended
+        self.whyAsked = whyAsked
         self.promptWait = promptWait
         self.revision = revision
         self.paused = paused
@@ -492,10 +496,13 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
-        let ask = Ask(request: request, key: key, provider: provider, name: name, declared: declared, caller: caller)
+        var ask = Ask(request: request, key: key, provider: provider, name: name, declared: declared, caller: caller)
         // A key marked to need no fingerprint, or one a standing permission covers, opens here with no prompt, and so
         // waits for no turn.
-        let quiet = (request.unattended == true ? openUnattended(id, request.agent, key.source) : nil) ?? standingValue(for: ask)
+        let unattended = request.unattended == true ? openUnattended(id, request.agent, key.source) : nil
+        let quiet = unattended ?? standingValue(for: ask)
+        // A key marked "always" that still asks says why, or a bot started at login asks every day with no word.
+        if request.unattended == true, quiet == nil { ask.missed = whyAsked(id, request.agent, key.source) }
         // A caller that brings its own words already asked its own question, such as an agent's window: it is not
         // asked again in a shared one.
         if quiet == nil, gather.hold != nil, request.prompt == nil { return try coalesce(ask) }
@@ -530,7 +537,7 @@ public final class KeyService: @unchecked Sendable {
         }
         return try install(
             ask, sealed: sealed, sealing: sealing, seconds: request.seconds ?? Self.defaultSeconds, quiet: quiet != nil,
-            revocationsBefore: revocationsBefore)
+            revocationsBefore: revocationsBefore, note: quiet == nil ? ask.missed : nil)
     }
 
     /// Opens a permission with a value the person just gave, or one that needs no finger.

@@ -141,12 +141,16 @@ public struct VaultStore: Sendable {
 
     /// Keeps which key was used and by which program, next to the vault. It never holds a value or
     /// the command's arguments, which can carry anything. A failure here stops nothing.
-    public func recordUse(of name: String, by command: String, reason: String? = nil) {
+    ///
+    /// `event` is `used` for a use, and `checked` when Keyreeve itself opened the key only to ask its provider
+    /// whether it still works, so a key nobody used does not read as used.
+    public func recordUse(of name: String, by command: String, reason: String? = nil, event: String = "used") {
         var entry: [String: Any] = [
             "at": Int(Date().timeIntervalSince1970), "name": name,
             "command": URL(fileURLWithPath: command).lastPathComponent,
         ]
         if let reason { entry["reason"] = String(reason.prefix(200)) }
+        if event != "used" { entry["event"] = event }
         guard let line = try? JSONSerialization.data(withJSONObject: entry) else { return }
         let path = directory.deletingLastPathComponent().appendingPathComponent("usage.jsonl").path
         let descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
@@ -155,7 +159,7 @@ public struct VaultStore: Sendable {
         _ = (line + Data("\n".utf8)).withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
         let log = AuditLog(url: directory.deletingLastPathComponent().appendingPathComponent("audit.jsonl"))
         try? log.append(
-            event: "used", key: name, observed: CallerIdentity.observe(pid: getpid()),
+            event: event, key: name, observed: CallerIdentity.observe(pid: getpid()),
             declared: AuditLog.Declared(reason: reason, command: URL(fileURLWithPath: command).lastPathComponent))
     }
 

@@ -824,6 +824,7 @@ public let spanish: [String: String] = [
     "No permission was given.": "No se dio el permiso.",
     "Permission given": "Permiso dado",
     "Used": "Usada",
+    "Checked by Keyreeve": "Probada por Keyreeve",
     "Refused": "Rechazada",
     "Finger said no": "Huella rechazada",
     "Real key handed over": "Clave real entregada",

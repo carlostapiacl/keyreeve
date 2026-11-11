@@ -91,6 +91,7 @@ struct UsageRow: View {
         switch event {
         case "granted": return T("Permission given")
         case "used": return T("Used")
+        case "checked": return T("Checked by Keyreeve")
         case "denied": return T("Finger said no")
         case "refused": return T("Refused")
         case "handed": return T("Real key handed over")

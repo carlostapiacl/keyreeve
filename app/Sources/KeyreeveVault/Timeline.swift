@@ -59,7 +59,8 @@ public enum Timeline {
         }
         for line in lines(home.appendingPathComponent("usage.jsonl")) {
             guard let at = date(line["at"]), let key = line["name"] as? String else { continue }
-            rows.append(Row(at: at, source: "terminal", event: "used", key: name(key), program: line["command"] as? String))
+            let event = line["event"] as? String ?? "used"
+            rows.append(Row(at: at, source: "terminal", event: event, key: name(key), program: line["command"] as? String))
         }
         return rows.filter { row in since.map { row.at >= $0 } ?? true }.sorted { $0.at < $1.at }
     }

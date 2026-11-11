@@ -24,7 +24,11 @@ extension AgentBridge {
         guard let key = arguments["key"] as? String,
             let reason = arguments["reason"] as? String, !reason.isEmpty
         else { throw VaultError("this needs key and reason") }
-        if arguments["duration"] as? String == "no-fingerprint" { return try requestNoFingerprint(key: key, reason: reason) }
+        let forAgent = (arguments["for_agent"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        if arguments["duration"] as? String == "no-fingerprint" {
+            return try requestNoFingerprint(key: key, reason: reason, forAgent: forAgent)
+        }
+        guard forAgent == nil else { throw VaultError("for_agent goes with duration no-fingerprint") }
         guard let hours = AccessDecision.hours(from: arguments["duration"] as? String ?? "1h") else {
             throw VaultError("duration is 1h, 4h, 8h, 24h or always")
         }
@@ -209,40 +213,67 @@ extension AgentBridge {
 
     /// Asks the person to let agents use a saved key with no fingerprint at all. The window starts on no, the person
     /// gives their finger to seal the copy, and only then the level changes. Who the key is open to stays as they set it.
-    func requestNoFingerprint(key: String, reason: String) throws -> String {
+    ///
+    /// With `forAgent`, the asker asks for another agent, such as a bot it set up that runs as that name: only for a
+    /// key already open to the asker, so an agent cannot reach a key through another name. The window says who it is for.
+    func requestNoFingerprint(key: String, reason: String, forAgent: String? = nil) throws -> String {
         guard try names().contains(key) else { throw VaultError("no key called \(key) is in the vault") }
-        let current = policy
-        if current.levels[key] == .always, current.admits(agent: agent, for: key) {
-            return "\(key) already needs no fingerprint for \(agent). Use use_key."
+        var target = agent
+        if let forAgent {
+            guard let clean = AgentPolicy.cleanAgentName(forAgent) else {
+                throw VaultError("for_agent is a name of lower-case letters, digits, - and _, at most 40")
+            }
+            target = clean
         }
-        if current.level(of: key, at: now()) != nil, !current.admits(agent: agent, for: key) {
+        let current = policy
+        // "Always" with no copy sealed still asks every time: the mark is offered again, not reported as done.
+        let copy = hasUnattendedCopy(key)
+        if current.levels[key] == .always, current.admits(agent: target, for: key), copy {
+            return "\(key) already needs no fingerprint for \(target). Use use_key."
+        }
+        if target != agent {
+            guard current.level(of: key, at: now()) != nil, current.admits(agent: agent, for: key) else {
+                log("refused", key, "no fingerprint for \(target), asked by an agent it is not open to", reason)
+                throw VaultError("\(key) is not open to \(agent), so it cannot be asked for \(target). Ask the person in Keyreeve, under Agents")
+            }
+        } else if current.level(of: key, at: now()) != nil, !current.admits(agent: agent, for: key) {
             log("refused", key, "no fingerprint asked by an agent it is not open to", reason)
             throw VaultError("\(key) is not open to \(agent). Ask the person to add \(agent) in Keyreeve, under Agents")
         }
         guard !held.refused.contains(key) else {
             throw VaultError("the person already said no to \(key) in this session. Ask them in the conversation instead")
         }
-        let request = AccessRequest(key: key, provider: describe()[key]?.provider, agent: agent, reason: reason, hours: nil)
+        let request = AccessRequest(
+            key: key, provider: describe()[key]?.provider, agent: agent, reason: reason, hours: nil,
+            forAgent: target == agent ? nil : target)
         guard decideNoFingerprint(request) else {
             held.refused.insert(key)
             log("denied", key, "no fingerprint", reason)
             throw VaultError("the person kept \(key) as it was")
         }
         do {
-            try markUnattended(key, FingerPrompt.use(who: agent, key: key, account: describe()[key]?.account, lasts: .untilQuit, reason: reason))
+            try markUnattended(key, FingerPrompt.use(who: target, key: key, account: describe()[key]?.account, lasts: .untilQuit, reason: reason))
         } catch {
             log("denied", key, "fingerprint for no fingerprint", reason)
             throw VaultError("\(key) was not changed: the fingerprint was not given or the copy could not be sealed")
         }
-        let requester = agent
+        let requester = target
+        let named = target != agent
         try updatePolicy { policy in
             policy.levels[key] = .always
             policy.until[key] = nil
-            // A key no agent could use yet opens to the one that asked; one already open keeps the agents it had.
-            if (policy.agents[key] ?? []).isEmpty, current.level(of: key, at: now()) == nil { policy.agents[key] = [requester] }
+            // A key no agent could use yet opens to the one that asked; one already open keeps the agents it had, and
+            // gains the one it was asked for.
+            if (policy.agents[key] ?? []).isEmpty, current.level(of: key, at: now()) == nil {
+                policy.agents[key] = [requester]
+            } else if named, let list = policy.agents[key], !list.isEmpty, !policy.admits(agent: requester, for: key) {
+                policy.agents[key] = list + [requester]
+            }
         }
-        log("opened", key, "always, no fingerprint, for \(agent)", reason)
-        return "The person let agents use \(key) with no fingerprint, through the proxy. Use use_key."
+        log("opened", key, "always, no fingerprint, for \(target)" + (named ? ", asked by \(agent)" : ""), reason)
+        return named
+            ? "The person let \(target) use \(key) with no fingerprint, through the proxy. Start it with KEYREEVE_AGENT=\(target)."
+            : "The person let agents use \(key) with no fingerprint, through the proxy. Use use_key."
     }
 
     /// A key for a provider that is not saved yet. The person saves and allows it in the app, so this

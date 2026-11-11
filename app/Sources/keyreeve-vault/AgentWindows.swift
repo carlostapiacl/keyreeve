@@ -95,9 +95,15 @@ func askNoFingerprint(_ request: AccessRequest) -> Bool {
     let alert = NSAlert()
     alert.alertStyle = .critical
     let provider = request.provider.map { " (\($0))" } ?? ""
-    alert.messageText = spanish
-        ? "\(request.agent) pide usar \(request.key)\(provider) sin huella, siempre"
-        : "\(request.agent) asks to use \(request.key)\(provider) with no fingerprint, always"
+    if let other = request.forAgent {
+        alert.messageText = spanish
+            ? "\(request.agent) pide que \(other) use \(request.key)\(provider) sin huella, siempre"
+            : "\(request.agent) asks that \(other) use \(request.key)\(provider) with no fingerprint, always"
+    } else {
+        alert.messageText = spanish
+            ? "\(request.agent) pide usar \(request.key)\(provider) sin huella, siempre"
+            : "\(request.agent) asks to use \(request.key)\(provider) with no fingerprint, always"
+    }
     alert.informativeText = spanish
         ? "Lo que dice el agente, en sus palabras:\n\u{201C}\(request.reason)\u{201D}\n\nSi aceptas, pones la huella una vez y desde ahí los agentes usan esta clave a través del proxy sin preguntarte, también después de reiniciar. Cualquier programa que corra con tu usuario podría usarla así mientras la Mac esté desbloqueada. Úsalo solo para claves que hacen poco daño. Lo quitas cuando quieras en Agentes."
         : "What the agent says, in its own words:\n\u{201C}\(request.reason)\u{201D}\n\nIf you accept, you give your finger once, and from then on agents use this key through the proxy with no question, after a restart too. Any program running as you could use it that way while this Mac is unlocked. Keep it for keys that can do little harm. Take it off any time under Agents."

@@ -368,6 +368,9 @@ agentes con dos opciones:
   *Siempre, sin huella* pide tu dedo una vez, para sellar una copia de la clave para una segunda llave del chip que se abre sin huella,
   y desde ahí los agentes la usan a través del proxy sin preguntar, también después de reiniciar. Un agente puede pedirlo con `request_access`, pero solo tú lo activas, en la app;
   la clave real, `run_with_key` y `get` siguen preguntando. Úsalo solo para claves de lectura.
+  Un agente que montó un programa que corre como otro agente, como un bot que arranca al iniciar sesión con
+  `KEYREEVE_AGENT=bot-nocturno`, lo pide con `for_agent`: solo para una clave que ya tiene abierta, y la ventana dice para quién es.
+  Una clave en *Siempre* a la que le falta la copia sellada pregunta cada vez, y pedirlo de nuevo ofrece sellarla.
 - **Agentes.** Cualquier agente, o solo Claude o solo Codex. El agente se identifica por el proceso que inició el servidor, lo que es
   una pista fuerte y no una prueba, ya que todo corre como tú. Una sesión puede nombrarse a sí misma si arranca con `KEYREEVE_AGENT`
   definido, como `KEYREEVE_AGENT=sales claude`, y entonces es `claude/sales`: una clave abierta a `claude` la atiende como antes, y una

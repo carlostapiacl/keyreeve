@@ -164,6 +164,10 @@ func serveAgents() throws {
             }
             return sources
         },
+        hasUnattendedCopy: { id in
+            guard let key = try? indexed(id) else { return false }
+            return (try? store.load())?.entries[key.source]?.unattendedSealed != nil
+        },
         everyKey: {
             guard let index = try? KeyIndex.load(from: keysFile) else { return [] }
             return index.keys + index.unoffered

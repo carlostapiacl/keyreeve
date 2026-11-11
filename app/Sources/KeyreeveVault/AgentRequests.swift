@@ -38,13 +38,16 @@ public struct AccessRequest: Equatable, Sendable {
     public let reason: String
     /// For how long the agent suggests, or nil for always.
     public let hours: Int?
+    /// Another agent the key is asked for, such as a bot the asking agent set up. Nil when it is for the asker.
+    public let forAgent: String?
 
-    public init(key: String, provider: String?, agent: String, reason: String, hours: Int?) {
+    public init(key: String, provider: String?, agent: String, reason: String, hours: Int?, forAgent: String? = nil) {
         self.key = key
         self.provider = provider
         self.agent = agent
         self.reason = String(AgentRequest.oneLine(reason).prefix(200))
         self.hours = hours
+        self.forAgent = forAgent
     }
 }
 

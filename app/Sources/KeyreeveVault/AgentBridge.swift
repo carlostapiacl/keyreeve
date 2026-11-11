@@ -113,6 +113,8 @@ public struct AgentBridge {
     let decideNoFingerprint: (AccessRequest) -> Bool
     /// Opens the key with the person's fingerprint and seals its copy to the chip's key that asks nothing.
     let markUnattended: (_ key: String, _ prompt: String) throws -> Void
+    /// Whether a key's copy for use with no fingerprint is sealed. A key at "always" without it still asks.
+    let hasUnattendedCopy: (_ key: String) -> Bool
     /// Every key keys.toml holds, offered to agents or not, archived or not. Read only after the person said yes.
     let everyKey: () -> [KeyIndex.Key]
     /// Asks the person, with their finger, to let this agent see the name of every key. The words say who and why.
@@ -178,9 +180,11 @@ public struct AgentBridge {
         },
         scanKeys: @escaping (_ arguments: [String]) throws -> Data = { _ in throw VaultError("keys cannot be looked for here") },
         sealedSources: @escaping () -> Set<String> = { [] },
+        hasUnattendedCopy: @escaping (_ key: String) -> Bool = { _ in true },
         everyKey: @escaping () -> [KeyIndex.Key] = { [] },
         allowEveryName: @escaping (_ agent: String, _ reason: String) -> Bool = { _, _ in false }
     ) {
+        self.hasUnattendedCopy = hasUnattendedCopy
         self.everyKey = everyKey
         self.allowEveryName = allowEveryName
         self.scanKeys = scanKeys
@@ -791,6 +795,10 @@ public struct AgentBridge {
                     "duration": [
                         "type": "string", "enum": ["1h", "4h", "8h", "24h", "always", "no-fingerprint"],
                         "description": "What you suggest, 1h if left out. always only for a key used every day. no-fingerprint asks the person to mark a saved key so agents use it with no fingerprint at all, through the proxy, even after Keyreeve restarts: only for a key used all the time that can do little harm, and they decide with their own click and finger",
+                    ],
+                    "for_agent": [
+                        "type": "string",
+                        "description": "With no-fingerprint only: the agent name a program you set up runs as (its KEYREEVE_AGENT), such as a bot started at login, when it is not you. The key must already be open to you. The person sees who it is for and decides with their finger",
                     ],
                 ],
                 "required": ["reason"],

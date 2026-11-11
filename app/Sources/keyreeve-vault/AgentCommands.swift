@@ -205,6 +205,10 @@ func serveAgents() throws {
                 }
             }
             return sources
+        },
+        hasUnattendedCopy: { id in
+            guard let key = try? indexed(id) else { return false }
+            return (try? store.load())?.entries[key.source]?.unattendedSealed != nil
         })
     bridge.places = { PlaceBook.load(from: PlaceBook.file(home: home)) }
     bridge.proceduresFolder = PlaceBook.proceduresFolder(home: home)

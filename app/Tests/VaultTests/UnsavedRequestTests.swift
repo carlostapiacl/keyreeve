@@ -244,6 +244,67 @@ struct UnsavedRequestTests {
         #expect(try AgentTests().call(fresh, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]).text.contains("already needs no fingerprint"))
     }
 
+    /// A key at "always" whose copy for no fingerprint is missing still asks every time, so asking for it again is
+    /// offered to the person, not answered as done.
+    @Test func alwaysWithNoCopyIsAskedAgain() throws {
+        final class Box: @unchecked Sendable {
+            var policy = AgentPolicy(levels: ["bot": .always], agents: ["bot": ["claude"]])
+            var copy = false
+            var marked: [String] = []
+        }
+        let box = Box()
+        let bridge = AgentBridge(
+            policy: { box.policy }, names: { ["bot"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude", updatePolicy: { change in change(&box.policy) },
+            decideNoFingerprint: { _ in true },
+            markUnattended: { key, _ in
+                box.marked.append(key)
+                box.copy = true
+            },
+            hasUnattendedCopy: { _ in box.copy })
+        let ask = { try AgentTests().call(bridge, "request_access", ["key": "bot", "reason": "r", "duration": "no-fingerprint"]) }
+        #expect(!(try ask().text.contains("already")))
+        #expect(box.marked == ["bot"] && box.policy.agents["bot"] == ["claude"])
+        #expect(try ask().text.contains("already needs no fingerprint"))
+    }
+
+    /// An agent that set up a bot asks for it by the bot's name: only for a key already open to the asker, the window
+    /// says who it is for, and the bot joins the agents the key had.
+    @Test func noFingerprintCanBeAskedForAnotherAgent() throws {
+        final class Box: @unchecked Sendable {
+            var policy = AgentPolicy(levels: ["bot": .always, "mine": .free], agents: ["bot": ["claude"], "mine": ["other"]])
+            var asked: [AccessRequest] = []
+            var marked: [String] = []
+        }
+        let box = Box()
+        let bridge = AgentBridge(
+            policy: { box.policy }, names: { ["bot", "mine", "closed"] },
+            open: { _, _ in Data() }, run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            agent: "claude", updatePolicy: { change in change(&box.policy) },
+            decideNoFingerprint: { request in
+                box.asked.append(request)
+                return true
+            },
+            markUnattended: { key, _ in box.marked.append(key) })
+        let ask = { (key: String, other: String, duration: String) in
+            try AgentTests().call(
+                bridge, "request_access", ["key": key, "reason": "the bot polls all day", "duration": duration, "for_agent": other])
+        }
+        let answer = try ask("bot", "wapentakebot", "no-fingerprint")
+        #expect(!answer.error && answer.text.contains("KEYREEVE_AGENT=wapentakebot"))
+        #expect(box.asked.map(\.forAgent) == ["wapentakebot"] && box.asked.map(\.agent) == ["claude"])
+        #expect(box.policy.agents["bot"] == ["claude", "wapentakebot"] && box.policy.levels["bot"] == .always)
+        #expect(try ask("bot", "wapentakebot", "no-fingerprint").text.contains("already needs no fingerprint for wapentakebot"))
+        // Not through a key the asker cannot use, open to others or closed: nothing is asked.
+        #expect(try ask("mine", "wapentakebot", "no-fingerprint").error)
+        #expect(try ask("closed", "wapentakebot", "no-fingerprint").error)
+        // Only with no-fingerprint, and only a clean name.
+        #expect(try ask("bot", "x", "4h").error)
+        #expect(try ask("bot", "Bad Name", "no-fingerprint").error)
+        #expect(box.asked.count == 1 && box.policy.agents["mine"] == ["other"])
+    }
+
     /// A server older than the Keyreeve in place changes no permission, and the agent hears why.
     @Test func anOutdatedServerChangesNoPermission() throws {
         final class Box: @unchecked Sendable { var policy = AgentPolicy(levels: ["kept": .free]) }

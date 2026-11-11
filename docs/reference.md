@@ -358,6 +358,9 @@ with two choices:
   once, then covers any command until you quit Keyreeve, for a day at most. *Always, no fingerprint* asks for your finger once, to seal
   a copy of the key to a second key in the chip that opens with none, and from then on agents use it through the proxy with no question,
   across restarts. An agent can ask for it with `request_access`, but only you set it, in the app; the real key, `run_with_key` and `get` still ask. Keep it for keys that only read.
+  An agent that set up a program running as another agent, such as a bot started at login with `KEYREEVE_AGENT=nightly-bot`,
+  asks for it with `for_agent`: only for a key already open to the asker, and the window names the agent it is for. A key at
+  *Always* whose sealed copy is missing asks every time, and asking for it again offers to seal the copy.
 - **Agents.** Any agent, or only Claude or only Codex. The agent is named from the process that started the server, which is a strong
   hint and not proof, since everything runs as you. A session can name itself by starting with `KEYREEVE_AGENT` set, such as
   `KEYREEVE_AGENT=sales claude`, and is then `claude/sales`: a key open to `claude` serves it as before, and one open to

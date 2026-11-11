@@ -72,11 +72,35 @@ public struct ValueDigests: Codable, Equatable, Sendable {
 
     public init() {}
 
-    /// What a file holds, or nothing. A file from before keyed digests is dropped, never trusted.
-    public static func load(from url: URL) -> ValueDigests {
+    /// What a file holds, or nothing. A file from before keyed digests is dropped, never trusted. A field name that
+    /// is not a name is left out: see `isFieldName`.
+    public static func load(from url: URL) -> ValueDigests { loadAsWritten(from: url).scrubbed() }
+
+    static func loadAsWritten(from url: URL) -> ValueDigests {
         guard let read = try? JSONDecoder().decode(ValueDigests.self, from: Data(contentsOf: url)), read.schema == schemaVersion
         else { return ValueDigests() }
         return read
+    }
+
+    /// A field is named like an environment variable: a letter or `_`, then letters, digits and `_`, at most 32. A
+    /// private key, a certificate, a base64 key that ends in `=` or a line of JSON holds `=` too, and what comes
+    /// before it is part of the value: kept as a field's name, the value would sit in this file in the clear.
+    public static func isFieldName(_ name: String) -> Bool {
+        guard (1...32).contains(name.count), let first = name.unicodeScalars.first,
+            first == "_" || (first.isASCII && CharacterSet.letters.contains(first))
+        else { return false }
+        return name.unicodeScalars.allSatisfy { $0 == "_" || ($0.isASCII && CharacterSet.alphanumerics.contains($0)) }
+    }
+
+    /// Without the field names that are not names, which an earlier version wrote.
+    func scrubbed() -> ValueDigests {
+        var copy = self
+        for (name, sealings) in entries {
+            for (revision, fields) in sealings {
+                copy.entries[name]?[revision] = fields.filter { $0.key.isEmpty || Self.isFieldName($0.key) }
+            }
+        }
+        return copy
     }
 
     public static func update(at url: URL, _ change: (inout ValueDigests) -> Void) throws {
@@ -86,10 +110,11 @@ public struct ValueDigests: Codable, Equatable, Sendable {
         defer { close(lockFile) }
         guard flock(lockFile, LOCK_EX) == 0 else { throw VaultError("the digests could not be locked") }
         defer { flock(lockFile, LOCK_UN) }
-        let before = load(from: url)
-        var after = before
+        let written = loadAsWritten(from: url)
+        var after = written.scrubbed()
         change(&after)
-        guard after != before else { return }
+        // A file that held field names that are not names is written again without them, even with nothing new.
+        guard after != written else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         try PrivateFile.write(try encoder.encode(after), to: url)
@@ -100,7 +125,10 @@ public struct ValueDigests: Codable, Equatable, Sendable {
         guard value.count <= 1 << 20, let text = String(data: value, encoding: .utf8) else { return [:] }
         var out: [String: String] = [:]
         if let whole = try? EnvReferences.value(in: value, field: nil) { out[""] = key.digest(ofValue: whole) }
-        for case .value(let name, _) in EnvReferences.parse(text) {
+        // Only a file of NAME=value lines has fields. A private key, a certificate or JSON is one value.
+        let start = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !start.hasPrefix("{"), !start.hasPrefix("["), !text.contains("-----BEGIN") else { return out }
+        for case .value(let name, let found) in EnvReferences.parse(text) where !found.isEmpty && isFieldName(name) {
             if let field = try? EnvReferences.value(in: value, field: name) { out[name] = key.digest(ofValue: field) }
         }
         return out

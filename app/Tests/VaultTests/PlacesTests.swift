@@ -209,6 +209,41 @@ struct PlacesTests {
         #expect(digests.compare(one, name: "plain.txt", field: nil, revision: "p", key: key) == .same)
     }
 
+    /// A value that holds `=` is never taken apart into a field whose name is part of the value: a base64 key with its
+    /// padding, a private key, JSON. The file would hold the value in the clear.
+    @Test func noPartOfAValueBecomesAFieldName() throws {
+        let key = try Self.digestKey()
+        let base64 = "CANARYbase64KeyOfFortyThreeCharactersLong00"
+        let values = [
+            "\(base64)=\n",
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA=\nCANARY=x\n-----END OPENSSH PRIVATE KEY-----\n",
+            "{\n  \"private_key\": \"CANARY-pem==\",\n  \"client_email\": \"a@b.c\"\n}\n",
+            "a+b/c=CANARY\n",
+        ]
+        for value in values {
+            let made = ValueDigests.digests(of: Data(value.utf8), key: key)
+            #expect(made.keys.allSatisfy { $0.isEmpty }, "\(made.keys.sorted())")
+        }
+        // A file of NAME=value lines keeps its fields.
+        #expect(Set(ValueDigests.digests(of: Data("API_KEY=CANARY\nmgmt_token=x\n".utf8), key: key).keys) == ["API_KEY", "mgmt_token"])
+        #expect(ValueDigests.isFieldName("TELEGRAM_BOT_TOKEN") && !ValueDigests.isFieldName(base64) && !ValueDigests.isFieldName("a b"))
+    }
+
+    /// A file an earlier version wrote with such names is written again without them, the next time it is touched.
+    @Test func anOlderFileLosesTheNamesThatAreNotNames() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("digests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let file = home.appendingPathComponent(ValueDigests.fileName)
+        let leaked = "CANARYbase64KeyOfFortyThreeCharactersLong00"
+        try "{\"entries\":{\"k\":{\"r\":{\"\":\"aa\",\"API\":\"bb\",\"\(leaked)\":\"cc\"}}},\"schema\":2}"
+            .write(to: file, atomically: true, encoding: .utf8)
+        #expect(ValueDigests.load(from: file).entries["k"]?["r"] == ["": "aa", "API": "bb"])
+        try ValueDigests.update(at: file) { _ in }
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(!text.contains(leaked) && text.contains("API"))
+    }
+
     @Test func theDigestsFileHoldsNoPlainHashAndIsUselessWithoutTheChipKey() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("digests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }

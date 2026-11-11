@@ -14,7 +14,7 @@ public enum LogGroups {
     }
 
     /// Lines that repeat on their own. A decision, a refusal or an end is always a row of its own.
-    public static let repeating: Set<String> = ["request", "used", "signed"]
+    public static let repeating: Set<String> = ["request", "used", "signed", "checked"]
 
     /// What makes two lines the same for a reader: what happened, to which key, by whom, and where, without a query.
     static func signature(_ entry: AuditLog.Entry) -> [String] {

@@ -34,6 +34,19 @@ struct TimelineTests {
         #expect(Timeline.read(home: home, index: index, since: t0.addingTimeInterval(15)).count == 2)
     }
 
+    /// Keyreeve opening a key only to ask its provider whether it works is a check, not a use, in both logs.
+    @Test func aCheckIsNotAUse() throws {
+        let home = try home()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = VaultStore(directory: home.appendingPathComponent("vault"))
+        store.recordUse(of: "pexels.txt", by: "check", event: "checked")
+        store.recordUse(of: "pexels.txt", by: "/usr/bin/curl")
+        #expect(try AuditLog(url: home.appendingPathComponent("audit.jsonl")).entries().map(\.event) == ["checked", "used"])
+        let index = KeyIndex(keys: [KeyIndex.Key(id: "pexels", source: "pexels.txt", provider: "pexels")])
+        let terminal = Timeline.read(home: home, index: index).filter { $0.source == "terminal" }
+        #expect(terminal.map(\.event).sorted() == ["checked", "used"])
+    }
+
     @Test func csvKeepsCellsWholeAndFormulasAsText() {
         let row = Timeline.Row(
             at: Date(timeIntervalSince1970: 0), source: "audit", event: "used", key: "k", detail: "a, \"b\"", reason: "=SUM(A1)")

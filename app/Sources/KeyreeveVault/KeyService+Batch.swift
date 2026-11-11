@@ -12,6 +12,9 @@ extension KeyService {
         let name: String
         let declared: AuditLog.Declared
         let caller: AuditLog.Observed?
+        /// Why a key the person marked "always, no fingerprint" asked for one this time, kept beside the permission it
+        /// gets, so the log says it: an agent the mark does not name, a missing copy, a pause.
+        var missed: String? = nil
     }
 
     /// How long the first use that needs the person holds its window open for others from the same caller. In use, a
@@ -286,7 +289,7 @@ extension KeyService {
                 try install(
                     ask, sealed: sealed, sealing: sealings[ask.key.source] ?? nil, seconds: seconds, quiet: false,
                     revocationsBefore: revocationsBefore, pid: pid,
-                    note: chosen.lasts == .always ? "always for \(ask.name) in this folder" : nil)
+                    note: chosen.lasts == .always ? "always for \(ask.name) in this folder" : ask.missed)
             }
         }
         if chosen.lasts == .always, let at = opening.first, let program = asks[at].request.programPath, let folder = asks[at].request.cwd,

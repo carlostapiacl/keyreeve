@@ -96,8 +96,9 @@ public enum VaultKeeper {
     }
 
     /// Opens these keys for one use, and notes the use. Values stay in the returned memory only.
+    /// `event` is `checked` when they are opened only to ask their providers whether they work.
     public static func open(
-        names: [String], recipient: Age.Identity, store: VaultStore, by command: String
+        names: [String], recipient: Age.Identity, store: VaultStore, by command: String, event: String = "used"
     ) throws -> [String: String] {
         let vault = try store.load()
         var opened: [String: String] = [:]
@@ -108,7 +109,7 @@ public enum VaultKeeper {
             }
             opened[name] = text
             if !VaultFile.isTemporary(name) {
-                store.recordUse(of: name, by: command)
+                store.recordUse(of: name, by: command, event: event)
             }
         }
         return opened
@@ -129,7 +130,7 @@ public enum VaultKeeper {
             case .success: report.different.append(name)
             case .failure: report.noFile.append(name)
             }
-            store.recordUse(of: name, by: "compare")
+            store.recordUse(of: name, by: "compare", event: "checked")
         }
         return report
     }

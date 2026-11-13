@@ -41,6 +41,12 @@ public struct UseEnvironment: Equatable, Sendable {
         let address = "http://127.0.0.1:\(proxy.port)"
         set["HTTPS_PROXY"] = address
         set["https_proxy"] = address
+        // A key for a local service travels over plain HTTP, which only these send through the proxy. curl reads the
+        // lower-case one alone. The proxy sends plain HTTP nowhere but to that service, with the key's stand-in.
+        if answer.local != nil {
+            set["HTTP_PROXY"] = address
+            set["http_proxy"] = address
+        }
         // Node does not read those variables unless it is told to.
         set["NODE_USE_ENV_PROXY"] = "1"
         set["NODE_EXTRA_CA_CERTS"] = proxy.ca

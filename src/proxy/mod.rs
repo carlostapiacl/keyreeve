@@ -25,6 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod authority;
 mod control;
 mod http;
+mod local;
 mod oauth;
 
 use authority::{crypto, Authority};
@@ -33,6 +34,7 @@ use http::{
     answer, base64_decode, base64_encode, body_framing, copy_body, header, read_head, relay_reply,
     split_target, status_of, Scrubber,
 };
+pub use local::LocalService;
 pub use oauth::OAuthGrant;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
@@ -41,6 +43,17 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const TUNNEL_IDLE: Duration = Duration::from_secs(300);
 const MAX_CONNECTIONS: usize = 128;
 const SYSTEM_BUNDLES: &[&str] = &["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt"];
+/// Headers that belong to one hop, or that could reshape the reply this proxy has to read.
+const HOP_BY_HOP: &[&str] = &[
+    "proxy-authorization",
+    "proxy-connection",
+    "connection",
+    "keep-alive",
+    "te",
+    "upgrade",
+    "expect",
+    "accept-encoding",
+];
 
 /// What one permission lets through.
 pub struct Grant {
@@ -51,6 +64,9 @@ pub struct Grant {
     pub hosts: Vec<String>,
     /// The provider takes this key in the address, so it is swapped there too.
     pub in_url: bool,
+    /// A service of your own on this Mac, over plain HTTP, in place of `hosts`: the one loopback address and
+    /// port the person approved for this key.
+    pub local: Option<LocalService>,
     pub expires: u64,
 }
 
@@ -333,12 +349,13 @@ impl Proxy {
         client.set_read_timeout(Some(IO_TIMEOUT))?;
         client.set_write_timeout(Some(IO_TIMEOUT))?;
         let mut reader = BufReader::new(client.try_clone()?);
-        let (first, _) = read_head(&mut reader)?;
+        let (first, headers) = read_head(&mut reader)?;
         let mut writer = client;
         let mut parts = first.split(' ');
         let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
         if method != "CONNECT" {
-            return answer(&mut writer, 405, "only CONNECT goes through here");
+            // Plain HTTP reaches a local service a key was approved for, and nothing else.
+            return self.local_request(&first, headers, reader, writer);
         }
         let Some((host, port)) = split_target(target) else {
             return answer(&mut writer, 400, "that is not host:port");
@@ -487,18 +504,9 @@ impl Proxy {
             );
         }
         headers.retain(|(name, _)| {
-            ![
-                "proxy-authorization",
-                "proxy-connection",
-                "connection",
-                "keep-alive",
-                "te",
-                "upgrade",
-                "expect",
-                "accept-encoding",
-            ]
-            .iter()
-            .any(|drop| name.eq_ignore_ascii_case(drop))
+            !HOP_BY_HOP
+                .iter()
+                .any(|drop| name.eq_ignore_ascii_case(drop))
         });
         let mut out = format!(
             "{method} {} HTTP/1.1\r\n",
@@ -678,6 +686,7 @@ mod tests {
             real: Secret::new("real-value-9876"),
             hosts: vec!["api.example.com".into()],
             in_url: false,
+            local: None,
             expires: u64::MAX,
         }
     }

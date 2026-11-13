@@ -144,6 +144,7 @@ fn run_with(reply: &'static str, hosts: &[&str], in_url: bool, expires: u64) -> 
         real: Secret::new(REAL),
         hosts: hosts.iter().map(|host| (*host).to_owned()).collect(),
         in_url,
+        local: None,
         expires,
     });
     Run {
@@ -338,6 +339,7 @@ fn one_keys_stand_in_is_not_another_hosts() {
         real: Secret::new("other-real-key-000000"),
         hosts: vec!["localhost".into()],
         in_url: false,
+        local: None,
         expires: u64::MAX,
     });
     let header = "Authorization: Bearer other-stand-in-000000";
@@ -480,6 +482,7 @@ fn a_request_that_never_got_through_is_written_down_too() {
         real: Secret::new(REAL),
         hosts: vec!["localhost".into()],
         in_url: false,
+        local: None,
         expires: u64::MAX,
     });
     let run = Run {

@@ -32,6 +32,8 @@ public struct KeyreeveFiles: Sendable {
     public var originals: URL { directory.appendingPathComponent("originals") }
     public var rotations: URL { directory.appendingPathComponent("rotations.jsonl") }
     public var places: URL { directory.appendingPathComponent("places.json") }
+    /// The local services you approved keys for, with your fingerprint. Holds addresses, never a value.
+    public var localServices: URL { directory.appendingPathComponent("local-services.json") }
     var rotationPlan: URL { directory.appendingPathComponent(".rotation-plan.json") }
     var plan: URL { directory.appendingPathComponent(".check-plan.json") }
     var settings: URL { directory.appendingPathComponent("app-settings.json") }

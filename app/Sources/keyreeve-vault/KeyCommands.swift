@@ -278,7 +278,8 @@ func serveKeys() throws {
             else { return nil }
             return try? vault.openUnattended(name: source, with: recipient)
         },
-        gather: 2)
+        gather: 2,
+        localServices: { LocalServices.load(from: localServicesFile) })
     proxy?.onEvent = { grant, key, detail in service.record(grant: grant, key: key, detail: detail) }
     // The app shows a key its provider no longer accepts like one that expired, until it works again.
     proxy?.onAuthorization = { key, state in

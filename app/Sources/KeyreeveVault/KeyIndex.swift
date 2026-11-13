@@ -16,14 +16,20 @@ public struct KeyIndex: Equatable, Sendable {
         public var variable: String?
         /// For an SSH key: the fingerprints of the servers it may sign in to with no question.
         public var servers: [String]?
+        /// A service of the person's own on this Mac, such as `127.0.0.1:8790`, that the key goes to over plain HTTP
+        /// in place of a provider. Only a declaration: nothing goes there until the person approves it, with the
+        /// fingerprint, in `local-services.json`.
+        public var local: String?
         /// What a book of every key (schema 2) also says of a key. The app keeps it as it reads it.
         public var more = More()
 
         public init(
             id: String, source: String, field: String? = nil, provider: String? = nil, project: String? = nil,
-            account: String? = nil, description: String? = nil, variable: String? = nil, servers: [String]? = nil
+            account: String? = nil, description: String? = nil, variable: String? = nil, servers: [String]? = nil,
+            local: String? = nil
         ) {
             self.servers = servers
+            self.local = local
             self.id = id
             self.source = source
             self.field = field
@@ -112,6 +118,7 @@ public struct KeyIndex: Equatable, Sendable {
             key.description = key.description ?? waiting.description
             key.variable = key.variable ?? waiting.variable
             key.servers = key.servers ?? waiting.servers
+            key.local = key.local ?? waiting.local
             if key.more == More() { key.more = waiting.more }
         }
         try Self.check(key, taken: isTaken(key.id))
@@ -218,7 +225,7 @@ public struct KeyIndex: Equatable, Sendable {
         var flags: [String: Bool] = [:]
         var numbers: [String: Int] = [:]
         let texts = ["id", "source", "field", "provider", "project", "account", "description", "variable", "servers",
-                     "name", "level", "host", "expires", "auth", "state", "added_by", "added_at"]
+                     "name", "level", "host", "local", "expires", "auth", "state", "added_by", "added_at"]
         let listNames = ["recipes", "tags", "parts"]
         let flagNames = ["archived", "offered", "reviewed"]
         let numberNames = ["criticality"]
@@ -263,7 +270,8 @@ public struct KeyIndex: Equatable, Sendable {
             var key = Key(
                 id: id, source: source, field: current["field"] ?? lists["parts"]?.joined(separator: "+"),
                 provider: current["provider"], project: current["project"], account: current["account"],
-                description: current["description"], variable: current["variable"], servers: servers)
+                description: current["description"], variable: current["variable"], servers: servers,
+                local: current["local"])
             key.more = more
             try check(key, taken: seen.contains(id))
             seen.insert(id)
@@ -349,6 +357,7 @@ public struct KeyIndex: Equatable, Sendable {
             if let level = key.more.level { out += "level = \(tomlQuoted(level))\n" }
             if let tags = key.more.tags { out += "tags = \(list(tags))\n" }
             if let host = key.more.host { out += "host = \(tomlQuoted(host))\n" }
+            if let local = key.local { out += "local = \(tomlQuoted(local))\n" }
             if let expires = key.more.expires { out += "expires = \(tomlQuoted(expires))\n" }
             if let criticality = key.more.criticality { out += "criticality = \(criticality)\n" }
             if key.more.archived { out += "archived = true\n" }

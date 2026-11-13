@@ -975,6 +975,13 @@ public let spanish: [String: String] = [
     "Find keys in the usual places on this Mac or in a folder": "Busca claves en los lugares típicos de este Mac o en una carpeta",
     // Reasons `keyreeve bring` gives for a key it could not check.
     "its server is not approved yet": "su servidor aún no está aprobado",
+    // A key for a service of yours on this Mac.
+    "Goes to %@ on this Mac": "Va a %@ en este Mac",
+    "Agents use it through the proxy, over plain HTTP, and only toward this address and port.": "Los agentes la usan a través del proxy, por HTTP, y solo hacia esta dirección y puerto.",
+    "Local service, such as 127.0.0.1:8790": "Servicio local, como 127.0.0.1:8790",
+    "With your fingerprint, this key may go to this address on this Mac, and nowhere else.": "Con tu huella, esta clave puede ir a esta dirección en este Mac, y a ninguna otra.",
+    "Write 127.0.0.1, [::1] or localhost, a colon and the port, such as 127.0.0.1:8790": "Escribe 127.0.0.1, [::1] o localhost, dos puntos y el puerto, como 127.0.0.1:8790",
+    "%@ goes to %@ from now on": "%@ va a %@ desde ahora",
     "it needs the address of your server": "necesita la dirección de tu servidor",
 ]
 

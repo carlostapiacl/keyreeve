@@ -47,6 +47,14 @@ let help = """
           Print the real key on stdout, for a tool that takes a key from a command, such as seisin's
           key providers. It asks for your finger every time and is never remembered, so nothing can
           ride on an earlier yes. Prefer `use`, where the command holds a stand-in.
+      keyreeve-vault local [<id>=<address>...] [<id> --off]
+          For a key a service of yours on this Mac checks, such as a server on 127.0.0.1:8790: approve that one
+          address for it, with one fingerprint. `use` then gives the command a stand-in and HTTP_PROXY, and the
+          proxy puts the real key in the headers of plain HTTP requests to that address and port alone. Only
+          127.0.0.1, [::1] or localhost with a port. With no arguments, shows what is approved. --off takes it away.
+      keyreeve-vault verifier <id>
+          Print the key's SHA-256 as sha256:<hex>, for a server of yours that checks the token by its hash and
+          so starts with no secret. One fingerprint. Refused for a key short or plain enough to guess from it.
       keyreeve-vault list
           Show the identifiers and what each one is. Needs no fingerprint.
       keyreeve-vault grant <id> [--for 1h] [--program NAME]

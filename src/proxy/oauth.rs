@@ -804,6 +804,7 @@ impl Proxy {
                     real,
                     hosts: held.grant.hosts.clone(),
                     in_url: false,
+                    local: None,
                     expires: held.grant.expires,
                 })),
                 Err(why) => {

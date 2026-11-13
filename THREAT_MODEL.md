@@ -170,7 +170,19 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   environment, such as the agent's own login, the command can read.
 - **The proxy's tunnels reach the internet only.** A request to a host that is not the key's goes through untouched, and
   never to this machine, a private network or the cloud metadata address. A key's own hosts come from its recipe, even a
-  private one for a provider you host yourself.
+  private one for a provider you host yourself. Plain HTTP goes through only to a local service approved for a key, with that key's stand-in.
+- **A key for a local service goes to whatever listens on that port.** Approving `127.0.0.1:8790` for a key, with your finger,
+  lets the proxy put the real key on plain HTTP requests to that address and port, and to nothing else: never another port, another
+  address of this Mac, a private network, or a name looked up. A request with no stand-in of that key is refused, so the proxy is not
+  a way into that port for a program that cannot reach it. But loopback is not authenticated: while your server is down, any program
+  on this Mac, under any user, can listen on that port and receive the key with the next request. The traffic is plain HTTP inside
+  this machine, readable by anything that can watch loopback. The approval is a file you own, `local-services.json`, and with
+  `keys.toml` both must name the same address; a program running as you could write both, and then has to wait for a use you give,
+  or for a key you marked to need no finger. A command using such a key reaches no other plain HTTP address through the proxy.
+- **A server's hash of its token.** `verifier` prints the SHA-256 of a key so a server of yours can check the token without holding
+  it. Anyone with that hash can test guesses offline, so it is given only for a value with at least 128 bits by the count the stand-ins
+  use, which a random token has and a password does not. It does not stop someone who reads the server's settings from knowing which
+  token the server accepts once they hold the token itself.
 - **What a command leaves running ends with it,** by its process group. A program that starts a new session on purpose leaves
   the group, and keeps running with what it was given.
 - **A pinned program is pinned by its file.** A script that calls other programs is checked, and those programs are not.

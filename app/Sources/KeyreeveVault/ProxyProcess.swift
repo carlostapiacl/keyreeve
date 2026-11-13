@@ -101,7 +101,7 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
         try input.fileHandleForWriting.write(contentsOf: line)
     }
 
-    public func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date) throws -> String {
+    public func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date, local: String?) throws -> String {
         let semaphore = DispatchSemaphore(value: 0)
         lock.lock()
         waiting[grant] = semaphore
@@ -118,6 +118,7 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
                 "expires": Int(expires.timeIntervalSince1970),
             ]
             if let field { message["field"] = field }
+            if let local { message["local"] = local }
             try send(message)
         } catch {
             throw VaultError("the proxy stopped")

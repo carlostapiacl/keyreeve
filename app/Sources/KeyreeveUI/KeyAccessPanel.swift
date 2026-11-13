@@ -86,6 +86,10 @@ struct KeyAccessPanel: View {
                     .foregroundStyle(Theme.muted)
                     .accessibilityLabel(T("Remove"))
                 }
+                // A key with no provider has nowhere to go but a service of yours, approved by address.
+                if key.provider == nil || key.local != nil {
+                    LocalServiceRow(key: key, model: model)
+                }
                 Toggle(T("Offered to agents"), isOn: Binding(
                     get: { model.keyIndex.isOffered(key.id) },
                     set: { model.setOffered($0, id: key.id) }))
@@ -167,5 +171,42 @@ struct AccountField: View {
             .onAppear { text = key.account ?? "" }
             .onChange(of: key.account) { text = key.account ?? "" }
             .onSubmit { model.setAccount(text, of: key.id) }
+    }
+}
+
+/// Where a key that a service of yours on this Mac checks may go: one loopback address and port, approved with your
+/// finger. Typing it is not approving it, and an address keys.toml names that you did not approve waits here.
+struct LocalServiceRow: View {
+    let key: KeyIndex.Key
+    @ObservedObject var model: AppModel
+    @State private var text = ""
+
+    private var approved: String? {
+        guard let approved = model.approvedLocalService(of: key.id), key.local.flatMap(LocalServices.address) == approved
+        else { return nil }
+        return approved
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let approved {
+                Text(T("Goes to %@ on this Mac", approved)).font(Theme.caption).foregroundStyle(Theme.text)
+                    .help(T("Agents use it through the proxy, over plain HTTP, and only toward this address and port."))
+                Spacer(minLength: 4)
+                Button(T("Remove")) { model.removeLocalService(for: key.id) }
+                    .buttonStyle(KRButtonStyle())
+            } else {
+                TextField(T("Local service, such as 127.0.0.1:8790"), text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .font(Theme.caption)
+                    .autocorrectionDisabled()
+                Button(T("Approve")) { model.approveLocalService(text, for: key.id) }
+                    .buttonStyle(KRButtonStyle())
+                    .disabled(text.isEmpty)
+                    .help(T("With your fingerprint, this key may go to this address on this Mac, and nowhere else."))
+            }
+        }
+        .onAppear { text = key.local ?? "" }
+        .onChange(of: key.local) { text = key.local ?? "" }
     }
 }

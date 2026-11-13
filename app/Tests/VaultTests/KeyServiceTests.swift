@@ -176,9 +176,12 @@ final class FakeProxy: KeyProxy, @unchecked Sendable {
     var added: [(grant: String, provider: String, text: String, field: String?)] = []
     var removed: [String] = []
     var refuses = false
-    func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date) throws -> String {
+    /// The local service each permission was sent to, in order.
+    var locals: [String?] = []
+    func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date, local: String?) throws -> String {
         if refuses { throw VaultError("this provider cannot use a stand-in") }
         added.append((grant, provider, text, field))
+        locals.append(local)
         return "STAND-IN"
     }
     func remove(grant: String) { removed.append(grant) }

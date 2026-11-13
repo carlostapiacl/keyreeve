@@ -17,6 +17,8 @@ do {
     case "list": try listKeys()
     case "use": try useKey()
     case "get": try getKey()
+    case "local": try localServices()
+    case "verifier": try printVerifier()
     case "serve": try serveKeys()
     case "grant": try grantKey()
     case "grants": try showGrants()

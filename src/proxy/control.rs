@@ -1,6 +1,6 @@
 //! The proxy as a process, driven by the vault's service over stdin and stdout.
 
-use super::{mint_stand_in, Event, Grant, OAuthGrant, Options, Proxy};
+use super::{mint_stand_in, Event, Grant, LocalService, OAuthGrant, Options, Proxy};
 use crate::providers;
 use crate::recipe::Recipe;
 use crate::secret::Secret;
@@ -34,6 +34,10 @@ enum Control {
         text: String,
         field: Option<String>,
         expires: u64,
+        /// A service of the person's own on this Mac, such as `127.0.0.1:8790`, that the key goes to in place of
+        /// its provider's hosts. The vault's service sends it only once the person approved it for this key.
+        #[serde(default)]
+        local: Option<String>,
     },
     Remove {
         grant: String,
@@ -108,17 +112,24 @@ pub fn serve_from_stdin(folder: &Path) -> Result<(), String> {
                 text,
                 field,
                 expires,
+                local,
             } => {
                 let text = zeroize::Zeroizing::new(text);
-                let prepared = prepare_grant(
-                    &grant,
-                    &key,
-                    &provider,
-                    &text,
-                    field.as_deref(),
-                    expires,
-                    folder,
-                );
+                let prepared = match local {
+                    Some(local) => {
+                        prepare_local(&grant, &key, &local, &text, field.as_deref(), expires)
+                            .map(Prepared::Plain)
+                    }
+                    None => prepare_grant(
+                        &grant,
+                        &key,
+                        &provider,
+                        &text,
+                        field.as_deref(),
+                        expires,
+                        folder,
+                    ),
+                };
                 match prepared {
                     Ok(Prepared::Plain(ready)) => {
                         let stand_in = ready.stand_in.expose().to_owned();
@@ -154,6 +165,34 @@ fn forget_stand_in_files(folder: &Path) {
     }
 }
 
+/// A key for a service of your own on this Mac. No provider's file is involved: the key goes to the one
+/// loopback address and port named, checked here again, and only in a header.
+fn prepare_local(
+    id: &str,
+    key: &str,
+    local: &str,
+    text: &str,
+    field: Option<&str>,
+    expires: u64,
+) -> Result<Grant, String> {
+    let service = LocalService::parse(local)?;
+    let key_value = crate::keys::read_key(text, field)?;
+    let value = key_value.expose();
+    if value.chars().any(char::is_control) {
+        return Err("this key has characters that cannot go in a header".into());
+    }
+    Ok(Grant {
+        id: id.to_owned(),
+        key: key.to_owned(),
+        stand_in: Secret::new(mint_stand_in(value, &[])?),
+        real: Secret::new(value),
+        hosts: Vec::new(),
+        in_url: false,
+        local: Some(service),
+        expires,
+    })
+}
+
 fn prepare_grant(
     id: &str,
     key: &str,
@@ -186,6 +225,57 @@ fn prepare_grant(
         real: Secret::new(value),
         hosts: recipe.hosts.clone(),
         in_url: recipe.auth.kind.as_deref() == Some("url"),
+        local: None,
         expires,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_local_grant_needs_a_loopback_address_and_a_key() {
+        let text = "MESA_TOKEN=Zq8rT2vX9kLm4NpQ7sWy3BcD6fGh1JkA\n";
+        let grant = prepare_local(
+            "g",
+            "mesa-token",
+            "127.0.0.1:8790",
+            text,
+            Some("MESA_TOKEN"),
+            9,
+        )
+        .unwrap();
+        assert!(grant.hosts.is_empty());
+        assert!(!grant.in_url);
+        assert_eq!(
+            grant.local.as_ref().map(LocalService::authority).as_deref(),
+            Some("127.0.0.1:8790")
+        );
+        assert_eq!(grant.real.expose(), "Zq8rT2vX9kLm4NpQ7sWy3BcD6fGh1JkA");
+        assert_ne!(grant.stand_in.expose(), grant.real.expose());
+        for elsewhere in ["10.0.0.2:8790", "api.example.com:443", "127.0.0.1"] {
+            assert!(
+                prepare_local("g", "k", elsewhere, text, Some("MESA_TOKEN"), 9).is_err(),
+                "{elsewhere}"
+            );
+        }
+        // A key too short to have a stand-in that cannot be guessed is not given one.
+        assert!(prepare_local("g", "k", "127.0.0.1:8790", "abc", None, 9).is_err());
+    }
+
+    #[test]
+    fn the_message_names_the_local_service() {
+        let line = r#"{"op":"add","grant":"g","key":"k","provider":"","text":"x","field":null,"expires":1,"local":"127.0.0.1:8790"}"#;
+        assert!(matches!(
+            serde_json::from_str::<Control>(line),
+            Ok(Control::Add { local: Some(local), .. }) if local == "127.0.0.1:8790"
+        ));
+        // As the service sent it before: no local service.
+        let old = r#"{"op":"add","grant":"g","key":"k","provider":"p","text":"x","field":null,"expires":1}"#;
+        assert!(matches!(
+            serde_json::from_str::<Control>(old),
+            Ok(Control::Add { local: None, .. })
+        ));
+    }
 }

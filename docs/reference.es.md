@@ -224,7 +224,7 @@ aviso de huella lo muestra.
 ### keys.toml
 
 `~/.keyreeve/keys.toml` dice qué es cada clave: su identificador, el archivo de donde salió, proveedor, campo, cuenta, descripción,
-nivel, servidor, la fecha en que termina y si está archivada. No guarda ningún valor. Un archivo con `schema = 2` contiene todas las
+nivel, servidor, servicio local, la fecha en que termina y si está archivada. No guarda ningún valor. Un archivo con `schema = 2` contiene todas las
 claves, y la lista de la app lo lee.
 
 ```bash
@@ -339,6 +339,44 @@ keyreeve-vault env app.env -- ./deploy.sh
 
 Una huella las abre todas para ese comando.
 
+### Un servicio tuyo en este Mac
+
+Un token que verifica un servidor tuyo, como uno en `127.0.0.1:8790`, no tiene proveedor. Aprueba la única dirección a la que va,
+con tu huella, en la app (en la página de la clave, en **Uso**: escribe la dirección junto a su identificador y pulsa **Aprobar**)
+o en una terminal:
+
+```bash
+keyreeve local mesa-token=127.0.0.1:8790 motor-lectura-token=127.0.0.1:8787   # una huella para las dos
+keyreeve local                       # lo aprobado
+keyreeve local mesa-token --off      # lo quita y cierra sus permisos, sin huella
+```
+
+Eso escribe `local = "127.0.0.1:8790"` en `keys.toml` y la aprobación en `~/.keyreeve/local-services.json`. Las dos tienen que
+decir la misma dirección: una que `keys.toml` nombra y no aprobaste se rechaza antes de pedir huella, y nunca cae a un proveedor.
+Solo `127.0.0.1`, `[::1]` o `localhost` con un puerto, escrito tal como lo usa el comando. Desde ahí `use`, `use_key` y
+`request_access` funcionan como con cualquier proveedor: el comando recibe un sustituto y `HTTP_PROXY`, y el proxy pone la clave real
+en los encabezados de las peticiones HTTP a esa dirección y ese puerto, y a ningún otro. Una petición sin sustituto, a otro puerto o
+con el sustituto en la URL se rechaza y no sale. `urllib` y `requests` de Python, curl y Node con `NODE_USE_ENV_PROXY` pasan por el
+proxy para `127.0.0.1`. `net/http` de Go nunca usa proxy para loopback, así que un cliente en Go necesita `--real` o un proxy en su código.
+
+```bash
+keyreeve use mesa-token --as MESA_TOKEN -- python3 -m motor eventos
+```
+
+Un comando con una clave así no llega por el proxy a ninguna otra dirección HTTP, así que uno que además llama a otro servicio local
+sin clave falla ahí.
+
+**El lado del servidor.** Un servidor que compara el token que recibe necesita el valor, así que pediría tu huella en cada arranque.
+No lo necesita si guarda el SHA-256 del token y compara el SHA-256 de lo que recibe:
+
+```bash
+keyreeve verifier mesa-token        # sha256:<hex>, una huella
+```
+
+El hash no abre nada, así que puede vivir en la configuración del servidor, y el servidor arranca sin secreto y sin huella. Solo se
+entrega para un valor con al menos 128 bits según la cuenta de los sustitutos, así que nunca sale el hash de una contraseña corta,
+que se podría adivinar. Después de una rotación, dale al servidor el nuevo.
+
 ### Varias claves a la vez
 
 ```bash
@@ -395,7 +433,7 @@ Las herramientas que recibe un agente:
 | `propose_bring` | propone cuáles sellar de las encontradas, para que la revises en Traer y selles con una sola huella |
 
 `use_key` funciona con cualquier comando, incluido `curl`. Una clave SSH inicia sesión a través de keyreeve. Una clave sin proveedor
-solo puede ir a un programa que permitas con `run_with_key`: si el archivo cambia, se rechaza hasta que lo vuelvas a permitir. Las
+va a un servicio local que aprobaste para ella, [como arriba](#un-servicio-tuyo-en-este-mac), o solo a un programa que permitas con `run_with_key`: si el archivo cambia, se rechaza hasta que lo vuelvas a permitir. Las
 shells, los intérpretes, `curl`, `env` y otros parecidos no se pueden permitir de esa forma. Una ejecución se detiene a los 2 minutos,
 y su salida nunca muestra la clave ni el reemplazo.
 

@@ -51,6 +51,9 @@ pub struct BookKey {
     pub tags: Option<Vec<String>>,
     /// The person's own server, for a provider each person runs.
     pub host: Option<String>,
+    /// A service of the person's own on this Mac, such as `127.0.0.1:8790`, that the key is used with over
+    /// plain HTTP through the proxy. It takes effect only once the person approves it in the app.
+    pub local: Option<String>,
     /// `yyyy-mm-dd`.
     pub expires: Option<String>,
     /// 1 to 5, as the person rated it.
@@ -86,6 +89,7 @@ impl BookKey {
             level: None,
             tags: None,
             host: None,
+            local: None,
             expires: None,
             criticality: None,
             archived: false,
@@ -148,6 +152,7 @@ const NAMES: &[&str] = &[
     "level",
     "tags",
     "host",
+    "local",
     "expires",
     "criticality",
     "archived",
@@ -286,6 +291,7 @@ impl KeyBook {
             text(&mut out, "level", level.as_ref());
             list(&mut out, "tags", key.tags.as_ref());
             text(&mut out, "host", key.host.as_ref());
+            text(&mut out, "local", key.local.as_ref());
             text(&mut out, "expires", key.expires.as_ref());
             if let Some(criticality) = key.criticality {
                 let _ = writeln!(out, "criticality = {criticality}");
@@ -339,6 +345,7 @@ fn set(key: &mut BookKey, name: &str, value: Value) -> Option<()> {
         ("level", Value::Text(v)) => key.level = Some(level(&v)?),
         ("tags", Value::List(v)) => key.tags = Some(v),
         ("host", Value::Text(v)) => key.host = Some(v),
+        ("local", Value::Text(v)) => key.local = Some(v),
         ("expires", Value::Text(v)) => key.expires = Some(v),
         ("criticality", Value::Number(v)) => key.criticality = Some(u8::try_from(v).ok()?.min(5)),
         ("archived", Value::Flag(v)) => key.archived = v,
@@ -536,6 +543,7 @@ field = "client_id+client_secret+refresh_token"
         key.level = Some(Level::Never);
         key.tags = Some(vec!["liquidity-hunters".into(), "provider:paypal".into()]);
         key.host = Some("panel.example.com:8443".into());
+        key.local = Some("127.0.0.1:8790".into());
         key.expires = Some("2027-02-08".into());
         key.criticality = Some(5);
         key.archived = true;

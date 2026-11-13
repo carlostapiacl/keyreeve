@@ -2,8 +2,9 @@ import Foundation
 
 /// Whatever holds the real values and puts them on the wire. Tests use a stand-in for it.
 public protocol KeyProxy: AnyObject, Sendable {
-    /// `text` is the sealed file as it is. The proxy reads the key from it, as a check would.
-    func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date) throws -> String
+    /// `text` is the sealed file as it is. The proxy reads the key from it, as a check would. `local` is a service of the
+    /// person's own on this Mac, approved for this key, that the key goes to in place of its provider's hosts.
+    func add(grant: String, key: String, provider: String, text: String, field: String?, expires: Date, local: String?) throws -> String
     func remove(grant: String)
     var endpoint: KeyService.ProxyEndpoint { get throws }
 }
@@ -147,12 +148,15 @@ public final class KeyService: @unchecked Sendable {
         public var key: String?
         /// One answer for each key of a `use-many`, in the order asked.
         public var many: [Response]?
+        /// The local service this key goes to, such as `127.0.0.1:8790`, reached over plain HTTP through the proxy.
+        public var local: String?
 
         public init(
             ok: Bool, error: String? = nil, value: String? = nil, standIn: String? = nil,
             proxy: ProxyEndpoint? = nil, sshSocket: String? = nil, sshIdentity: String? = nil, variable: String? = nil, grants: [GrantInfo]? = nil,
-            grant: String? = nil, key: String? = nil, many: [Response]? = nil
+            grant: String? = nil, key: String? = nil, many: [Response]? = nil, local: String? = nil
         ) {
+            self.local = local
             self.key = key
             self.many = many
             self.grant = grant
@@ -194,6 +198,8 @@ public final class KeyService: @unchecked Sendable {
         var revision: String? = nil
         /// For a permission that lasts until the command ends: the process that asked, which the command runs as.
         var pid: Int32? = nil
+        /// The local service the key goes to, for a key that goes to one.
+        var local: String? = nil
     }
 
     /// What `provider` says for an SSH key that belongs to no provider's file, such as a server's.
@@ -232,6 +238,8 @@ public final class KeyService: @unchecked Sendable {
     /// The person's emergency stop. Checked before and after the fingerprint, so a use that was already
     /// waiting cannot finish once it is on.
     let paused: () -> Bool
+    /// The local services the person approved, with the fingerprint, read at each use.
+    let localServices: () -> LocalServices
     var grants: [Grant] = []
     /// Guards the list, and is never held while a person is being asked, so `revoke` always gets through.
     let lock = NSLock()
@@ -278,8 +286,10 @@ public final class KeyService: @unchecked Sendable {
         openStanding: @escaping (_ source: String) -> Data? = { _ in nil },
         fingerprint: @escaping (_ path: String) -> String? = AgentPolicy.fingerprint(of:),
         isRunning: @escaping (_ pid: Int32) -> Bool = { kill($0, 0) == 0 || errno == EPERM },
-        gather: Gather = .never
+        gather: Gather = .never,
+        localServices: @escaping () -> LocalServices = { LocalServices() }
     ) {
+        self.localServices = localServices
         self.openMany = openMany
         self.choose = choose
         self.sets = sets
@@ -408,7 +418,8 @@ public final class KeyService: @unchecked Sendable {
     func answer(for grant: Grant, variable: String?) throws -> Response {
         if let door = grant.door { return Response(ok: true, sshSocket: door.socket, sshIdentity: door.identity, grant: grant.id) }
         guard let proxy else { throw VaultError("the proxy is not available") }
-        return Response(ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable, grant: grant.id)
+        return Response(
+            ok: true, standIn: grant.standIn, proxy: try proxy.endpoint, variable: variable, grant: grant.id, local: grant.local)
     }
 
     /// Takes the one turn at the fingerprint. Behind another prompt for longer than `promptWait`, it says which
@@ -484,9 +495,11 @@ public final class KeyService: @unchecked Sendable {
             return Response(ok: true, value: value, variable: key.variable)
         }
         // No finger is spent on a key that could not be used anyway.
-        guard let provider = key.provider else {
+        let local = try localDestination(of: key, caller: caller, declared: declared)
+        guard let provider = local == nil ? key.provider : (key.provider ?? "") else {
             throw VaultError(
-                "\(id) has no provider, so nothing says where it may go. Set one (`ssh` for an SSH key), or use --real")
+                "\(id) has no provider, so nothing says where it may go. Set one (`ssh` for an SSH key), approve a local "
+                    + "service of yours for it in Keyreeve, or use --real")
         }
         guard provider == Self.sshProvider || proxy != nil else {
             try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "no proxy")
@@ -496,7 +509,7 @@ public final class KeyService: @unchecked Sendable {
             try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
             return try answer(for: existing, variable: key.variable)
         }
-        var ask = Ask(request: request, key: key, provider: provider, name: name, declared: declared, caller: caller)
+        var ask = Ask(request: request, key: key, provider: provider, name: name, declared: declared, caller: caller, local: local)
         // A key marked to need no fingerprint, or one a standing permission covers, opens here with no prompt, and so
         // waits for no turn.
         let unattended = request.unattended == true ? openUnattended(id, request.agent, key.source) : nil
@@ -507,6 +520,22 @@ public final class KeyService: @unchecked Sendable {
         // asked again in a shared one.
         if quiet == nil, gather.hold != nil, request.prompt == nil { return try coalesce(ask) }
         return try personal(ask, quiet: quiet)
+    }
+
+    /// The local service a key goes to, when keys.toml names one and the person approved it for this key. A key that
+    /// names one the person did not approve is refused here, before any finger is spent: it never falls back to its
+    /// provider, which keys.toml could also name.
+    func localDestination(of key: KeyIndex.Key, caller: AuditLog.Observed?, declared: AuditLog.Declared) throws -> String? {
+        do {
+            let local = try localServices().destination(of: key)
+            if local != nil, key.provider == Self.sshProvider {
+                throw VaultError("\(key.id) is an SSH key, which cannot go to a local service")
+            }
+            return local
+        } catch {
+            try log.append(event: "refused", key: key.id, observed: caller, declared: declared, detail: "local service not approved")
+            throw error
+        }
     }
 
     /// One key, asked of the person alone, as it always was: the fingerprint prompt is the question.
@@ -530,7 +559,7 @@ public final class KeyService: @unchecked Sendable {
             // The asker's own prompt names the account already; one made here does too.
             sealed = try quiet ?? open(key.source, request.prompt ?? FingerPrompt.use(
                 who: request.agent ?? name, key: id, account: key.account, program: name,
-                lasts: request.seconds.map { .minutes(max(1, $0 / 60)) }, reason: request.reason))
+                lasts: request.seconds.map { .minutes(max(1, $0 / 60)) }, to: ask.local, reason: request.reason))
         } catch {
             try log.append(event: "denied", key: id, observed: caller, declared: declared)
             throw error
@@ -553,6 +582,12 @@ public final class KeyService: @unchecked Sendable {
         guard (try? index().key(id)) == key else {
             try log.append(event: "refused", key: id, observed: caller, declared: declared, detail: "changed during the fingerprint")
             throw VaultError("\(id) changed in keys.toml while it was being opened, so nothing was opened. Ask again")
+        }
+        // The same for the local service it goes to: the approval it was asked under must still stand.
+        if ask.local != nil, (try? localServices().destination(of: key)) != ask.local {
+            try log.append(
+                event: "refused", key: id, observed: caller, declared: declared, detail: "local service changed during the fingerprint")
+            throw VaultError("the local service approved for \(id) changed while it was being opened, so nothing was opened")
         }
         // Counted from the fingerprint, and never past the key's closing. A key that closed while the
         // finger was on the sensor gets nothing, not a second.
@@ -581,11 +616,11 @@ public final class KeyService: @unchecked Sendable {
             guard let proxy else { throw VaultError("the proxy is not available") }
             // From here the value lives in the proxy, and this process keeps only the stand-in.
             let standIn = try proxy.add(
-                grant: grantID, key: id, provider: provider, text: text, field: key.field, expires: expires)
+                grant: grantID, key: id, provider: provider, text: text, field: key.field, expires: expires, local: ask.local)
             granted = Grant(
                 id: grantID, key: id, program: request.anyProgram == true ? Self.anyProgram : name, expires: expires,
-                standIn: standIn, door: nil, pid: pid)
-            detail = "\(seconds) seconds" + (quiet ? ", no fingerprint" : "")
+                standIn: standIn, door: nil, pid: pid, local: ask.local)
+            detail = "\(seconds) seconds" + (quiet ? ", no fingerprint" : "") + (ask.local.map { ", to \($0)" } ?? "")
         }
         if pid != nil { detail += ", until the command ends" }
         if let note { detail += ", " + note }

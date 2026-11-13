@@ -35,11 +35,13 @@ public enum FingerPrompt {
 
     /// "let claude use pexels with curl, for 1 h: “find a photo”"
     public static func use(
-        who: String, key: String, account: String? = nil, program: String? = nil, lasts: Lasts? = nil, reason: String? = nil
+        who: String, key: String, account: String? = nil, program: String? = nil, lasts: Lasts? = nil, to local: String? = nil,
+        reason: String? = nil
     ) -> String {
         let with = program.map { spanish ? " con \($0)" : " with \($0)" } ?? ""
         let head = spanish ? "dejar que \(who) use \(key)" : "let \(who) use \(key)"
-        return head + Self.account(account) + with + Self.lasts(lasts) + said(reason)
+        let to = local.map { spanish ? " hacia \($0)" : " at \($0)" } ?? ""
+        return head + Self.account(account) + to + with + Self.lasts(lasts) + said(reason)
     }
 
     /// "let python3 use 3 keys (meta-ads, calcom, sentry) with python3, for 5 min: “weekly report”". One finger for all.
@@ -52,6 +54,19 @@ public enum FingerPrompt {
         let head = spanish ? "dejar que \(who) use \(count) (\(shown))" : "let \(who) use \(count) (\(shown))"
         let how = always.map { spanish ? ", siempre en \($0)" : ", always in \($0)" } ?? Self.lasts(lasts)
         return head + with + how + said(reason)
+    }
+
+    /// "send mesa-token to 127.0.0.1:8790 on this Mac": what approving a local service lets through, from then on.
+    public static func local(_ pairs: [(key: String, address: String)]) -> String {
+        let list = pairs.prefix(6).map { spanish ? "\($0.key) a \($0.address)" : "\($0.key) to \($0.address)" }
+            .joined(separator: ", ") + (pairs.count > 6 ? (spanish ? " y \(pairs.count - 6) más" : " and \(pairs.count - 6) more") : "")
+        return spanish ? "enviar \(list) en este Mac, por HTTP" : "send \(list) on this Mac, over plain HTTP"
+    }
+
+    /// "print the SHA-256 of mesa-token, for a server that checks it"
+    public static func verifier(key: String) -> String {
+        spanish ? "mostrar el SHA-256 de \(key), para un servidor que la verifica"
+            : "print the SHA-256 of \(key), for a server that checks it"
     }
 
     /// "give the real key resend to node: “send the test email”"

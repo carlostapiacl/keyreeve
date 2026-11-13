@@ -608,7 +608,10 @@ public struct AgentBridge {
         guard let key else { return "" }
         let account = key.account.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
         let words = key.description.map { $0.count > 140 ? String($0.prefix(139)) + "…" : $0 }
-        let parts = [account.map { "account \($0)" }, words.map { "\u{201C}\($0)\u{201D}" }].compactMap { $0 }
+        let parts = [
+            account.map { "account \($0)" }, key.local.map { "for the local service \($0), over plain HTTP" },
+            words.map { "\u{201C}\($0)\u{201D}" },
+        ].compactMap { $0 }
         return parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
     }
 

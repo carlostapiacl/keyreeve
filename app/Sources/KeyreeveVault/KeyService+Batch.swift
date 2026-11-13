@@ -15,6 +15,8 @@ extension KeyService {
         /// Why a key the person marked "always, no fingerprint" asked for one this time, kept beside the permission it
         /// gets, so the log says it: an agent the mark does not name, a missing copy, a pause.
         var missed: String? = nil
+        /// The local service the person approved for this key, when it goes to one in place of its provider.
+        var local: String? = nil
     }
 
     /// How long the first use that needs the person holds its window open for others from the same caller. In use, a
@@ -78,7 +80,14 @@ extension KeyService {
                 results[id] = Response(ok: false, error: "no key is called \(id). `list` shows them", key: id)
                 continue
             }
-            guard let provider = key.provider, provider != Self.sshProvider else {
+            let local: String?
+            do {
+                local = try localDestination(of: key, caller: caller, declared: declared)
+            } catch {
+                results[id] = Response(ok: false, error: (error as? VaultError)?.description ?? "\(id) could not be used", key: id)
+                continue
+            }
+            guard let provider = local == nil ? key.provider : (key.provider ?? ""), provider != Self.sshProvider else {
                 results[id] = Response(
                     ok: false, error: key.provider == nil ? "\(id) has no provider, so nothing says where it may go"
                         : "\(id) is an SSH key, which goes on its own: `use \(id) -- ssh ...`", key: id)
@@ -92,7 +101,7 @@ extension KeyService {
             var single = request
             single.key = id
             single.keys = nil
-            let ask = Ask(request: single, key: key, provider: provider, name: name, declared: declared, caller: caller)
+            let ask = Ask(request: single, key: key, provider: provider, name: name, declared: declared, caller: caller, local: local)
             if let existing = try current(key, program: name, notAfter: request.notAfter, caller: caller) {
                 try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
                 results[id] = try keyed(answer(for: existing, variable: key.variable), id)
@@ -208,7 +217,7 @@ extension KeyService {
             items: pending.map {
                 let ask = asks[$0]
                 return KeyBatch.Item(
-                    key: ask.key.id, account: ask.key.account, provider: ask.provider, program: ask.name, agent: ask.request.agent,
+                    key: ask.key.id, account: ask.key.account, provider: ask.local ?? ask.provider, program: ask.name, agent: ask.request.agent,
                     reason: ask.request.reason)
             },
             set: set, folder: first.request.cwd, choices: choices, suggested: suggested)

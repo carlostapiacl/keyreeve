@@ -217,7 +217,7 @@ prompt shows it.
 ### keys.toml
 
 `~/.keyreeve/keys.toml` says what each key is: its identifier, the file it came from, provider, field, account, description,
-level, server, the day it ends and whether it is archived. It holds no value. A file with `schema = 2` holds every key, and the
+level, server, local service, the day it ends and whether it is archived. It holds no value. A file with `schema = 2` holds every key, and the
 list in the app reads it.
 
 ```bash
@@ -328,6 +328,44 @@ keyreeve-vault env app.env -- ./deploy.sh
 
 One fingerprint opens them all for that command.
 
+### A service of your own on this Mac
+
+A token that a server of yours checks, such as one on `127.0.0.1:8790`, has no provider. Approve the one address it goes to, with
+your finger, in the app (the key's page, under **Usage**: type the address next to its identifier and press **Approve**) or in a
+terminal:
+
+```bash
+keyreeve local mesa-token=127.0.0.1:8790 motor-lectura-token=127.0.0.1:8787   # one fingerprint for both
+keyreeve local                       # what is approved
+keyreeve local mesa-token --off      # takes it away and ends its permissions, with no fingerprint
+```
+
+That writes `local = "127.0.0.1:8790"` in `keys.toml` and the approval in `~/.keyreeve/local-services.json`. Both must say the same
+address: one that `keys.toml` names and you did not approve is refused before any finger, and never falls back to a provider. Only
+`127.0.0.1`, `[::1]` or `localhost` with a port, written exactly as the command uses it. From then on `use`, `use_key` and
+`request_access` work as with any provider: the command gets a stand-in and `HTTP_PROXY`, and the proxy puts the real key in the
+headers of plain HTTP requests to that address and port alone. A request with no stand-in, to another port, or with the stand-in in
+the URL, is refused and never forwarded. Python's `urllib` and `requests`, curl and Node with `NODE_USE_ENV_PROXY` go through the
+proxy for `127.0.0.1`. Go's `net/http` never uses a proxy for loopback, so a Go client needs `--real` or a proxy set in its code.
+
+```bash
+keyreeve use mesa-token --as MESA_TOKEN -- python3 -m motor eventos
+```
+
+A command with such a key reaches no other plain HTTP address through the proxy, so one that also calls another local service with
+no key fails there.
+
+**The server's side.** A server that compares the token it receives needs the value, so it would ask for your finger at every
+start. It does not need it if it keeps the token's SHA-256 and compares the SHA-256 of what it receives:
+
+```bash
+keyreeve verifier mesa-token        # sha256:<hex>, one fingerprint
+```
+
+The hash opens nothing, so it can live in the server's settings and the server starts with no secret and no finger. It is given
+only for a value with at least 128 bits by the count the stand-ins use, so a short password's hash, which could be guessed, never
+leaves. After a rotation, give the server the new one.
+
 ### Several keys at once
 
 ```bash
@@ -380,8 +418,8 @@ The tools an agent gets:
 | `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
 | `propose_bring` | proposes which keys found to seal, for you to review in Bring in and seal with one fingerprint |
 
-`use_key` works with any command, including `curl`. An SSH key signs in through keyreeve. A key with no provider can only go to a
-program you allow with `run_with_key`: if the file changes, it is refused until you allow it again. Shells, interpreters, `curl`, `env`
+`use_key` works with any command, including `curl`. An SSH key signs in through keyreeve. A key with no provider goes to a local
+service you approved for it, [as above](#a-service-of-your-own-on-this-mac), or only to a program you allow with `run_with_key`: if the file changes, it is refused until you allow it again. Shells, interpreters, `curl`, `env`
 and others like them cannot be allowed that way. A run stops after 2 minutes, and its output never shows the key or the stand-in.
 
 An agent's server that finds a newer Keyreeve in place becomes it at its next message, in the same process and connection, so a

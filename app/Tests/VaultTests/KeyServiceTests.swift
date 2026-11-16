@@ -87,6 +87,55 @@ struct AuditLogTests {
         #expect(log.firstBrokenLine() == 3)
     }
 
+    /// What was checked before is not checked again, but a line added after it is, and a change before it
+    /// checks everything again.
+    @Test func aLineAddedAfterAReadingIsStillChecked() throws {
+        let (log, url) = log()
+        defer { try? FileManager.default.removeItem(at: url) }
+        for index in 0..<5 { try log.append(event: "used", key: "k\(index)") }
+        #expect(log.recent(2).brokenLine == nil)
+        // A line that does not follow from the one before, added by hand after the reading.
+        var text = try String(contentsOf: url, encoding: .utf8)
+        let last = text.split(separator: "\n").last.map(String.init) ?? ""
+        text += last.replacingOccurrences(of: "\"key\":\"k4\"", with: "\"key\":\"k9\"") + "\n"
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        #expect(log.recent(2).brokenLine == 6)
+        #expect(log.firstBrokenLine() == 6)
+    }
+
+    @Test func aLineStillBeingWrittenIsReadAgainWhenItEnds() throws {
+        let (log, url) = log()
+        defer { try? FileManager.default.removeItem(at: url) }
+        for index in 0..<3 { try log.append(event: "used", key: "k\(index)") }
+        let whole = try Data(contentsOf: url)
+        try log.append(event: "used", key: "k3")
+        let full = try Data(contentsOf: url)
+        // Half of the fourth line, as a reader may find it while it is written.
+        try full.prefix(whole.count + (full.count - whole.count) / 2).write(to: url)
+        #expect(log.recent(10).entries.map(\.key) == ["k0", "k1", "k2"])
+        #expect(log.recent(10).brokenLine == 4)
+        try full.write(to: url)
+        #expect(log.recent(10).brokenLine == nil)
+        #expect(log.recent(10).entries.map(\.key) == ["k0", "k1", "k2", "k3"])
+    }
+
+    @Test func theNewestShownStopBeforeALineThatIsNotAnEntry() throws {
+        let (log, url) = log()
+        defer { try? FileManager.default.removeItem(at: url) }
+        for index in 0..<3 { try log.append(event: "used", key: "k\(index)") }
+        var text = try String(contentsOf: url, encoding: .utf8)
+        let lines = text.split(separator: "\n").map(String.init)
+        text = lines[0] + "\nnot json\n" + lines[1...].joined(separator: "\n") + "\n"
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        #expect(log.recent(10).entries.map(\.key) == ["k0"])
+        #expect(log.recent(10).brokenLine == 2)
+    }
+
+    @Test func theHexIsWhatFormattingEachByteGave() {
+        let bytes: [UInt8] = [0, 1, 15, 16, 127, 128, 254, 255]
+        #expect(AuditLog.hex(bytes) == bytes.map { String(format: "%02x", $0) }.joined())
+    }
+
     @Test func theRecentEntriesAndTheChainComeFromOneReading() throws {
         let (log, url) = log()
         defer { try? FileManager.default.removeItem(at: url) }

@@ -709,6 +709,7 @@ public let spanish: [String: String] = [
     "In the vault. Checks use the sealed copy.": "En la bóveda. Las pruebas usan la copia sellada.",
     "The file changed after it was sealed. Checks use the file.": "El archivo cambió después de sellarlo. Las pruebas usan el archivo.",
     "Opening the vault…": "Abriendo la bóveda…",
+    "Opening your keys…": "Abriendo tus claves…",
     "The vault could not be opened": "No se pudo abrir la bóveda",
     "Always, no fingerprint": "Siempre, sin huella",
     "This key asks for a fingerprint again: its copy for use with no fingerprint is missing.": "Esta clave vuelve a pedir huella: falta su copia para usarla sin huella.",

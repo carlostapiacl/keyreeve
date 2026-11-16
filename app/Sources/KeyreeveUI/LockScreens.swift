@@ -30,6 +30,24 @@ public struct LockedView: View {
     }
 }
 
+/// Between the fingerprint and the first read of the list: says it is opening, not that there is nothing.
+public struct OpeningView: View {
+    public init() {}
+
+    public var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "lock.open")
+                .font(.system(size: 44, weight: .light))
+                .foregroundStyle(Theme.accent)
+            Text(T("Opening your keys…")).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
+            ProgressView().controlSize(.small)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.background)
+    }
+}
+
 /// The first screen anyone sees: one decision, and no Terminal.
 public struct WelcomeView: View {
     let choose: () -> Void

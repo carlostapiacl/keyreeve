@@ -79,6 +79,13 @@ extension AppModel {
         VaultEvents.observe(VaultEvents.recorder(store: store, file: files.directory.appendingPathComponent(ValueDigests.fileName)))
     }
 
+    /// Checks the usage log's chain while the person gives a finger, so the first list after opening does not
+    /// wait for it. It reads hashes and keeps only how far the chain held, not any line.
+    public nonisolated static func checkUsageLogEarly(files: KeyreeveFiles = KeyreeveFiles()) {
+        let url = files.audit
+        Task.detached(priority: .utility) { _ = AuditLog(url: url).firstBrokenLine() }
+    }
+
     /// Gives the vault its chip key that needs no fingerprint, which keyed digests come from, once places are in use.
     /// Making it asks nothing. Without a chip it fails, and places say "not compared".
     func ensureDigestKey() {

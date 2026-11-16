@@ -121,11 +121,14 @@ func useKeys(
     guard unnamed.isEmpty else {
         fail("\(unnamed.joined(separator: ", ")) has no variable set, so say which with --as \(unnamed[0])=VARIABLE", code: 2)
     }
-    let request = KeyService.Request(
+    var request = KeyService.Request(
         op: "use-many", seconds: seconds, program: command[0], arguments: command.count - 1,
         agent: options["--agent"] ?? ProcessInfo.processInfo.environment["KEYREEVE_AGENT"],
         reason: options["--reason"], cwd: FileManager.default.currentDirectoryPath, keys: keys, set: set,
         programPath: place.program, script: place.script)
+    // As with one key: keys the person marked "always, no fingerprint" for this agent open with none. The service
+    // grants it only if it finds the mark itself.
+    request.unattended = true
     let answer: KeyService.Response
     do { answer = try askService(request) } catch { fail("\(error)") }
     guard answer.ok, let many = answer.many else { fail(answer.error ?? "the keys could not be used", code: 77) }

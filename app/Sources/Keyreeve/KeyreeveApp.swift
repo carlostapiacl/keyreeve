@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // app. Set once here, for the whole process, rather than by each call.
         signal(SIGPIPE, SIG_IGN)
         AppModel.learnValueDigests()
+        AppModel.checkUsageLogEarly()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {

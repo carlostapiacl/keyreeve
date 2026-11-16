@@ -20,6 +20,8 @@ final class SetFixture: @unchecked Sendable {
     var files: [String: String] = ["/usr/bin/python3": "py-1", "/w/report.py": "script-1"]
     var running: Set<Int32> = [42]
     var unattended: Set<String> = []
+    /// Keys the person marked "always, no fingerprint", and the agents each is for.
+    var markedAlways: [String: Set<String>] = [:]
     /// Whether single uses share a window, and how many the window waits for before it closes. No clock is involved.
     var gatherUntil: Int?
     let lock = NSLock()
@@ -71,6 +73,12 @@ final class SetFixture: @unchecked Sendable {
                 return value(source)
             },
             proxy: proxy, log: log, now: { self.now },
+            openUnattended: { key, agent, source in
+                agent.map { self.markedAlways[key]?.contains($0) == true } == true ? value(source) : nil
+            },
+            whyAsked: { key, agent, _ in
+                self.markedAlways[key] == nil ? nil : "always is only for \(self.markedAlways[key]!.sorted().joined(separator: ", ")), and this was \(agent ?? "an agent with no name")"
+            },
             openMany: { sources, prompt in
                 self.lock.lock()
                 defer { self.lock.unlock() }
@@ -102,13 +110,14 @@ final class SetFixture: @unchecked Sendable {
     let caller = AuditLog.Observed(pid: 42, program: "/usr/local/bin/keyreeve-vault", chain: ["keyreeve-vault", "zsh"])
 
     func many(
-        _ keys: [String], cwd: String = "/w", program: String = "/usr/bin/python3", script: String? = "/w/report.py", seconds: Int? = nil
+        _ keys: [String], cwd: String = "/w", program: String = "/usr/bin/python3", script: String? = "/w/report.py", seconds: Int? = nil,
+        agent: String? = nil, unattended: Bool? = nil
     ) -> KeyService.Response {
-        service.handle(
-            KeyService.Request(
-                op: "use-many", seconds: seconds, program: "python3", arguments: 1, reason: "weekly report", cwd: cwd, keys: keys,
-                set: "weekly-report", programPath: program, script: script),
-            caller: caller)
+        var request = KeyService.Request(
+            op: "use-many", seconds: seconds, program: "python3", arguments: 1, agent: agent, reason: "weekly report", cwd: cwd,
+            keys: keys, set: "weekly-report", programPath: program, script: script)
+        request.unattended = unattended
+        return service.handle(request, caller: caller)
     }
 
     var granted: [String] { (try? log.entries().filter { $0.event == "granted" }.map(\.key)) ?? [] }
@@ -117,6 +126,39 @@ final class SetFixture: @unchecked Sendable {
 }
 
 struct KeySetTests {
+    /// A program run with nobody at the Mac, such as one started at login, that asks for several keys at once: those
+    /// marked "always, no fingerprint" for its agent open with none, as they do one at a time.
+    @Test func keysMarkedAlwaysOpenWithNoFingerprintWhenAskedTogether() throws {
+        let f = SetFixture()
+        f.markedAlways = ["meta-ads": ["witan"], "calcom": ["witan"]]
+        let answer = f.many(["meta-ads", "calcom"], agent: "witan", unattended: true)
+        #expect(answer.ok && answer.many?.allSatisfy(\.ok) == true)
+        #expect(f.fingerprints.isEmpty && f.windows.isEmpty)
+        #expect(f.granted == ["meta-ads", "calcom"])
+        #expect(try f.log.entries().filter { $0.event == "granted" }.allSatisfy { $0.detail?.contains("no fingerprint") == true })
+    }
+
+    /// Only the marked ones: the rest are asked in the window, with one fingerprint, and say why "always" did not apply.
+    @Test func onlyTheKeysMarkedForThisAgentSkipTheFinger() throws {
+        let f = SetFixture()
+        f.markedAlways = ["meta-ads": ["witan"], "calcom": ["claude"]]
+        let answer = f.many(["meta-ads", "calcom", "sentry"], agent: "witan", unattended: true)
+        #expect(answer.ok)
+        #expect(f.windows.count == 1 && f.windows[0].items.map(\.key) == ["calcom", "sentry"])
+        #expect(f.fingerprints.count == 1)
+        let calcom = try f.log.entries().first { $0.event == "granted" && $0.key == "calcom" }
+        #expect(calcom?.detail?.contains("always is only for claude, and this was witan") == true)
+    }
+
+    /// The mark is the person's: a request that does not say it runs unattended, such as the real key, still asks.
+    @Test func withoutTheUnattendedAskTheMarkIsNotUsed() throws {
+        let f = SetFixture()
+        f.markedAlways = ["meta-ads": ["witan"]]
+        let answer = f.many(["meta-ads"], agent: "witan")
+        #expect(answer.ok)
+        #expect(f.fingerprints.count == 1)
+    }
+
     @Test func oneFingerprintOpensEveryKeyAndEachGetsItsOwnVariable() throws {
         let f = SetFixture()
         let answer = f.many(["meta-ads", "calcom", "sentry"])

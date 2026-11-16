@@ -101,16 +101,26 @@ extension KeyService {
             var single = request
             single.key = id
             single.keys = nil
-            let ask = Ask(request: single, key: key, provider: provider, name: name, declared: declared, caller: caller, local: local)
+            var ask = Ask(request: single, key: key, provider: provider, name: name, declared: declared, caller: caller, local: local)
+            // A key marked "always, no fingerprint" for this agent opens with none here too, as it does alone: a
+            // program that asks for several keys at once is often one that runs with nobody at the Mac.
+            let unattended = request.unattended == true ? openUnattended(id, request.agent, key.source) : nil
             if let existing = try current(key, program: name, notAfter: request.notAfter, caller: caller) {
                 try log.append(event: "used", key: id, grant: existing.id, observed: caller, declared: declared)
                 results[id] = try keyed(answer(for: existing, variable: key.variable), id)
+            } else if let unattended {
+                results[id] = Self.settle(id) {
+                    try install(ask, sealed: unattended, sealing: revision(key.source), seconds: request.seconds ?? Self.defaultSeconds,
+                        quiet: true, revocationsBefore: revocationsNow(), note: nil)
+                }
             } else if let quiet = standingValue(for: ask) {
                 results[id] = Self.settle(id) {
                     try install(ask, sealed: quiet, sealing: revision(key.source), seconds: request.seconds ?? Self.defaultSeconds,
                         quiet: true, revocationsBefore: revocationsNow(), note: "always for \(name) in this folder")
                 }
             } else {
+                // A key marked "always" that still asks says why, as it does alone.
+                if request.unattended == true { ask.missed = whyAsked(id, request.agent, key.source) }
                 asks.append(ask)
             }
         }

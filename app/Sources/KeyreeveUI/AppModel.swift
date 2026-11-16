@@ -39,6 +39,9 @@ public final class AppModel: ObservableObject {
     /// Changes whenever the keys or the providers do, so a view can keep what it worked out until then.
     public private(set) var itemsVersion = 0
     @Published public var hasCatalog = false
+    /// The first read after opening is on screen. Until then nothing says whether there is a list, so the
+    /// welcome, which is for someone with nothing yet, must not show.
+    @Published public var firstLoadDone = false
     @Published public var busy = false
     @Published public var message: String?
     @Published public var activity: [ActivityItem] = []
@@ -67,7 +70,7 @@ public final class AppModel: ObservableObject {
     @Published public var startedWithoutFolder = UserDefaults.standard.bool(forKey: "startedWithoutFolder")
 
     /// The welcome is for someone with nothing yet: no list, no vault, no pasted key.
-    public var needsWelcome: Bool { !hasCatalog && items.isEmpty && !hasVault && !startedWithoutFolder }
+    public var needsWelcome: Bool { firstLoadDone && !hasCatalog && items.isEmpty && !hasVault && !startedWithoutFolder }
 
     public func startWithoutFolder() {
         UserDefaults.standard.set(true, forKey: "startedWithoutFolder")
@@ -259,6 +262,7 @@ public final class AppModel: ObservableObject {
     }
 
     private func apply(_ snapshot: Snapshot) {
+        firstLoadDone = true
         hasCatalog = snapshot.hasCatalog
         hasVault = snapshot.hasVault
         items = snapshot.items

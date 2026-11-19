@@ -866,3 +866,121 @@ fn a_plan_written_before_procedures_still_reads() {
     assert_eq!(plan.place_files, vec!["/a/.env".to_owned()]);
     assert_eq!(plan.place_actions, vec!["mine/update".to_owned()]);
 }
+
+#[cfg(unix)]
+mod by_program {
+    use super::*;
+    use crate::recipe::CustomRun;
+    use crate::script::ProgramTransport;
+    use std::os::unix::fs::PermissionsExt;
+
+    const PROGRAM_RECIPE: &str = "schema: 1\nprovider: own\nhosts: []\nauth: { type: command, run: { program: p.sh }, rotates: true }\n";
+
+    /// A service of yours, reached only by its program. It writes down what it was asked.
+    fn program(dir: &Path, create: &str) -> ProgramTransport {
+        let body = format!(
+            r#"#!/bin/sh
+key=$(cat)
+echo "$KEYREEVE_MODE ${{KEYREEVE_KEY_NAME:-}}${{KEYREEVE_ID:-}} $key" >> "{log}"
+case "$KEYREEVE_MODE" in
+  create) {create} ;;
+  check) [ "$key" = "CANARY-new-0123456789" ] && echo '{{"result":"works"}}' || echo '{{"result":"rejected"}}' ;;
+  revoke) echo '{{"result":"revoked"}}' ;;
+esac
+"#,
+            log = dir.join("asked").display()
+        );
+        fs::write(dir.join("p.sh"), body).unwrap();
+        fs::set_permissions(dir.join("p.sh"), fs::Permissions::from_mode(0o700)).unwrap();
+        ProgramTransport {
+            folder: dir.to_owned(),
+            run: CustomRun {
+                program: "p.sh".into(),
+                args: Vec::new(),
+            },
+        }
+    }
+
+    fn rotate_with(dir: &Path, transport: &mut ProgramTransport) -> Outcome {
+        let recipe = Recipe::parse(PROGRAM_RECIPE).unwrap();
+        assert!(recipe.can_rotate() && !recipe.can_rotate_by_hand());
+        let mut record = Journal::open(Box::new(FileBackend::new(dir.join("j")))).unwrap();
+        let mut store = store_with(dir);
+        let config = KeyConfig {
+            key: "k".into(),
+            admin: "k".into(),
+            overlap_secs: 0,
+            issued_name: "keyreeve 2026-11".into(),
+            known_id: Some("7".into()),
+            handed_over: None,
+            revoke_now: false,
+        };
+        Engine {
+            recipe: &recipe,
+            config: &config,
+            transport,
+            store: &mut store,
+            journal: &mut record,
+            sinks: Vec::new(),
+            now: &|| 100,
+        }
+        .rotate()
+        .unwrap()
+    }
+
+    #[test]
+    fn a_program_makes_checks_and_revokes_the_key() {
+        let dir = folder("program");
+        let mut transport = program(
+            &dir,
+            r#"echo '{"result":"created","fields":{"id":"tok-8"},"value":"CANARY-new-0123456789","message":"made CANARY-new-0123456789"}'"#,
+        );
+        assert_eq!(rotate_with(&dir, &mut transport), Outcome::Completed);
+        assert_eq!(
+            fs::read_to_string(dir.join("vault/k")).unwrap(),
+            "CANARY-new-0123456789"
+        );
+        let asked = fs::read_to_string(dir.join("asked")).unwrap();
+        let lines: Vec<&str> = asked.lines().collect();
+        // It makes the key with the old one on stdin, checks the new one, and revokes the old by id with the new.
+        assert_eq!(lines[0], "create keyreeve 2026-11 old-value-0123456789");
+        assert!(lines[1].starts_with("check  CANARY-new"));
+        assert_eq!(lines.last().unwrap(), &"revoke 7 CANARY-new-0123456789");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_program_that_makes_nothing_leaves_the_key_as_it_was() {
+        for (name, create, reason) in [
+            (
+                "refused",
+                r#"echo '{"result":"refused"}'"#,
+                "create_status_400",
+            ),
+            // No id means nothing could revoke it later, so it counts as unknown.
+            (
+                "no-id",
+                r#"echo '{"result":"created","value":"CANARY-new-0123456789"}'"#,
+                "create_failed",
+            ),
+            (
+                "bad-id",
+                r#"echo '{"result":"created","fields":{"id":"$(x)"},"value":"CANARY-new-0123456789"}'"#,
+                "create_failed",
+            ),
+            ("crash", "exit 2", "create_failed"),
+        ] {
+            let dir = folder(&format!("program-{name}"));
+            let mut transport = program(&dir, create);
+            assert_eq!(
+                rotate_with(&dir, &mut transport),
+                Outcome::RolledBack {
+                    reason: reason.into()
+                },
+                "{name}"
+            );
+            assert!(!dir.join("vault/k").exists(), "{name}");
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+}

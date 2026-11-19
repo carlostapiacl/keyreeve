@@ -682,6 +682,19 @@ El programa recibe la clave por stdin y responde en JSON, como `{"result":"works
 limpio y un límite de tiempo, y solo después de que lo apruebas. Cambiar el archivo o el programa aunque sea en un byte deshace la
 aprobación. Un archivo que viene con keyreeve nunca puede correr un programa.
 
+**Rotar con tu programa.** Un servicio que no permite crear claves por la web, como uno al que solo llegas por ssh, igual puede rotar:
+agrega `rotates: true` en `auth`, y el mismo programa crea y revoca claves. `KEYREEVE_MODE` dice qué hacer, y la clave actual llega
+por stdin como siempre:
+
+- `create` recibe el nombre para la clave nueva en `KEYREEVE_KEY_NAME` y responde
+  `{"result":"created","fields":{"id":"tok-42"},"value":"<clave nueva>"}`, o `{"result":"refused"}` si no creó ninguna. El id queda
+  en el diario de la rotación, así que no puede aparecer dentro de la clave: dale un prefijo tuyo.
+- `check` prueba una clave, como antes. La rotación la usa con la clave nueva antes de que llegue a cualquier lugar.
+- `revoke` recibe el id en `KEYREEVE_ID` y responde `{"result":"revoked"}`, o `{"result":"not_found"}`.
+
+La clave nueva nunca llega a un mensaje, un registro ni la pantalla. El orden es el de toda rotación: crear, probar, guardar,
+actualizar los lugares y revocar la vieja al final.
+
 Un secreto sin proveedor, como una clave de firma, se marca como interno, y no se ofrece prueba. Los secretos de tus propios productos
 van igual: un archivo tuyo, en esa carpeta, nunca en un repositorio.
 

@@ -101,6 +101,27 @@ pub struct CustomAction {
     pub needs_key: bool,
 }
 
+/// A program's rotation is spoken to the engine as two requests, so the engine keeps one path for
+/// every provider. Only `script::ProgramTransport` reads them, and it never sends them anywhere.
+pub const PROGRAM_CREATE_PATH: &str = "/create/{key_name}";
+pub const PROGRAM_REVOKE_PATH: &str = "/revoke/{id}";
+static PROGRAM_CREATE: std::sync::OnceLock<Step> = std::sync::OnceLock::new();
+static PROGRAM_REVOKE: std::sync::OnceLock<Step> = std::sync::OnceLock::new();
+
+fn program_step(
+    cell: &'static std::sync::OnceLock<Step>,
+    path: &str,
+    creates: bool,
+) -> &'static Step {
+    cell.get_or_init(|| Step {
+        method: "POST".into(),
+        path: path.into(),
+        value_from: creates.then(|| "$.value".into()),
+        id_from: creates.then(|| "$.id".into()),
+        ..no_request()
+    })
+}
+
 fn no_request() -> Step {
     Step {
         method: "GET".into(),
@@ -189,6 +210,10 @@ pub struct Auth {
     pub client_id_ends: Option<String>,
     /// `command`: a program of yours does the check. Only for your own files.
     pub run: Option<CustomRun>,
+    /// `command`: the same program also makes and revokes keys, so the key can rotate. For a service
+    /// with no way to make keys over the web, such as one only reached by ssh.
+    #[serde(default)]
+    pub rotates: bool,
     /// `ssh`: the login name, and the text around the account in the server's greeting.
     pub user: Option<String>,
     pub reply_between: Option<Vec<String>>,
@@ -304,8 +329,11 @@ impl Recipe {
             }
             Some("basic") => {}
             Some("command") => {
-                if self.auth.run.is_none() || self.create.is_some() {
-                    return fail("auth type command needs run, and cannot use create".into());
+                if self.auth.run.is_none() || self.create.is_some() || self.revoke.is_some() {
+                    return fail(
+                        "auth type command needs run, and makes keys with it (rotates: true), not with create or revoke"
+                            .into(),
+                    );
                 }
             }
             Some("oauth_token") => {
@@ -345,6 +373,9 @@ impl Recipe {
                 }
             }
             Some(other) => return fail(format!("unknown auth type {other:?}")),
+        }
+        if self.auth.rotates && self.auth.kind.as_deref() != Some("command") {
+            return fail("only auth type command rotates with a program".into());
         }
         for action in &self.actions {
             let id_ok = !action.id.is_empty()
@@ -564,7 +595,13 @@ impl Recipe {
     }
 
     pub fn can_rotate(&self) -> bool {
-        self.create.is_some() && (self.revoke.is_some() || self.is_single())
+        self.program_rotates()
+            || (self.create.is_some() && (self.revoke.is_some() || self.is_single()))
+    }
+
+    /// True if a program of yours makes and revokes this provider's keys. See `script::ProgramTransport`.
+    pub fn program_rotates(&self) -> bool {
+        self.auth.kind.as_deref() == Some("command") && self.auth.run.is_some() && self.auth.rotates
     }
 
     pub fn is_single(&self) -> bool {
@@ -586,11 +623,17 @@ impl Recipe {
 
     /// Only for recipes where `can_rotate` is true, which the engine checks first.
     pub fn create_step(&self) -> &Step {
+        if self.program_rotates() {
+            return program_step(&PROGRAM_CREATE, PROGRAM_CREATE_PATH, true);
+        }
         self.create.as_ref().expect("the recipe can rotate")
     }
 
     /// Only for recipes where `can_rotate` is true, which the engine checks first.
     pub fn revoke_step(&self) -> &Step {
+        if self.program_rotates() {
+            return program_step(&PROGRAM_REVOKE, PROGRAM_REVOKE_PATH, false);
+        }
         self.revoke.as_ref().expect("the recipe can rotate")
     }
 
@@ -1079,6 +1122,24 @@ revoke: { method: DELETE, path: "/v1/keys/{id}" }
         if let Ok(recipe) = Recipe::parse(&oauth) {
             assert!(!recipe.can_rotate_by_hand());
         }
+    }
+
+    #[test]
+    fn a_program_of_yours_can_rotate_only_by_itself() {
+        let own =
+            "schema: 1\nprovider: own\nhosts: []\nauth: { type: command, run: { program: p.sh }";
+        let checks = Recipe::parse(&format!("{own} }}\n")).unwrap();
+        assert!(!checks.can_rotate() && !checks.can_rotate_by_hand());
+        let rotates = Recipe::parse(&format!("{own}, rotates: true }}\n")).unwrap();
+        assert!(rotates.can_rotate() && rotates.program_rotates());
+        assert_eq!(rotates.create_step().path, PROGRAM_CREATE_PATH);
+        assert_eq!(rotates.revoke_step().path, PROGRAM_REVOKE_PATH);
+        // The program makes the keys, so no request may also do it, and no other file rotates by program.
+        let revoke = "revoke: { method: DELETE, path: \"/k/{id}\" }\n";
+        assert!(Recipe::parse(&format!("{own}, rotates: true }}\n{revoke}")).is_err());
+        let web =
+            "schema: 1\nprovider: p\nhosts: [a.example.com]\nauth: { header: A, rotates: true }\n";
+        assert!(Recipe::parse(web).is_err());
     }
 
     #[test]

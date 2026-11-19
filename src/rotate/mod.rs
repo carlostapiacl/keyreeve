@@ -13,8 +13,9 @@ use crate::keys::{holds_key, MIN_SWAP_CHARS};
 use crate::places::{action_sink, FileSink};
 use crate::procedure::{self, Params, ProcedureSink, Runner};
 use crate::recipe::Recipe;
+use crate::script::ProgramTransport;
 use crate::secret::Secret;
-use crate::transport::HttpTransport;
+use crate::transport::{HttpTransport, Transport};
 use crate::verify::{now, read_key_for, resolve, Sealed};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -298,7 +299,13 @@ pub fn run(
         handed_over,
         revoke_now: options.revoke_now,
     };
-    let mut transport = HttpTransport::for_recipe(&recipe);
+    let mut transport: Box<dyn Transport> = match (&recipe.auth.run, recipe.program_rotates()) {
+        (Some(run), true) => Box::new(ProgramTransport {
+            folder: crate::providers::programs_folder(),
+            run: run.clone(),
+        }),
+        _ => Box::new(HttpTransport::for_recipe(&recipe)),
+    };
     let outcome = {
         let mut places: Vec<&mut dyn Sink> = Vec::with_capacity(sinks.len());
         for sink in &mut sinks {
@@ -307,7 +314,7 @@ pub fn run(
         let mut engine = Engine {
             recipe: &recipe,
             config: &config,
-            transport: &mut transport,
+            transport: transport.as_mut(),
             store: &mut store,
             journal: &mut record,
             sinks: places,

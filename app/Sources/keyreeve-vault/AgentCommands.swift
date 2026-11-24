@@ -18,9 +18,7 @@ func runWithKey() throws {
     setenv(arguments[3], text.trimmingCharacters(in: .newlines), 1)
     let command = Array(arguments[5...])
     store.recordUse(of: arguments[1], by: command[0])
-    var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
-    execvp(command[0], &pointers)
-    fail("could not run \(command[0])")
+    runHiding([value], command: command)
 }
 
 /// `run <name> --as-file VAR -- command`: for a key that is a file, such as a keystore or a certificate. The
@@ -42,26 +40,15 @@ func runWithKeyFile() throws {
         removeAll()
         fail("could not write the key's file")
     }
-    // The terminal's Ctrl-C reaches the command too; this process stays alive to clean up after it.
-    signal(SIGINT) { _ in }
-    signal(SIGTERM) { _ in }
-    signal(SIGHUP) { _ in }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = command
     var environment = ProcessInfo.processInfo.environment
     environment[variable] = file.path
-    process.environment = environment
     store.recordUse(of: name, by: command[0])
-    do {
-        try process.run()
-    } catch {
-        removeAll()
-        fail("could not run \(command[0])")
-    }
-    process.waitUntilExit()
+    // This process stays alive to remove the file after the command, also on Ctrl-C. Whatever the command prints
+    // of the file's contents is taken out, as with a key in a variable.
+    let status = HidingRunner.spawn(
+        command, environment: environment, redactor: OutputRedactor(secrets: [value]), streams: HidingRunner.piped())
     removeAll()
-    exit(process.terminationReason == .exit ? process.terminationStatus : 128 + process.terminationStatus)
+    exit(status)
 }
 
 func runWithEnv() throws {
@@ -94,6 +81,7 @@ func runWithEnv() throws {
         recipient = try EnclaveRecipient.load(blob: try store.loadBlob(), context: context)
     }
     let vault = references ? try store.load() : nil
+    var opened: [Data] = []
     for line in lines {
         switch line {
         case .value(let name, let value):
@@ -103,13 +91,14 @@ func runWithEnv() throws {
             // An identifier first. A vault's own name still works, for files written before them.
             let found = try KeyIndex.load(from: keysFile).key(key)
             let sealed = try vault.open(name: found?.source ?? key, with: recipient)
-            setenv(name, try EnvReferences.value(in: sealed, field: field ?? found?.field), 1)
+            let value = try EnvReferences.value(in: sealed, field: field ?? found?.field)
+            setenv(name, value, 1)
+            opened.append(Data(value.utf8))
             store.recordUse(of: found?.id ?? key, by: command[0])
         }
     }
-    var pointers: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
-    execvp(command[0], &pointers)
-    fail("could not run \(command[0])")
+    // Only what came from the vault is hidden: a value written in the file is already in plain sight.
+    runHiding(opened, command: command)
 }
 
 func serveAgents() throws {

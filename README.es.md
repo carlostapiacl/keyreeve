@@ -112,7 +112,8 @@ Cada clave ofrecida tiene un nivel, que eliges en la app.
 | Libre | Una huella y después cualquier comando hasta que cierres Keyreeve, un día como máximo. |
 | Siempre, sin huella | Una huella para sellar una segunda copia, y desde ahí los agentes la usan por el proxy sin preguntar, aunque reinicies. Déjalo para claves que solo leen. |
 
-La clave real (`keyreeve-vault get`, `--real`, `run_with_key`) pide tu huella cada vez. Cerrar Keyreeve, **Bloquear todo** en
+La clave real (`keyreeve-vault get`, `--real`, `run_with_key`) pide tu huella cada vez. Lo que imprime ese comando te llega con la clave
+tachada (escrita tal cual, en base64 o en una URL), salvo que imprima en tu terminal. Cerrar Keyreeve, **Bloquear todo** en
 la barra de menú o `keyreeve-vault revoke` terminan todos los permisos.
 
 Una credencial OAuth, como un inicio de sesión de Google con refresh token, toma los mismos niveles. keyreeve guarda el refresh

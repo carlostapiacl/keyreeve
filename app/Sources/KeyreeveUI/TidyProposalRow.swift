@@ -44,8 +44,11 @@ struct TidyProposalRow: View {
                                         Text(T("new project")).font(Theme.caption).foregroundStyle(Theme.warn)
                                     }
                                 }
-                                Text(change.summary(from: model.tidyKey(change.key)))
-                                    .font(Theme.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                                let summary = Self.summary(change, from: model.tidyKey(change.key))
+                                if !summary.isEmpty {
+                                    Text(summary)
+                                        .font(Theme.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                                }
                                 Text(change.why).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(2)
                             }
                         }
@@ -69,5 +72,24 @@ struct TidyProposalRow: View {
             changes = model.tidyChanges(for: request)
             chosen = Set(changes.map(\.key))
         }
+    }
+
+    /// What changes, in the person's language. Archiving is said by its own label above.
+    static func summary(_ change: KeyTidy.Change, from before: KeyIndex.Key?) -> String {
+        var parts: [String] = []
+        func show(_ name: String, _ old: String?, _ new: String?) {
+            guard let new, new != old else { return }
+            parts.append("\(name): \(old ?? "—") → \(new)")
+        }
+        show(T("name"), before?.id ?? change.key, change.id)
+        show(T("description"), before?.description, change.description)
+        show(T("project"), before?.project, change.project)
+        show(T("provider"), before?.provider, change.provider)
+        show(T("variable"), before?.variable, change.variable)
+        show(T("account"), before?.account, change.account)
+        show(T("field"), before?.field, change.field)
+        let added = (change.tags ?? []).filter { !(before?.more.tags ?? []).contains($0) }
+        if !added.isEmpty { parts.append(T("tags") + " + " + added.joined(separator: ", ")) }
+        return parts.joined(separator: " · ")
     }
 }

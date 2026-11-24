@@ -92,6 +92,8 @@ public final class AppModel: ObservableObject {
     @Published public var placesState = PlacesState()
     /// The usage log, newest first, and what the key service has open now.
     @Published public var usage = UsageSnapshot()
+    /// Keys used in the last 30 days, with who used them and where to: what Home shows first.
+    @Published public var inUse: [KeyInUse] = []
     public let files: KeyreeveFiles
     public let vaultStore: VaultStore
     let binary: URL?
@@ -275,6 +277,7 @@ public final class AppModel: ObservableObject {
         usage = snapshot.usage
         if let providers = snapshot.providers { self.providers = providers }
         if let rotations = snapshot.rotations { self.rotations = rotations }
+        if snapshot.inUse != inUse { inUse = snapshot.inUse }
         if !snapshot.problems.isEmpty { message = snapshot.problems.joined(separator: " ") }
         reloadRequests()
         publishOffered()
@@ -396,6 +399,7 @@ struct Snapshot: Sendable {
     let unattendedSources: Set<String>
     let providers: ProviderDirectory?
     let rotations: [RotationStatus]?
+    let inUse: [KeyInUse]
 
     init(reading source: Source) {
         let files = source.files
@@ -490,5 +494,6 @@ struct Snapshot: Sendable {
         usage = UsageSnapshot(files: files)
         providers = source.binary.map { CheckRunner.providers(binary: $0) }
         rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }
+        inUse = KeyInUse.read(home: files.directory, index: keyIndex)
     }
 }

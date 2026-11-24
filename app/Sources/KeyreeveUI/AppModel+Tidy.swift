@@ -40,3 +40,54 @@ extension AppModel {
         load()
     }
 }
+
+/// A key used lately: who used it, from where and to which hosts. Words from the usage log, never a value.
+public struct KeyInUse: Identifiable, Equatable, Sendable {
+    public var id: String
+    /// The file or vault name the list knows it by, to open it there.
+    public var source: String
+    public var project: String?
+    public var provider: String?
+    public var description: String?
+    public var use: KeyTidy.Use
+
+    public static let days = 30
+
+    /// Read off the screen. The log is read again only when it changed, since the window loads often.
+    static func read(home: URL, index: KeyIndex, now: Date = Date()) -> [KeyInUse] {
+        let usage = UsageCache.usage(home: home, index: index)
+        let since = now.addingTimeInterval(-Double(days) * 86400)
+        return (index.keys + index.unoffered).compactMap { key -> KeyInUse? in
+            guard !key.more.archived, let use = usage[key.id], let last = use.last, last >= since else { return nil }
+            return KeyInUse(id: key.id, source: key.source, project: key.project, provider: key.provider, description: key.description, use: use)
+        }
+        .sorted { ($0.use.last ?? .distantPast) > ($1.use.last ?? .distantPast) }
+    }
+}
+
+/// The usage worked out from the log, kept until the log or keys.toml changes.
+enum UsageCache {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var stamp = ""
+    nonisolated(unsafe) private static var kept: [String: KeyTidy.Use] = [:]
+
+    static func usage(home: URL, index: KeyIndex) -> [String: KeyTidy.Use] {
+        let files = ["audit.jsonl", KeyIndex.fileName].map { home.appendingPathComponent($0).path }
+        let now = files.map { path -> String in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+            return "\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)-\((attributes?[.size] as? Int) ?? 0)"
+        }.joined(separator: "|")
+        lock.lock()
+        if now == stamp {
+            defer { lock.unlock() }
+            return kept
+        }
+        lock.unlock()
+        let fresh = KeyTidy.usage(KeyTidy.recentEntries(home: home), index: index)
+        lock.lock()
+        stamp = now
+        kept = fresh
+        lock.unlock()
+        return fresh
+    }
+}

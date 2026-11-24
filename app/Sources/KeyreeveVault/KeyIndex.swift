@@ -62,6 +62,9 @@ public struct KeyIndex: Equatable, Sendable {
         public var addedAt: String?
         /// False while a key that something other than the person in the app added waits for a look.
         public var reviewed = true
+        /// Identifiers this key had before it was renamed. Each still names it, so a script or a permission written
+        /// with an old one keeps working.
+        public var formerly: [String]?
         public init() {}
     }
 
@@ -76,10 +79,19 @@ public struct KeyIndex: Equatable, Sendable {
 
     public init(keys: [Key] = []) { self.keys = keys }
 
-    public func key(_ id: String) -> Key? { keys.first { $0.id == id } }
+    public func key(_ id: String) -> Key? { keys.first { $0.id == id } ?? keys.first { $0.more.formerly?.contains(id) == true } }
 
-    /// Whether an identifier is in use, by a key offered to agents or not.
-    public func isTaken(_ id: String) -> Bool { key(id) != nil || unoffered.contains { $0.id == id } }
+    /// Whether an identifier is in use, by a key offered to agents or not, as its own or as one it had before.
+    public func isTaken(_ id: String) -> Bool {
+        (keys + unoffered).contains { $0.id == id || $0.more.formerly?.contains(id) == true }
+    }
+
+    /// The identifier a key goes by now, for one it may have had before. Any other text comes back as it is.
+    public func current(_ id: String) -> String {
+        let all = keys + unoffered
+        if all.contains(where: { $0.id == id }) { return id }
+        return all.first { $0.more.formerly?.contains(id) == true }?.id ?? id
+    }
     public func keys(forSource source: String) -> [Key] { keys.filter { $0.source == source } }
     /// The keys of a file, offered to agents or not: what the person sees in the app.
     public func allKeys(forSource source: String) -> [Key] { (keys + unoffered).filter { $0.source == source } }
@@ -226,7 +238,7 @@ public struct KeyIndex: Equatable, Sendable {
         var numbers: [String: Int] = [:]
         let texts = ["id", "source", "field", "provider", "project", "account", "description", "variable", "servers",
                      "name", "level", "host", "local", "expires", "auth", "state", "added_by", "added_at"]
-        let listNames = ["recipes", "tags", "parts"]
+        let listNames = ["recipes", "tags", "parts", "formerly"]
         let flagNames = ["archived", "offered", "reviewed"]
         let numberNames = ["criticality"]
         func finish() throws {
@@ -267,6 +279,7 @@ public struct KeyIndex: Equatable, Sendable {
             more.addedBy = current["added_by"]
             more.addedAt = current["added_at"]
             more.reviewed = flags["reviewed"] ?? true
+            more.formerly = lists["formerly"]
             var key = Key(
                 id: id, source: source, field: current["field"] ?? lists["parts"]?.joined(separator: "+"),
                 provider: current["provider"], project: current["project"], account: current["account"],
@@ -364,6 +377,7 @@ public struct KeyIndex: Equatable, Sendable {
             if let addedBy = key.more.addedBy { out += "added_by = \(tomlQuoted(addedBy))\n" }
             if let addedAt = key.more.addedAt { out += "added_at = \(tomlQuoted(addedAt))\n" }
             if !key.more.reviewed { out += "reviewed = false\n" }
+            if let formerly = key.more.formerly, !formerly.isEmpty { out += "formerly = \(list(formerly))\n" }
             if !offered { out += "offered = false\n" }
         }
         return out

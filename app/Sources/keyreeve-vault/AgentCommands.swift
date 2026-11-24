@@ -211,6 +211,14 @@ func serveAgents() throws {
             return (try? EnclaveRecipient.confirm(reason: words)) != nil
         })
     bridge.places = { PlaceBook.load(from: PlaceBook.file(home: home)) }
+    bridge.tidyContext = {
+        guard let index = try? KeyIndex.load(from: keysFile) else { return nil }
+        // The newest lines say how keys are used now: a few months, not the whole history.
+        // Only keys, events, agents, folders and hosts are read from it, never shown as they are.
+        let entries = KeyTidy.recentEntries(home: home)
+        return KeyTidy.Context(index: index, entries: entries, digests: ValueDigests.load(from: home.appendingPathComponent(ValueDigests.fileName)))
+    }
+    bridge.saveTidy = { id, data in try AgentSorting.save(data, id: id, home: home) }
     bridge.proceduresFolder = PlaceBook.proceduresFolder(home: home)
     // One message per line, at most a megabyte: a client that sends more is told so and the line is
     // dropped, read in pieces and never held whole.

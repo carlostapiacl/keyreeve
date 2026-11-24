@@ -419,6 +419,7 @@ The tools an agent gets:
 | `request_access` | asks you to open a closed key, or to save one for a provider |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes for many files, when you turn it on |
+| `review_keys`, `propose_tidy` | read every key's gaps and how it is used, and propose tidying by id, for you to approve with one click ([below](#when-an-agent-tidies-your-keys)) |
 | `list_places`, `propose_places` | where offered keys live, and new places for you to approve ([below](#where-a-key-lives)) |
 | `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
 | `propose_bring` | proposes which keys found to seal, for you to review in Bring in and seal with one fingerprint |
@@ -472,6 +473,24 @@ ones, checks the ones it should, which may ask for your fingerprint, and seals t
 
 A server an agent suggests is saved but not approved. The key's page says so, and **Approve … and check** approves it after you
 confirm and checks the key there.
+
+### When an agent tidies your keys
+
+Nobody wants to sort their own keys, so an agent does it and you approve. `review_keys` lists each key by id with its provider,
+project, variable and description, how it was used lately (how often, the last day, which agents, from which folders, to which
+hosts) and what it needs: no project or variable, an id that breaks the naming convention, the same value as another key (compared
+by digest), or no use. Never a value. It starts with the convention and the projects your keys already name, including the short
+starts you use, such as `lh-` for liquidity-hunters.
+
+`propose_tidy` sends changes by id: a new id, description, project, provider, variable, account, field, tags to add, or archive, each
+with why the agent knows. keyreeve checks them before they reach you and sends back the ones that break the convention with the
+reason, so the agent fixes them: an id starts with its provider (`resend-lh`) or, for a secret of your own software, its project
+(`restoiq-erp-jwt-secret`); a description holds no value; a key used in the last 30 days is not archived. The rest wait under
+**Agents** as one card with each change, what it replaces and why, all chosen to start. **Apply** takes a click and no fingerprint,
+since only names and notes change. keys.toml and agents.toml are copied beside them first.
+
+A renamed key keeps its old id in `formerly`, so a script, a set or a permission written with it goes on working: keyreeve takes the
+old id as the new one wherever a key is asked for, and moves its permissions and places to the new id.
 
 ### When an agent brings keys in
 

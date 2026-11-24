@@ -341,6 +341,13 @@ public final class KeyService: @unchecked Sendable {
     }
 
     public func handle(_ request: Request, caller: AuditLog.Observed?) -> Response {
+        // A key renamed by tidying is still asked for by its old identifier from scripts written before. From here
+        // on it goes by the one it has now, so its permissions and its log are those of one key.
+        var request = request
+        if request.key != nil || request.keys != nil, let index = try? index() {
+            request.key = request.key.map(index.current)
+            request.keys = request.keys?.map(index.current)
+        }
         do {
             switch request.op {
             case "use": return try use(request, caller: caller)

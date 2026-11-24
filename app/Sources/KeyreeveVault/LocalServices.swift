@@ -67,6 +67,17 @@ public struct LocalServices: Codable, Equatable, Sendable {
         try save(all, to: url)
     }
 
+    /// Moves approvals to the keys' new identifiers, after tidying renamed them.
+    public static func rename(_ renamed: [(String, String)], at url: URL) throws {
+        var all = load(from: url)
+        let before = all
+        for (old, new) in renamed {
+            if let address = all.approved.removeValue(forKey: old) { all.approved[new] = address }
+        }
+        guard all.approved != before.approved else { return }
+        try save(all, to: url)
+    }
+
     /// Names each key's local service in keys.toml and approves it, for several keys at once. Every key must be in
     /// keys.toml and every address local, or nothing is written. Call it only after the person's fingerprint.
     public static func apply(_ wanted: [String: String], keys: URL, approvals: URL) throws {
@@ -79,7 +90,10 @@ public struct LocalServices: Codable, Equatable, Sendable {
         }
         try KeyIndex.change(at: keys) { index in
             for (id, address) in clean {
-                guard index.isTaken(id) else { throw VaultError("no key is called \(id) in keys.toml") }
+                guard index.has(id) else {
+                    throw VaultError(index.isTaken(id)
+                        ? "\(id) is now called \(index.current(id)): use that" : "no key is called \(id) in keys.toml")
+                }
                 guard index.key(id)?.provider != KeyService.sshProvider,
                     !index.unoffered.contains(where: { $0.id == id && $0.provider == KeyService.sshProvider })
                 else { throw VaultError("\(id) is an SSH key, which cannot go to a local service") }

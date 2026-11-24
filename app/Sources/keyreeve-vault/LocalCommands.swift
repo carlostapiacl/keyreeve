@@ -43,7 +43,9 @@ func localServices() throws {
     }
     // Checked before the finger, so a typo costs no prompt.
     let index = try KeyIndex.load(from: keysFile)
-    for (id, _) in wanted where !index.isTaken(id) { fail("no key is called \(id). `keyreeve list` shows them") }
+    // An old name, from before tidying renamed the key, goes by the new one.
+    wanted = wanted.map { (key: index.current($0.key), address: $0.address) }
+    for (id, _) in wanted where !index.has(id) { fail("no key is called \(id). `keyreeve list` shows them") }
     _ = try EnclaveRecipient.confirm(reason: FingerPrompt.local(wanted))
     try LocalServices.apply(
         Dictionary(wanted.map { ($0.key, $0.address) }, uniquingKeysWith: { a, _ in a }), keys: keysFile,

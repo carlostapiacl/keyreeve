@@ -343,11 +343,16 @@ public final class KeyService: @unchecked Sendable {
     public func handle(_ request: Request, caller: AuditLog.Observed?) -> Response {
         // A key renamed by tidying is still asked for by its old identifier from scripts written before. From here
         // on it goes by the one it has now, so its permissions and its log are those of one key.
+        // Only to a key offered to agents: the new name of one that is not is not told to whoever knows the old.
         var request = request
-        if request.key != nil || request.keys != nil, let index = try? index() {
-            request.key = request.key.map(index.current)
-            request.keys = request.keys?.map(index.current)
+        let list = try? index()
+        let current = { (id: String) -> String in
+            guard let list else { return id }
+            let now = list.current(id)
+            return list.keys.contains { $0.id == now } ? now : id
         }
+        request.key = request.key.map(current)
+        request.keys = request.keys?.map(current)
         do {
             switch request.op {
             case "use": return try use(request, caller: caller)
@@ -365,7 +370,8 @@ public final class KeyService: @unchecked Sendable {
                 // Ending one permission that is done with does not cancel what others are opening.
                 if request.grant == nil { revocations += 1 }
                 let ends = { (grant: Grant) in
-                    (request.key == nil || grant.key == request.key) && (request.grant == nil || grant.id == request.grant)
+                    // A permission opened before its key was renamed still goes by the old name.
+                    (request.key == nil || current(grant.key) == request.key) && (request.grant == nil || grant.id == request.grant)
                 }
                 let closing = grants.filter(ends)
                 for grant in closing { end(grant) }

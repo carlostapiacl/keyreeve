@@ -283,11 +283,16 @@ final class Fixture: @unchecked Sendable {
     var markedAlways: Set<String> = []
     /// What the person's files say about a key marked "always" that did not open with no fingerprint.
     var whyAsked: String?
+    /// Changes the list after it is read, as tidying or the app would.
+    var adjust: (inout KeyIndex) -> Void = { _ in }
     lazy var log = AuditLog(url: folder.appendingPathComponent("audit.jsonl"))
     lazy var service: KeyService = {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return KeyService(
-            index: { try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"\(self.account)\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n\n[[key]]\nid = \"vps\"\nsource = \"vps-key\"\nprovider = \"ssh\"\naccount = \"root\"\n\n[[key]]\nid = \"not-ssh\"\nsource = \"n.txt\"\nprovider = \"ssh\"\n\n[[key]]\nid = \"pinned\"\nsource = \"vps-key\"\nprovider = \"ssh\"\nservers = \"SHA256:one SHA256:two\"\n") },
+            index: { var index = try KeyIndex.parse("[[key]]\nid = \"netlify\"\nsource = \"n.txt\"\nprovider = \"netlify\"\naccount = \"\(self.account)\"\nvariable = \"NETLIFY_AUTH_TOKEN\"\n\n[[key]]\nid = \"mail\"\nsource = \"m.env\"\nfield = \"API\"\nprovider = \"resend\"\n\n[[key]]\nid = \"loose\"\nsource = \"l.txt\"\n\n[[key]]\nid = \"vps\"\nsource = \"vps-key\"\nprovider = \"ssh\"\naccount = \"root\"\n\n[[key]]\nid = \"not-ssh\"\nsource = \"n.txt\"\nprovider = \"ssh\"\n\n[[key]]\nid = \"pinned\"\nsource = \"vps-key\"\nprovider = \"ssh\"\nservers = \"SHA256:one SHA256:two\"\n")
+                self.adjust(&index)
+                return index
+            },
             open: { source, prompt in
                 if self.refuse { throw VaultError("the fingerprint was not accepted") }
                 self.prompts.append(prompt)
@@ -320,6 +325,30 @@ final class Fixture: @unchecked Sendable {
 }
 
 struct KeyServiceTests {
+    @Test func aPermissionOpenedBeforeARenameEndsWithTheNewName() throws {
+        let f = Fixture()
+        #expect(f.use("netlify").ok)
+        f.adjust = { index in
+            index.keys[index.keys.firstIndex { $0.id == "netlify" }!].id = "netlify-main"
+            index.keys[index.keys.firstIndex { $0.id == "netlify-main" }!].more.formerly = ["netlify"]
+        }
+        _ = f.service.handle(.init(op: "revoke", key: "netlify-main"), caller: f.caller)
+        #expect(f.proxy.removed.count == 1)
+    }
+
+    @Test func theNewNameOfAKeyNotOfferedIsNotTold() throws {
+        let f = Fixture()
+        f.adjust = { index in
+            var hidden = index.keys.remove(at: index.keys.firstIndex { $0.id == "pinned" }!)
+            hidden.more.formerly = [hidden.id]
+            hidden.id = "secret-new-name"
+            index.unoffered = [hidden]
+        }
+        let answer = f.use("pinned", "/usr/bin/ssh")
+        #expect(!answer.ok)
+        #expect(!(answer.error ?? "").contains("secret-new-name"))
+    }
+
     @Test func testOneFingerCoversAKeyAndProgramUntilItEnds() throws {
         let f = Fixture()
         #expect(f.use("netlify").standIn == "STAND-IN")

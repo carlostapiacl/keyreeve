@@ -136,7 +136,8 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
   directions, including `p256tag` for the chip. Writing it here is what lets one fingerprint cover a batch and leaves no plugin to
   trust. Decrypting with the chip was never compared with age's plugin for it.
 - **An agent's program holds the key.** Over MCP an agent runs programs a person allowed, with a fingerprint each time. The output
-  hides the plain key and its base64, and a program can hide it another way, so the allowed list is the protection. The agent runs as
+  hides the key written plainly, in base64 (also URL-safe and unpadded), percent-encoded or JSON-escaped, and a program can hide it
+  another way, so the allowed list is the protection. The agent runs as
   you, so it can also edit `agents.toml` and then ask for your finger. Read the prompt: it starts with keyreeve's own words, the agent, the key and its account, the program and for how long, and
   ends with the agent's reason, cut to one short line and set apart in quotes. Anything in quotes is the agent talking. The reason
   in the request window is the agent's own text, set apart in quotes, and it can say anything.
@@ -146,6 +147,12 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **`get` hands out the real key.** It is for tools such as seisin that take a key from a command's output. It asks for your finger
   every time and never remembers a yes, because any program running as you could run it again. What it prints is in the hands of
   whoever ran it: seisin keeps it inside one role, masks it in the output and limits where the role can connect.
+- **An agent that tidies sees names and use.** With "Agents can sort my keys" on, `review_keys` gives an agent each offered key's
+  provider, project, variable and description, and how it was used: how often, the last day, which agents, which folders and which
+  hosts. Never a value. Keys not offered take the hourly fingerprint `list_keys` asks for. `propose_tidy` changes nothing on its own:
+  keyreeve refuses what breaks the naming rules, checks it again when you apply it, and you choose with one click and no fingerprint,
+  since only names and notes change. A description is the agent's text, and a misleading one is yours to catch on the card. A
+  renamed key keeps its old id as an alias, so an old id in a script reaches the same key, never another.
 - **An agent that sorts sees names.** With "Agents can sort my keys" on, `inventory` gives an agent every file's path, field
   names, tags, provider and state. Never a value, but names can say a lot. `propose` changes nothing on its own: it waits for you,
   and Apply may check keys, sending each one only to its provider's hosts, or to a server of yours you approved. `rotate_key` and
@@ -213,7 +220,11 @@ recovery key held by you. Each value carries its name inside, so a value cannot 
 - **A provider can hand the real key back.** One that stores what it receives and returns it later could, though the stand-in in a body stays a
   stand-in, and a reply is scrubbed, including across chunks. A provider that compresses a reply it was asked not to compress is not scrubbed.
 - **`--real` is the real key.** A fingerprint is asked each time, and from there it is in the command's hands. So is the MCP server's
-  `run_with_key` and `env`, which give the real value to the program they run. `run_with_key` gives the field keys.toml names for the key and no
+  `run_with_key` and `env`, which give the real value to the program they run. When their output is not a terminal, as when an agent
+  runs them, keyreeve stays as the command's parent and takes the key out of what it prints, in the same forms as above. That catches a
+  key printed by mistake, also one line of a key on several or one string of a JSON file. A command that writes it to a file, sends it
+  somewhere or encodes it another way is not stopped, and neither is output to a terminal, including a PTY an agent opens to run
+  commands in. `run_with_key` gives the field keys.toml names for the key and no
   other, so a program allowed for one key of a file never receives another key of the same file.
 - **An SSH permission lets anything running as you log in.** The key stays in `ssh-agent`, out of reach through the door, and no signature is made for
   anything but a login. While a permission lasts, any program of yours that finds the socket can use it to log in. The server check holds for a real

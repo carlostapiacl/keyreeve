@@ -164,6 +164,7 @@ public let spanish: [String: String] = [
     "archive": "archivar",
     "%@ proposes sorting your keys": "%@ propone ordenar tus claves",
     "%@ proposes tidying your keys": "%@ propone ordenar tus claves",
+    "%d keys tidied, %d left out because they changed since: %@": "%d claves ordenadas; %d quedaron fuera porque cambiaron desde la propuesta: %@",
     "name": "nombre",
     "description": "descripción",
     "project": "proyecto",

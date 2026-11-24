@@ -107,15 +107,19 @@ func useKeys(
         guard let found = sets.set(set) else { fail("no set is called \(set). Keyreeve shows them under Agents, in Key sets") }
         keys = found.keys
     }
+    let index = (try? KeyIndex.load(from: keysFile)) ?? KeyIndex()
+    // The service answers each key by the name it goes by now, so an old one, from before tidying renamed it, is
+    // matched by that name here too.
+    keys = keys.map { index.isOffered($0) ? index.current($0) : $0 }
     var variables: [String: String] = [:]
     for pair in named.flatMap({ $0.split(separator: ",").map(String.init) }) {
         let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
-        guard parts.count == 2, keys.contains(parts[0]) else {
+        let id = parts.first.map { index.isOffered($0) ? index.current($0) : $0 } ?? ""
+        guard parts.count == 2, keys.contains(id) else {
             fail("with several keys, --as takes id=VARIABLE for a key in the list, such as --as \(keys[0])=MY_TOKEN", code: 2)
         }
-        variables[parts[0]] = parts[1]
+        variables[id] = parts[1]
     }
-    let index = (try? KeyIndex.load(from: keysFile)) ?? KeyIndex()
     // Said before anything is asked, so no finger is spent on a command that cannot start.
     let unnamed = keys.filter { index.key($0) != nil && variables[$0] == nil && index.key($0)?.variable == nil }
     guard unnamed.isEmpty else {

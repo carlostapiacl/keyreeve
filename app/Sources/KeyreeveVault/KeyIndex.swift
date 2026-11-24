@@ -81,7 +81,15 @@ public struct KeyIndex: Equatable, Sendable {
 
     public func key(_ id: String) -> Key? { keys.first { $0.id == id } ?? keys.first { $0.more.formerly?.contains(id) == true } }
 
-    /// Whether an identifier is in use, by a key offered to agents or not, as its own or as one it had before.
+    /// Every key, offered to agents or not.
+    public var all: [Key] { keys + unoffered }
+
+    /// Whether a key goes by this identifier now, offered to agents or not. An old name from `formerly` is not one:
+    /// to find the key it was, `current`.
+    public func has(_ id: String) -> Bool { all.contains { $0.id == id } }
+
+    /// Whether an identifier is in use, by a key offered to agents or not, as its own or as one it had before. For
+    /// giving a new identifier; whether a key exists is `has`.
     public func isTaken(_ id: String) -> Bool {
         (keys + unoffered).contains { $0.id == id || $0.more.formerly?.contains(id) == true }
     }

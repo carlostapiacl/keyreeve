@@ -76,20 +76,10 @@ struct TidyProposalRow: View {
 
     /// What changes, in the person's language. Archiving is said by its own label above.
     static func summary(_ change: KeyTidy.Change, from before: KeyIndex.Key?) -> String {
-        var parts: [String] = []
-        func show(_ name: String, _ old: String?, _ new: String?) {
-            guard let new, new != old else { return }
-            parts.append("\(name): \(old ?? "—") → \(new)")
-        }
-        show(T("name"), before?.id ?? change.key, change.id)
-        show(T("description"), before?.description, change.description)
-        show(T("project"), before?.project, change.project)
-        show(T("provider"), before?.provider, change.provider)
-        show(T("variable"), before?.variable, change.variable)
-        show(T("account"), before?.account, change.account)
-        show(T("field"), before?.field, change.field)
-        let added = (change.tags ?? []).filter { !(before?.more.tags ?? []).contains($0) }
-        if !added.isEmpty { parts.append(T("tags") + " + " + added.joined(separator: ", ")) }
-        return parts.joined(separator: " · ")
+        change.differences(from: before).map { difference in
+            let name = T(difference.field == "id" ? "name" : difference.field)
+            return difference.field == "tags"
+                ? "\(name) \(difference.new)" : "\(name): \(difference.old ?? "—") → \(difference.new)"
+        }.joined(separator: " · ")
     }
 }

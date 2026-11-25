@@ -21,6 +21,6 @@ struct MemoTests {
         model.items = [CatalogItem(path: "only", lastResult: "works")]
         #expect(model.itemsVersion != before)
         #expect(model.summary.active == 1)
-        #expect(model.summary.count(.result("works")) == 1)
+        #expect(model.summary.count(.all) == 1)
     }
 }

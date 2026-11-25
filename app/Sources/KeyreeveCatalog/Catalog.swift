@@ -322,6 +322,8 @@ public enum Sidebar: Hashable, Sendable {
     case result(String)
     case level(String)
     case tag(String)
+    /// Tools: agents, the vault and its backup, rotation, the log and providers, one page with a part for each.
+    case tools
     case vault
     case agents
     /// Tools: rotations in progress or waiting on you, and the whole usage log.
@@ -338,7 +340,7 @@ public func filter(_ items: [CatalogItem], by selection: Sidebar, search: String
         case .attention: return item.attention != nil
         case .archive: return item.isArchived
         case .vault: return item.vault != .none && item.vault != .otherFolder && !item.isArchived
-        case .agents, .rotation, .log, .providers: return false
+        case .tools, .agents, .rotation, .log, .providers: return false
         case .checkable: return item.canCheck && !item.isArchived
         case .critical: return item.criticality >= 4 && !item.isArchived
         case .stale: return item.isOlderThanSuggested()
@@ -531,11 +533,8 @@ public func vaultCandidates(_ items: [CatalogItem]) -> [CatalogItem] {
 /// What the lists count, worked out once when the keys change instead of on every draw: with a few
 /// hundred keys, counting them for each chip and each row made a redraw take a noticeable moment.
 public struct CatalogSummary: Sendable {
-    /// The filters with a chip above the list.
-    public static let chips: [Sidebar] = [
-        .all, .unreviewed, .checkable, .critical, .result("rejected"), .result("works"), .result("no_answer"), .result(""), .stale,
-        .expiring, .archive,
-    ]
+    /// The filters with a chip above the list. The others are in a menu, with no count.
+    public static let chips: [Sidebar] = [.all, .unreviewed, .attention, .archive]
 
     public let active: Int
     public let toReview: Int

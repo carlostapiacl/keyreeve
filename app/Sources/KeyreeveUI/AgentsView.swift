@@ -27,9 +27,7 @@ struct AgentsView: View {
                 Text(T("An agent asks keyreeve to run a command with a key and says why. With a provider, the command gets a stand-in and the real key only travels to that provider. A program you allow by name gets the real key."))
                     .font(Theme.body).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                if !model.pendingRequests.isEmpty { requestsCard }
-                let news = ArrivalNews.make(items: model.items, index: model.keyIndex)
-                if !news.isEmpty { Card { ArrivalNotice(news: news, review: model.showNewKeysNow).padding(14) } }
+                // Requests and new keys are answered at Home, where whatever waits on the person is.
                 sortingCard
                 connectionCard
                 allowedCard
@@ -50,21 +48,6 @@ struct AgentsView: View {
             loadRuns()
             model.reloadRequests()
         }
-    }
-
-    /// Waiting on you, so it comes first and stands out.
-    private var requestsCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: "hand.raised.fill").foregroundStyle(Theme.accent)
-                    SectionTitle(T("Requests"))
-                }
-                PendingRequestsList(model: model)
-            }
-            .padding(14)
-        }
-        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent.opacity(0.6)))
     }
 
     /// Letting an agent sort the whole folder: it reads names and fields, proposes, and the person applies.
@@ -129,9 +112,19 @@ struct AgentsView: View {
                     Text(T("Only sealed keys can be given to agents. Seal one in Vault first."))
                         .font(Theme.caption).foregroundStyle(Theme.muted)
                 }
-                ForEach(model.agentKeys) { key in
+                // Only the keys agents can reach: the rest are yours alone, and each is opened from its own page.
+                let open = model.agentKeys.filter { model.agentPolicy.levels[$0.id] != nil || !(model.agentPolicy.commands[$0.id] ?? []).isEmpty }
+                ForEach(open) { key in
                     AgentKeyRow(key: key, model: model)
                     Divider()
+                }
+                let yours = model.agentKeys.count - open.count
+                if yours > 0 {
+                    Text(yours == 1
+                        ? T("1 more key is yours alone. To open it to agents, choose it in My keys.")
+                        : T("%d more keys are yours alone. To open one to agents, choose it in My keys.", yours))
+                        .font(Theme.caption).foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if model.sealedWithoutIdentifier > 0 {
                     HStack {

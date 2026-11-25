@@ -16,7 +16,7 @@ extension AppModel {
             return false
         }
         // A copy sealed from another folder, or one whose file changed since, is not the file shown.
-        return item.vault == .none || (item.vault == .sealed && keyIndex.keys(forSource: item.path).isEmpty)
+        return item.vault == .none || (item.vault == .sealed && offeredKeys(forSource: item.path).isEmpty)
     }
 
     /// Reads the requests and the pause. Cheap, so the menu bar can do it often.

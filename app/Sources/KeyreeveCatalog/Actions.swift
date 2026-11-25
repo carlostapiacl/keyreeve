@@ -123,7 +123,7 @@ public struct ProviderInfo: Codable, Identifiable, Hashable, Sendable {
     public var needsApproval: Bool { source == "local" && !approved && problem == nil }
 }
 
-public struct ProviderDirectory: Sendable {
+public struct ProviderDirectory: Equatable, Sendable {
     public let all: [ProviderInfo]
     public init(_ all: [ProviderInfo] = []) { self.all = all }
 

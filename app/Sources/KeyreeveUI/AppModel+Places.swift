@@ -33,7 +33,7 @@ extension AppModel {
     }
 
     /// The identifiers of a key's file: places belong to identifiers.
-    func keyIDs(of item: CatalogItem) -> [String] { keyIndex.allKeys(forSource: item.path).map(\.id) }
+    func keyIDs(of item: CatalogItem) -> [String] { allKeys(forSource: item.path).map(\.id) }
 
     public func knownPlaces(for item: CatalogItem) -> [PlaceBook.Place] {
         let ids = Set(keyIDs(of: item))

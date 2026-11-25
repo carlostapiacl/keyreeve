@@ -30,6 +30,8 @@ public struct MainView: View {
     @State private var pressedChip: Sidebar?
     @State private var chosenRows: Set<CatalogItem.ID>
     @State private var confirmCheck = false
+    /// The review of many keys, shown before it is done.
+    @State private var reviewing: AppModel.ReviewPlan?
     @State private var sorting = false
     /// The keys chosen when Sort was pressed, asked about even when sorted already. None means every unsorted key.
     @State private var sortingKeys: [CatalogItem]?
@@ -148,6 +150,22 @@ public struct MainView: View {
             .onChange(of: model.showNewKeys) { _, _ in go(.unreviewed) }
             .sheet(isPresented: $sorting) { SortSheet(model: model, keys: sortingKeys) }
             .confirmationDialog(
+                T("Mark these keys as reviewed?"),
+                isPresented: Binding(get: { reviewing != nil }, set: { if !$0 { reviewing = nil } }), titleVisibility: .visible
+            ) {
+                Button(T("Mark as reviewed")) {
+                    if let plan = reviewing { model.review(plan.new + plan.openFiles + plan.quieted) }
+                    reviewing = nil
+                    chosenRows = []
+                }
+                Button(T("Cancel"), role: .cancel) { reviewing = nil }
+            } message: {
+                if let plan = reviewing {
+                    Text(T("%d new keys are marked reviewed, not offered to agents. %d files others can read are closed to you alone. %d other notices (a refused check, an expiry) are hidden for 30 days.", plan.new.count, plan.openFiles.count, plan.quieted.count)
+                        + (plan.left.isEmpty ? "" : " " + T("%d with a new value waiting are left for you to look at.", plan.left.count)))
+                }
+            }
+            .confirmationDialog(
                 T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
             ) {
                 Button(T("Check %d keys", checkable.count)) { model.check(checkable) }
@@ -206,6 +224,14 @@ public struct MainView: View {
             if model.summary.count(.unreviewed) > 0 { filterChip(T("New, not reviewed"), .unreviewed) }
             if model.summary.toReview > 0 { filterChip(T("To review"), .attention) }
             filterChip(T("Archive"), .archive)
+            // What to review, cleared in one step: the chosen keys, or all those the filter shows.
+            if current == .attention || current == .unreviewed {
+                let plan = model.reviewPlan(for: scope)
+                if !plan.isEmpty {
+                    Button(T("Mark %d as reviewed", plan.new.count + plan.openFiles.count + plan.quieted.count)) { reviewing = plan }
+                        .buttonStyle(KRButtonStyle(primary: true))
+                }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -344,6 +370,27 @@ public struct MainView: View {
                     }
                 } label: {
                     Label(T("Show"), systemImage: "line.3.horizontal.decrease.circle")
+                }
+            }
+            if !chosenRows.isEmpty {
+                ToolbarItem(placement: .automatic) {
+                    // The chosen keys opened to agents in one step. "Always" is chosen on each key: it needs its finger.
+                    Menu {
+                        Button(T("Free")) { model.setAgentLevel(.free, forKeysOf: scope) }
+                        Button(T("Ask")) { model.setAgentLevel(.ask, forKeysOf: scope) }
+                        Button(T("Only me")) { model.setAgentLevel(nil, forKeysOf: scope) }
+                        Divider()
+                        Menu(T("Which agents")) {
+                            Button(T("Any agent")) { model.setAgents([], forKeysOf: scope) }
+                            Divider()
+                            ForEach(model.knownAgents, id: \.self) { name in
+                                Button(name) { model.setAgents([name], forKeysOf: scope) }
+                            }
+                        }
+                    } label: {
+                        Label(T("Agents (%d)", model.agentReachable(scope).count), systemImage: "cpu")
+                    }
+                    .help(T("Open the chosen keys to agents. Each goes through the proxy, so agents get a stand-in, never the key."))
                 }
             }
             ToolbarItem(placement: .automatic) {

@@ -127,7 +127,9 @@ extension AppModel {
     public func showNewKeysNow() { showNewKeys &+= 1 }
 
     /// The person looked at these keys. Nothing is offered by this: offering stays its own choice.
-    public func markReviewed(_ chosen: [CatalogItem]) {
+    public func markReviewed(_ chosen: [CatalogItem], reload: Bool = true) {
+        // A file others can read is closed as it is reviewed: looking at a key is when it gets fixed.
+        let closed = closePermissions(of: chosen)
         do {
             let (index, changed) = try KeyIndex.change(at: files.keyIndex) { index -> [(key: String, detail: String)] in
                 var changed: [(key: String, detail: String)] = []
@@ -146,7 +148,8 @@ extension AppModel {
         } catch {
             message = T("That identifier could not be saved")
         }
-        load()
+        guard reload else { return }
+        if closed > 0 { refresh() } else { load() }
     }
 
     /// Gives a key sealed with no record its identifier, not offered to agents.

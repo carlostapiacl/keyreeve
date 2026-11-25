@@ -111,10 +111,22 @@ extension KeyTidy {
 
     /// A long run of letters and digits with no space, or a URL carrying a token: what a value looks like.
     static func looksLikeValue(_ text: String) -> Bool {
-        if text.range(of: #"[A-Za-z0-9_\-+/=]{28,}"#, options: .regularExpression) != nil { return true }
+        // A long run is a value unless it reads as a name: a path or an environment variable, as a why cites them.
+        let runs = try! NSRegularExpression(pattern: #"[A-Za-z0-9_\-+/=]{28,}"#)
+        for match in runs.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            if let range = Range(match.range, in: text), !isName(String(text[range])) { return true }
+        }
         if text.range(of: #"(?i)(token|key|secret|password|pass)=[^&\s]{6,}"#, options: .regularExpression) != nil { return true }
         if text.range(of: #"://[^/\s:@]+:[^/\s@]+@"#, options: .regularExpression) != nil { return true }
         return false
+    }
+
+    /// A path such as mesa-de-ventas/cmd/mesa/ficha or a variable such as GOOGLE_APPLICATION_CREDENTIALS: one case only,
+    /// and words joined by dashes, underscores or slashes, none long enough to be a value on its own.
+    static func isName(_ run: String) -> Bool {
+        let oneCase = run.range(of: #"^[a-z0-9_/\-]+$"#, options: .regularExpression) != nil
+            || run.range(of: #"^[A-Z0-9_/\-]+$"#, options: .regularExpression) != nil
+        return oneCase && run.split(whereSeparator: { "-_/".contains($0) }).allSatisfy { $0.count < 20 }
     }
 
     /// The short starts the person already uses for a project's keys, such as lh- for liquidity-hunters: a start

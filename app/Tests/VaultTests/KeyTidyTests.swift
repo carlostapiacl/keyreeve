@@ -1,5 +1,5 @@
 import Foundation
-import KeyreeveVault
+@testable import KeyreeveVault
 import Testing
 
 struct KeyTidyTests {
@@ -259,5 +259,14 @@ struct KeyTidyTests {
         #expect(kept.requests.first?.kind == KeyTidy.requestKind)
         let saved = try JSONDecoder().decode([KeyTidy.Change].self, from: try #require(kept.saved))
         #expect(saved.map(\.key) == ["mykey"])
+    }
+
+    @Test func aWhyMayCiteAPathOrAVariableButNotAValue() {
+        #expect(!KeyTidy.looksLikeValue("read hansa/mesa-de-ventas/cmd/mesa/ficha.go: --as PID_HMAC_CLAVE"))
+        #expect(!KeyTidy.looksLikeValue("keyreeve use google --as GOOGLE_APPLICATION_CREDENTIALS"))
+        #expect(!KeyTidy.looksLikeValue("read 03-automatizacion-claude/herramientas/gsc"))
+        #expect(KeyTidy.looksLikeValue("token sk-proj-Ab3dEf9hIjKlMn0pQrStUvWxYz12"))
+        #expect(KeyTidy.looksLikeValue("a3f9c2e8b1d04f6a9e7c5b3d1f0a2c4e6b8d0f1a"))
+        #expect(KeyTidy.looksLikeValue("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"))
     }
 }

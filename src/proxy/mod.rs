@@ -228,7 +228,12 @@ pub struct Proxy {
     oauth: Mutex<HashMap<String, Arc<oauth::Held>>>,
     oauth_tokens: Mutex<HashMap<[u8; 32], std::sync::Weak<oauth::Tokens>>>,
     oauth_refused: oauth::Refused,
+    /// Told the key and the file's new text when a provider rotated a refresh token, so the vault seals it.
+    on_renewed: Mutex<Option<Renewed>>,
 }
+
+/// What hears that a provider rotated a key's refresh token: the key, then the file's text with the new one.
+pub type Renewed = Box<dyn Fn(&str, &Secret) + Send + Sync>;
 
 pub struct Trust {
     /// The CA alone, for tools that add to what they already trust.
@@ -262,6 +267,7 @@ impl Proxy {
                 oauth: Mutex::new(HashMap::new()),
                 oauth_tokens: Mutex::new(HashMap::new()),
                 oauth_refused: Mutex::new(HashSet::new()),
+                on_renewed: Mutex::new(None),
             }),
             receiver,
         ))
@@ -619,6 +625,22 @@ impl Proxy {
                 self.record(grant.as_deref(), host, &method, &target, 0, "no full reply");
                 Err(error)
             }
+        }
+    }
+
+    /// Who to tell when a provider rotates a refresh token. Without one, the new token lives only in memory.
+    pub fn on_renewed(&self, hear: Renewed) {
+        *self.on_renewed.lock().unwrap_or_else(|e| e.into_inner()) = Some(hear);
+    }
+
+    pub(super) fn renewed(&self, key: &str, text: &Secret) {
+        if let Some(hear) = self
+            .on_renewed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            hear(key, text);
         }
     }
 

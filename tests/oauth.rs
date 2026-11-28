@@ -691,3 +691,197 @@ print("apiclient", json.dumps(service.sites().list().execute()))
     // However many token requests the libraries made, the provider saw one exchange.
     assert_eq!(run.up.exchanges.load(Ordering::SeqCst), 1);
 }
+
+const ROTATED_1: &str = "1//0gCANARYrotatedOne000000000000000000000";
+const ROTATED_2: &str = "1//0gCANARYrotatedTwo000000000000000000000";
+
+fn rotating(access: &str, refresh: &str, expires_in: u64) -> (u16, String) {
+    (
+        200,
+        format!(
+            r#"{{"access_token":"{access}","expires_in":{expires_in},"token_type":"Bearer","refresh_token":"{refresh}"}}"#
+        ),
+    )
+}
+
+/// A provider that only takes a bearer, such as a remote MCP server, with its own token endpoint.
+fn bearer_recipe() -> Recipe {
+    Recipe::parse(&format!(
+        r#"
+schema: 1
+provider: mcp-test
+hosts: [{TOKEN_HOST}, {API_HOST}]
+auth: {{ type: oauth_token, grant: refresh_token, token_host: {TOKEN_HOST}, token_path: /token, gives: bearer }}
+verify: {{ method: GET, host: {API_HOST}, path: /me }}
+"#
+    ))
+    .unwrap()
+}
+
+/// A proxy with a bearer permission from `text`, and what it was told of rotated refresh tokens.
+struct Bearer {
+    run: Run,
+    stand_in: String,
+    renewed: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+fn bearer_run(answers: Vec<(u16, String)>) -> Bearer {
+    let run = run_with(answers, Duration::ZERO);
+    run.proxy.remove("g-1");
+    let renewed = Arc::new(Mutex::new(Vec::new()));
+    let heard = renewed.clone();
+    run.proxy.on_renewed(Box::new(move |key, text| {
+        heard
+            .lock()
+            .unwrap()
+            .push((key.to_owned(), text.expose().to_owned()));
+    }));
+    let grant = OAuthGrant::new(
+        "g-2",
+        "restoiq-mcp",
+        &bearer_recipe(),
+        &sealed(),
+        None,
+        u64::MAX,
+        Some(&run.folder),
+    )
+    .unwrap();
+    let stand_in = grant.stand_in();
+    run.proxy.add_oauth(grant);
+    Bearer {
+        run,
+        stand_in,
+        renewed,
+    }
+}
+
+fn call_api(run: &Run, bearer: &str) -> String {
+    let (body, code) = curl(
+        run,
+        &[
+            "-H",
+            &format!("Authorization: Bearer {bearer}"),
+            &format!("https://{API_HOST}/echo"),
+        ],
+    );
+    assert_eq!(code, "200", "{body}");
+    body
+}
+
+#[test]
+fn a_bearer_recipe_gives_the_command_a_token_and_no_file() {
+    let bearer = bearer_run(vec![token(ACCESS, 3600)]);
+    assert!(!bearer.stand_in.contains('/'), "a token, not a path");
+    assert_no_canary(&bearer.stand_in, "the stand-in");
+    let files: Vec<_> = std::fs::read_dir(&bearer.run.folder)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("oauth-g-2"))
+        .collect();
+    assert!(files.is_empty(), "{files:?}");
+    // No token request from the command: the first use makes the exchange, and the API gets the real token.
+    let body = call_api(&bearer.run, &bearer.stand_in);
+    // The API echoes the token it got, and the command sees a stand-in in its place.
+    assert!(
+        body.starts_with("you sent Bearer ") && !body.contains(ACCESS),
+        "{body}"
+    );
+    let seen = bearer.run.up.seen.lock().unwrap();
+    assert!(seen.last().unwrap().contains(&format!("Bearer {ACCESS}")));
+    assert_eq!(bearer.run.up.exchanges.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_rotated_refresh_token_goes_back_to_the_vault_and_is_used_from_then_on() {
+    let bearer = bearer_run(vec![
+        rotating(ACCESS, ROTATED_1, 1),
+        rotating(ACCESS, ROTATED_2, 3600),
+    ]);
+    call_api(&bearer.run, &bearer.stand_in);
+    {
+        let renewed = bearer.renewed.lock().unwrap();
+        assert_eq!(renewed.len(), 1);
+        let (key, text) = &renewed[0];
+        assert_eq!(key, "restoiq-mcp");
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["refresh_token"], ROTATED_1);
+        // The rest of the file stays as it was.
+        assert_eq!(json["client_id"], CLIENT_ID);
+        assert_eq!(json["client_secret"], SECRET);
+        assert_eq!(json["quota_project_id"], "my-project");
+    }
+    // The access token lasted a second: the next use renews it with the rotated refresh token, not the spent one.
+    thread::sleep(Duration::from_millis(2100));
+    call_api(&bearer.run, &bearer.stand_in);
+    assert_eq!(bearer.run.up.exchanges.load(Ordering::SeqCst), 2);
+    let seen = bearer.run.up.seen.lock().unwrap();
+    let exchanges: Vec<&String> = seen
+        .iter()
+        .filter(|text| text.contains("POST /token"))
+        .collect();
+    assert!(exchanges[0].contains(&format!("refresh_token={}", REFRESH.replace('/', "%2F"))));
+    assert!(exchanges[1].contains(&format!("refresh_token={}", ROTATED_1.replace('/', "%2F"))));
+    let renewed = bearer.renewed.lock().unwrap();
+    assert_eq!(renewed.len(), 2);
+    assert!(renewed[1].1.contains(ROTATED_2) && !renewed[1].1.contains(ROTATED_1));
+}
+
+#[test]
+fn a_second_permission_from_an_older_copy_shares_the_renewed_tokens() {
+    // A second command opens the key while the vault still holds the spent refresh token. Starting afresh
+    // from it would be refused, so it shares the tokens the first permission renewed.
+    let bearer = bearer_run(vec![rotating(ACCESS, ROTATED_1, 3600)]);
+    call_api(&bearer.run, &bearer.stand_in);
+    assert_eq!(bearer.renewed.lock().unwrap().len(), 1);
+    let renewed_text = bearer.renewed.lock().unwrap()[0].1.clone();
+    for (id, text) in [("g-3", sealed()), ("g-4", renewed_text)] {
+        let grant = OAuthGrant::new(
+            id,
+            "restoiq-mcp",
+            &bearer_recipe(),
+            &text,
+            None,
+            u64::MAX,
+            None,
+        )
+        .unwrap();
+        let stand_in = grant.stand_in();
+        bearer.run.proxy.add_oauth(grant);
+        call_api(&bearer.run, &stand_in);
+    }
+    assert_eq!(bearer.run.up.exchanges.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_new_authorization_of_the_same_key_starts_afresh() {
+    let bearer = bearer_run(vec![token(ACCESS, 3600)]);
+    call_api(&bearer.run, &bearer.stand_in);
+    let other = sealed().replace(REFRESH, "1//0gCANARYauthorizedAgain00000000000000");
+    let grant = OAuthGrant::new(
+        "g-5",
+        "restoiq-mcp",
+        &bearer_recipe(),
+        &other,
+        None,
+        u64::MAX,
+        None,
+    )
+    .unwrap();
+    let stand_in = grant.stand_in();
+    bearer.run.proxy.add_oauth(grant);
+    call_api(&bearer.run, &stand_in);
+    assert_eq!(bearer.run.up.exchanges.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn only_oauth_takes_gives() {
+    let wrong = Recipe::parse(
+        "schema: 1\nprovider: x\nhosts: [a.example]\nauth: { header: Authorization, gives: bearer }\nverify: { method: GET, path: /me }\n",
+    );
+    assert!(wrong.is_err());
+    let bad_value = Recipe::parse(&format!(
+        "schema: 1\nprovider: x\nhosts: [{TOKEN_HOST}]\nauth: {{ type: oauth_token, grant: refresh_token, token_host: {TOKEN_HOST}, token_path: /token, gives: cookie }}\nverify: {{ method: GET, path: /me }}\n"
+    ));
+    assert!(bad_value.is_err());
+}

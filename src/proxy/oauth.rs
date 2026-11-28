@@ -123,7 +123,7 @@ impl OAuthGrant {
             file: None,
             text: Secret::new(text),
         };
-        if let Some(folder) = folder {
+        if let Some(folder) = folder.filter(|_| !grant.gives_bearer()) {
             let path = folder.join(format!("oauth-{id}.json"));
             write_private(&path, &grant.stand_in_json(text))?;
             grant.file = Some(path);
@@ -131,13 +131,21 @@ impl OAuthGrant {
         Ok(grant)
     }
 
-    /// What the command gets in its variable: the path of the credentials file, or with no folder the
-    /// file's text.
+    /// What the command gets in its variable: a stand-in access token when its recipe gives a bearer,
+    /// otherwise the path of the credentials file, or with no folder the file's text.
     pub fn stand_in(&self) -> String {
+        if self.gives_bearer() {
+            return self.fake_access.expose().to_owned();
+        }
         match &self.file {
             Some(path) => path.display().to_string(),
             None => self.stand_in_json(self.text.expose()),
         }
+    }
+
+    /// A program that only sends `Authorization: Bearer` gets the stand-in access token itself, and no file.
+    fn gives_bearer(&self) -> bool {
+        self.recipe.auth.gives.as_deref() == Some("bearer")
     }
 
     pub fn token_uri(&self) -> String {
@@ -211,6 +219,13 @@ impl OAuthGrant {
     fn fingerprint(&self) -> [u8; 32] {
         Sha256::digest(self.credential.expose().as_bytes()).into()
     }
+
+    /// Which tokens this permission shares: one key's, for one client. A refresh token that rotates changes the
+    /// credential, and two permissions for the same key must still renew through one place, or the second
+    /// would spend a refresh token the first already replaced.
+    fn holder(&self) -> [u8; 32] {
+        Sha256::digest(format!("{}\n{}", self.key, self.client_id).as_bytes()).into()
+    }
 }
 
 fn write_private(path: &Path, text: &str) -> Result<(), String> {
@@ -276,6 +291,13 @@ pub(super) struct Tokens {
 
 struct TokenState {
     credential: Secret,
+    /// The sealed file's text as it is now, with the newest refresh token in it, when it is known.
+    text: Option<Secret>,
+    /// Every credential this one was before a provider rotated its refresh token, so an older copy of the
+    /// file, opened while the vault was catching up, is known to be this same credential.
+    past: HashSet<[u8; 32]>,
+    /// A file text with a refresh token the vault has not sealed yet.
+    renewed: Option<Secret>,
     access: Option<Secret>,
     until: u64,
     resting_until: u64,
@@ -283,10 +305,19 @@ struct TokenState {
 }
 
 impl Tokens {
+    #[cfg(test)]
     pub(super) fn new(credential: Secret, refused: bool) -> Self {
+        Self::holding(credential, None, refused)
+    }
+
+    /// With the sealed file's text, so a rotated refresh token can be handed back to the vault in it.
+    pub(super) fn holding(credential: Secret, text: Option<Secret>, refused: bool) -> Self {
         Self {
             state: Mutex::new(TokenState {
                 credential,
+                text,
+                past: HashSet::new(),
+                renewed: None,
                 access: None,
                 until: 0,
                 resting_until: 0,
@@ -323,11 +354,7 @@ impl Tokens {
                 let margin = (expires_in / 2).min(60);
                 state.until = now + expires_in - margin;
                 if let Some(refresh) = refresh {
-                    let parts: Vec<&str> = state.credential.expose().splitn(3, ':').collect();
-                    if parts.len() == 3 {
-                        state.credential =
-                            Secret::new(format!("{}:{}:{}", parts[0], parts[1], refresh.expose()));
-                    }
+                    state.rotate(&refresh);
                 }
                 state.access = Some(access.clone());
                 Ok(access)
@@ -342,6 +369,50 @@ impl Tokens {
                 Err(NoToken::Unavailable)
             }
         }
+    }
+}
+
+impl TokenState {
+    /// A provider that rotates refresh tokens has just made the old one useless. The new one is used from now
+    /// on, and goes back to the vault in the file's text, so a restart does not start from a spent one.
+    fn rotate(&mut self, refresh: &Secret) {
+        let parts: Vec<&str> = self.credential.expose().splitn(3, ':').collect();
+        if parts.len() != 3 || parts[2] == refresh.expose() {
+            return;
+        }
+        let old = parts[2].to_owned();
+        let rotated = Secret::new(format!("{}:{}:{}", parts[0], parts[1], refresh.expose()));
+        self.past
+            .insert(Sha256::digest(self.credential.expose().as_bytes()).into());
+        self.credential = rotated;
+        // Only where the old value stands once: anything else could not be put back without guessing.
+        if let Some(text) = &self.text {
+            if !old.is_empty() && text.expose().matches(old.as_str()).count() == 1 {
+                let text = Secret::new(text.expose().replace(old.as_str(), refresh.expose()));
+                self.renewed = Some(text.clone());
+                self.text = Some(text);
+            }
+        }
+    }
+}
+
+impl Tokens {
+    /// Whether this is the credential these tokens are for, as it is now or as it was before a rotation.
+    pub(super) fn knows(&self, credential: &Secret) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.credential.expose() == credential.expose()
+            || state.past.contains(&<[u8; 32]>::from(Sha256::digest(
+                credential.expose().as_bytes(),
+            )))
+    }
+
+    /// The file's text with a rotated refresh token, once, for the vault to seal.
+    pub(super) fn take_renewed(&self) -> Option<Secret> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .renewed
+            .take()
     }
 }
 
@@ -656,11 +727,21 @@ impl Proxy {
         let tokens = {
             let mut all = self.oauth_tokens.lock().unwrap_or_else(|e| e.into_inner());
             all.retain(|_, tokens| tokens.strong_count() > 0);
-            match all.get(&fingerprint).and_then(std::sync::Weak::upgrade) {
+            let holder = grant.holder();
+            match all
+                .get(&holder)
+                .and_then(std::sync::Weak::upgrade)
+                .filter(|tokens| tokens.knows(&grant.credential))
+            {
                 Some(tokens) => tokens,
+                // A credential these tokens never were is a new authorization: it starts afresh.
                 None => {
-                    let tokens = Arc::new(Tokens::new(grant.credential.clone(), refused));
-                    all.insert(fingerprint, Arc::downgrade(&tokens));
+                    let tokens = Arc::new(Tokens::holding(
+                        grant.credential.clone(),
+                        Some(grant.text.clone()),
+                        refused,
+                    ));
+                    all.insert(holder, Arc::downgrade(&tokens));
                     tokens
                 }
             }
@@ -689,8 +770,13 @@ impl Proxy {
 
     /// The real access token for this permission, from the cache or from one exchange.
     fn access_for(&self, held: &Held) -> Result<Secret, NoToken> {
-        held.tokens
-            .access(now(), |credential| self.exchange(held, credential))
+        let access = held
+            .tokens
+            .access(now(), |credential| self.exchange(held, credential));
+        if let Some(text) = held.tokens.take_renewed() {
+            self.renewed(&held.grant.key, &text);
+        }
+        access
     }
 
     fn exchange(&self, held: &Held, credential: &Secret) -> Exchanged {

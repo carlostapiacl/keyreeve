@@ -30,6 +30,7 @@ fn main() -> ExitCode {
         "rotate" => return commands::run_rotate(paths),
         "rotations" => return commands::run_rotations(paths),
         "proxy" => return commands::run_proxy(paths),
+        "oauth-login" => return commands::run_oauth_login(paths),
         "check-free" => return commands::run_check_free(paths),
         "action" => return commands::run_custom_action(paths),
         "recipes" => return commands::run_recipes(paths),

@@ -235,7 +235,7 @@ func serveKeys() throws {
         confirm: { prompt in (try? EnclaveRecipient.confirm(reason: prompt)) != nil },
         log: auditLog,
         paused: { AgentBridge.isPaused(home: home) },
-        revision: { source in (try? store.load())?.entries[source]?.revision },
+        revision: { source in (try? store.load())?.entries[source]?.permitRevision },
         openUnattended: { id, agent, source in
             // The person's own mark, read here and now: the key at "always", open to this agent, not paused.
             guard let policy = try? AgentPolicy.loadStrict(from: home.appendingPathComponent(AgentPolicy.fileName)), policy.level(of: id, at: Date()) == .always,
@@ -290,6 +290,17 @@ func serveKeys() throws {
     // The app shows a key its provider no longer accepts like one that expired, until it works again.
     proxy?.onAuthorization = { key, state in
         try? KeyStates.mark(id: key, active: state == "active", in: home.appendingPathComponent(KeyStates.fileName))
+    }
+    // A provider that rotates refresh tokens spent the old one, so the new one is sealed in its place at once: a
+    // restart starts from it. Sealing needs no fingerprint.
+    proxy?.onRenewed = { key, text in
+        guard let source = (try? KeyIndex.load(from: keysFile))?.key(key)?.source else { return }
+        do {
+            try store.update { vault in try vault.renew(name: source, value: Data(text.utf8)) }
+            try? auditLog.append(event: "renewed", key: key, detail: "the provider rotated its refresh token, sealed again")
+        } catch {
+            try? auditLog.append(event: "renewed", key: key, detail: "the provider rotated its refresh token, and it could not be sealed: \(error)")
+        }
     }
     // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
     // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an

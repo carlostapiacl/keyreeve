@@ -90,6 +90,34 @@ struct VaultTests {
         #expect(file.unattended == nil && file.entries["a/key.txt"]?.unattendedSealed == nil)
     }
 
+    /// A refresh token the provider rotated is sealed in place of the old one, which no longer works, so no old
+    /// copy piles up on every renewal. A key marked to need no fingerprint stays so.
+    @Test func aRenewedValueReplacesTheOldWithNoCopyKept() throws {
+        var file = try vault()
+        let unattended = SoftwareRecipient()
+        file.unattended = Age.TagRecipient(publicKey: unattended.publicKey).string
+        try file.sealUnattended(name: "a/key.txt", value: value)
+        for round in 1...3 { try file.renew(name: "a/key.txt", value: Data("RENEWED-\(round)".utf8)) }
+        #expect(try file.open(name: "a/key.txt", with: chip) == Data("RENEWED-3".utf8))
+        #expect(try file.openUnattended(name: "a/key.txt", with: unattended) == Data("RENEWED-3".utf8))
+        #expect(file.replaced?["a/key.txt"] == nil)
+        #expect(throws: VaultError.self) { try file.renew(name: "b/missing.txt", value: value) }
+    }
+
+    /// Permissions are tied to the sealing the person said yes to. Renewals keep it; a replaced value does not.
+    @Test func aRenewalKeepsThePermissionsAndAReplacementEndsThem() throws {
+        var file = try vault()
+        let approved = try #require(file.entries["a/key.txt"]).permitRevision
+        try file.renew(name: "a/key.txt", value: Data("RENEWED-1".utf8))
+        try file.renew(name: "a/key.txt", value: Data("RENEWED-2".utf8))
+        let renewed = try #require(file.entries["a/key.txt"])
+        #expect(renewed.revision != approved)
+        #expect(renewed.permitRevision == approved)
+        try file.replace(name: "a/key.txt", value: Data("ROTATED".utf8))
+        let replaced = try #require(file.entries["a/key.txt"])
+        #expect(replaced.permitRevision == replaced.revision && replaced.permitRevision != approved)
+    }
+
     /// A vault with copies that need no fingerprint is saved in a format older versions refuse, rather than read,
     /// drop those copies, and write back; without them it stays in the format every version reads.
     @Test func aVaultWithNoFingerprintCopiesIsOneOldVersionsRefuse() throws {

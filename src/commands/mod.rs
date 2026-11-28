@@ -3,6 +3,7 @@
 mod bring;
 mod catalog;
 mod checks;
+mod oauth_login;
 mod places;
 mod proxy;
 mod recipes;
@@ -15,6 +16,7 @@ use std::process::ExitCode;
 pub use bring::run_bring;
 pub use catalog::{run_catalog, run_inventory, run_migrate};
 pub use checks::{run_check_free, run_custom_action, run_identify, run_verify};
+pub use oauth_login::run_oauth_login;
 pub use places::{run_place, run_procedures};
 pub use proxy::run_proxy;
 pub use recipes::{run_recipe_files, run_recipes};
@@ -55,6 +57,10 @@ Usage:
       file text, and uses it in place of those files. The Mac app sends this.
   keyreeve action <provider> <action> [--key-file <file>] [--field <name>] [--key-stdin]
       Run a button of your own, from a provider file of yours. --key-stdin reads the key's file from stdin.
+  keyreeve oauth-login <https address> [--provider <name>]
+      Sign keyreeve in to a server that uses OAuth, such as a remote MCP server, in your browser. Writes the
+      credentials file to stdout, never to a terminal, for `keyreeve add` to seal, and a provider file for it,
+      with no value, to stderr.
   keyreeve check-free [--notify] [--spanish]
       Check the keys agents can use, which need no fingerprint. For a weekly schedule.
   keyreeve identify --plan <plan.yaml> --keys <folder> --details <file> [--sealed-stdin]

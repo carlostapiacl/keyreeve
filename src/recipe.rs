@@ -208,6 +208,11 @@ pub struct Auth {
     /// `oauth_token`: how this provider's client ids end, such as `.apps.googleusercontent.com`, so a pasted
     /// credential file is recognized as this provider's.
     pub client_id_ends: Option<String>,
+    /// `oauth_token`: what a command gets in its variable. `file` (the default) is the path of a credentials file
+    /// with stand-ins, for a client library that asks the token host itself. `bearer` is a stand-in access token
+    /// that never runs out, for a program that only sends `Authorization: Bearer`, such as an MCP client: the
+    /// proxy gets and renews the real one behind it.
+    pub gives: Option<String>,
     /// `command`: a program of yours does the check. Only for your own files.
     pub run: Option<CustomRun>,
     /// `command`: the same program also makes and revokes keys, so the key can rotate. For a service
@@ -217,6 +222,15 @@ pub struct Auth {
     /// `ssh`: the login name, and the text around the account in the server's greeting.
     pub user: Option<String>,
     pub reply_between: Option<Vec<String>>,
+}
+
+impl Auth {
+    /// Whether a check may trade this credential for a token on its own. Not for a bearer: those servers sign in
+    /// with OAuth 2.1, which rotates the refresh token on each renewal, and a check outside the proxy would spend it
+    /// with nowhere to keep the new one. Such a key is checked by using it, through the proxy.
+    pub fn checks_alone(&self) -> bool {
+        self.gives.as_deref() != Some("bearer")
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -274,6 +288,9 @@ impl Recipe {
         let url_key = self.auth.kind.as_deref() == Some("url");
         if self.schema != 1 {
             return fail(format!("unknown schema {}, expected 1", self.schema));
+        }
+        if self.auth.gives.is_some() && self.auth.kind.as_deref() != Some("oauth_token") {
+            return fail("only oauth_token takes gives".into());
         }
         let name_ok = !self.provider.is_empty()
             && self
@@ -357,6 +374,9 @@ impl Recipe {
                     return fail(
                         "oauth_token needs a token_host listed in hosts, and a token_path".into(),
                     );
+                }
+                if !matches!(self.auth.gives.as_deref(), None | Some("file" | "bearer")) {
+                    return fail("oauth_token gives file or bearer".into());
                 }
             }
             Some("ssh") => {

@@ -39,6 +39,9 @@ pub fn identify(
         if let Some(why) = crate::transport::missing_parts(recipe, key) {
             return Err(why);
         }
+        if !recipe.auth.checks_alone() {
+            return Err("this server rotates its refresh token, so the key is not traded for a token outside the proxy".into());
+        }
         let answer = exchange_token(recipe, key, transport).map_err(|e| e.to_string())?;
         if !(200..=299).contains(&answer.status) {
             return Err(format!("HTTP {}", answer.status));

@@ -158,7 +158,7 @@ func serveAgents() throws {
         saveProposal: { id, data in try AgentSorting.save(data, id: id, home: home) },
         revision: { id in
             guard let source = try? indexed(id).source else { return nil }
-            return (try? store.load())?.entries[source]?.revision
+            return (try? store.load())?.entries[source]?.permitRevision
         },
         checkWarnings: {
             let last = CheckHistory.latest(in: home.appendingPathComponent(CheckHistory.fileName()))

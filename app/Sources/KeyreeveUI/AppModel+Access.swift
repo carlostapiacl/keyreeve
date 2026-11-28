@@ -196,7 +196,7 @@ extension AppModel {
 
     public func setAccount(_ text: String, of id: String) {
         var index = keyIndex
-        guard index.isTaken(id) else { return }
+        guard index.has(id) else { return }
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         index.update(id: id) { $0.account = clean.isEmpty ? nil : clean }
         do {
@@ -268,7 +268,7 @@ extension AppModel {
     public func setOffered(_ offered: Bool, id: String) {
         var index = keyIndex
         if offered {
-            guard !index.isOffered(id), index.isTaken(id) else { return }
+            guard !index.isOffered(id), index.has(id) else { return }
             index.offer(id: id)
         } else {
             guard index.isOffered(id) else { return }
@@ -299,7 +299,7 @@ extension AppModel {
 
     /// A person giving a key a level, a program or a permission offers it to agents, if it was not.
     func offerIfWaiting(_ id: String) {
-        guard !keyIndex.isOffered(id), keyIndex.isTaken(id) else { return }
+        guard !keyIndex.isOffered(id), keyIndex.has(id) else { return }
         setOffered(true, id: id)
     }
 

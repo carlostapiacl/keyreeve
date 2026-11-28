@@ -132,6 +132,7 @@ Agents connect over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault 
 | `run_with_key` | runs a program you allowed, pinned by its SHA-256, with the real key in one variable |
 | `rotate_key` | asks you to rotate a sealed key |
 | `inventory`, `propose` | read the folder without values and propose changes, only while you allow it |
+| `review_keys`, `propose_tidy` | see what each key lacks and how it is used, and propose tidying names, projects and notes, which you approve with one click |
 | `list_places`, `propose_places` | see where offered keys live and propose new places, which you approve with your fingerprint |
 | `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
 | `propose_bring` | proposes which keys found to seal; you review it in Bring in and seal with one fingerprint |

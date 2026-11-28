@@ -1,29 +1,15 @@
 import Foundation
 
-extension KeyTidy {
-    /// What tidying reads, gathered once per call.
-    public struct Context: Sendable {
-        public var index: KeyIndex
-        public var entries: [AuditLog.Entry]
-        public var digests: ValueDigests
-        public init(index: KeyIndex, entries: [AuditLog.Entry], digests: ValueDigests) {
-            self.index = index
-            self.entries = entries
-            self.digests = digests
-        }
-    }
-
-    public static let requestKind = "tidy"
-}
-
 extension AgentBridge {
     static let tidyOff = "tidying is not set up in this Keyreeve"
 
     /// The keys an agent may name here: those offered to it, and with `all` (after the person's finger, once an
     /// hour) every key.
     func tidyVisible(_ context: KeyTidy.Context, all: Bool, reason: String?) throws -> [KeyIndex.Key] {
+        // Behind the same switch as sorting files: tidying shows folders and hosts that keys were used from and to.
+        guard inventory() != nil else { throw VaultError(Self.sortingOff) }
         if all { try openEveryName(reason: reason) }
-        let keys = all ? context.index.keys + context.index.unoffered : context.index.keys
+        let keys = all ? context.index.all : context.index.keys
         return keys.filter { !$0.more.archived }
     }
 
@@ -34,7 +20,10 @@ extension AgentBridge {
         let visible = try tidyVisible(context, all: all, reason: arguments["reason"] as? String)
         let usage = KeyTidy.usage(context.entries, index: context.index)
         let twins = KeyTidy.twins(context.index, digests: context.digests)
-        let projects = KeyTidy.knownProjects(context.index)
+        // Projects and their short starts from the keys this agent may see, so a key not offered says nothing.
+        var scope = context.index
+        if !all { scope.unoffered = [] }
+        let projects = KeyTidy.knownProjects(scope)
         let names = Set(visible.map(\.id))
         let since = context.entries.map(\.at).min()
         let onlyGaps = (arguments["only"] as? String ?? "gaps") != "all"
@@ -53,7 +42,7 @@ extension AgentBridge {
         let limit = min(max(arguments["limit"] as? Int ?? 60, 1), 120)
         let page = rows.dropFirst(offset).prefix(limit)
         log("listed", "every key", "review: \(page.count) of \(rows.count)", arguments["reason"] as? String)
-        let prefixes = KeyTidy.projectPrefixes(context.index)
+        let prefixes = KeyTidy.projectPrefixes(scope)
         let named = projects.sorted().map { project in
             prefixes[project].map { "\(project) (or " + $0.sorted().map { $0 + "-" }.joined(separator: ", ") + ")" } ?? project
         }
@@ -72,10 +61,11 @@ extension AgentBridge {
         guard let reason = arguments["reason"] as? String, !reason.isEmpty else { throw VaultError("this needs reason and changes") }
         let all = arguments["all"] as? Bool == true
         let visible = Set(try tidyVisible(context, all: all, reason: reason).map(\.id))
-        let providers = Set(offered()).union((context.index.keys + context.index.unoffered).compactMap(\.provider))
+        let providers = Set(offered()).union((context.index.all).compactMap(\.provider))
         let usage = KeyTidy.usage(context.entries, index: context.index)
         let checked = KeyTidy.check(
-            arguments["changes"], index: context.index, providers: providers, visible: visible, usage: usage, now: now())
+            arguments["changes"], index: context.index, providers: providers, visible: visible, usage: usage,
+            logSince: context.entries.map(\.at).min(), now: now())
         let refused = checked.refused.isEmpty ? "" : " Left out: " + checked.refused.prefix(40).joined(separator: "; ") + "."
         guard !checked.accepted.isEmpty else { throw VaultError("nothing to propose." + refused) }
         // One proposal at a time from each agent, so the person is not asked twice about the same keys.

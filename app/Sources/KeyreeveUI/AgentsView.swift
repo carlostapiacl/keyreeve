@@ -60,22 +60,7 @@ struct AgentsView: View {
                     Image(systemName: "hand.raised.fill").foregroundStyle(Theme.accent)
                     SectionTitle(T("Requests"))
                 }
-                ForEach(Array(model.pendingRequests.enumerated()), id: \.element.id) { index, request in
-                    if index > 0 { Divider() }
-                    if request.kind == "places" {
-                        PlacesProposalRow(request: request, model: model)
-                    } else if request.kind == "sort" {
-                        SortProposalRow(request: request, model: model)
-                    } else if request.kind == KeyTidy.requestKind {
-                        TidyProposalRow(request: request, model: model)
-                    } else if request.kind == AgentBringing.kind {
-                        BringProposalRow(request: request, model: model)
-                    } else if request.isRotation {
-                        RotationRequestRow(request: request, model: model)
-                    } else {
-                        RequestRow(request: request, model: model)
-                    }
-                }
+                PendingRequestsList(model: model)
             }
             .padding(14)
         }
@@ -698,6 +683,30 @@ extension AgentPolicy.Level {
         case .ask: return T("Ask")
         case .free: return T("Free")
         case .always: return T("Always, no fingerprint")
+        }
+    }
+}
+
+/// Every request waiting on the person, each answered where it shows: on Home and under Agents.
+struct PendingRequestsList: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        ForEach(Array(model.pendingRequests.enumerated()), id: \.element.id) { index, request in
+            if index > 0 { Divider() }
+            if request.kind == "places" {
+                PlacesProposalRow(request: request, model: model)
+            } else if request.kind == "sort" {
+                SortProposalRow(request: request, model: model)
+            } else if request.kind == KeyTidy.requestKind {
+                TidyProposalRow(request: request, model: model)
+            } else if request.kind == AgentBringing.kind {
+                BringProposalRow(request: request, model: model)
+            } else if request.isRotation {
+                RotationRequestRow(request: request, model: model)
+            } else {
+                RequestRow(request: request, model: model)
+            }
         }
     }
 }

@@ -19,8 +19,10 @@ public struct OutputRedactor: Sendable {
         var seen = Set<Data>()
         var found: [Data] = []
         for secret in secrets {
-            for form in Self.forms(of: secret) where form.count >= Self.shortest && seen.insert(form).inserted {
-                found.append(form)
+            for part in [secret] + Self.parts(of: secret) {
+                for form in Self.forms(of: part) where form.count >= Self.shortest && seen.insert(form).inserted {
+                    found.append(form)
+                }
             }
         }
         // The longest first, so a value that holds another is taken out whole.
@@ -46,10 +48,12 @@ public struct OutputRedactor: Sendable {
             for allowed in [CharacterSet.alphanumerics, unreserved] {
                 if let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: allowed) { plain.append(Data(encoded.utf8)) }
             }
-            // As JSON writes it, with its slashes and quotes escaped.
+            // As JSON writes it: quotes, backslashes and line breaks escaped, and slashes with or without.
             let escaped = trimmed.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-                .replacingOccurrences(of: "/", with: "\\/")
+                .replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\r", with: "\\r")
+                .replacingOccurrences(of: "\t", with: "\\t")
             plain.append(Data(escaped.utf8))
+            plain.append(Data(escaped.replacingOccurrences(of: "/", with: "\\/").utf8))
         }
         var all = plain
         for each in plain {
@@ -61,6 +65,37 @@ public struct OutputRedactor: Sendable {
         }
         return all
     }
+
+    /// Parts long enough to give a value away printed on their own: each line of a value on several (the body of a
+    /// PEM, or one variable of an .env), and each string of a JSON file (the private key of a service account), as
+    /// a program prints one field of it. Headers such as `-----BEGIN` and plain addresses are left as they are.
+    public static func parts(of secret: Data) -> [Data] {
+        guard let text = String(data: secret, encoding: .utf8) else { return [] }
+        var found: [String] = []
+        if text.contains("\n") {
+            for line in text.split(whereSeparator: \.isNewline) {
+                found.append(line.trimmingCharacters(in: .whitespaces))
+                // NAME=value, as an .env holds it: the value is what a program prints.
+                if let equals = line.firstIndex(of: "=") {
+                    found.append(line[line.index(after: equals)...].trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")))
+                }
+            }
+        }
+        if let json = try? JSONSerialization.jsonObject(with: secret) {
+            func strings(_ any: Any) {
+                if let text = any as? String { found.append(text) }
+                if let list = any as? [Any] { list.forEach(strings) }
+                if let object = any as? [String: Any] { object.values.forEach(strings) }
+            }
+            strings(json)
+        }
+        let whole = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return found.filter { $0.count >= partShortest && $0 != whole && !$0.hasPrefix("-----") && !$0.hasPrefix("http") }
+            .map { Data($0.utf8) }
+    }
+
+    /// A part shorter than this is left alone: field names and words would black out with it.
+    public static let partShortest = 16
 
     /// What can be passed on now. A few bytes stay behind, in case a value starts at the end of this read.
     public mutating func feed(_ chunk: Data) -> Data {

@@ -97,10 +97,15 @@ struct KeyTidyTests {
         try PlaceBook.update(at: PlaceBook.file(home: home)) {
             $0.places.append(PlaceBook.Place(id: "p-1", key: "mykey", procedure: "ssh-env", params: [:], label: "VPS1"))
         }
-        let done = try KeyTidy.apply(
+        try KeySets.update(at: home.appendingPathComponent(KeySets.fileName)) {
+            $0.sets.append(KeySets.Set(name: "hz", keys: ["mykey", "resend-lh"]))
+            $0.standing.append(KeySets.Standing(keys: ["mykey"], program: "/usr/bin/env", hash: "h", folder: "/tmp", since: Date()))
+        }
+        try LocalServices.approve(key: "mykey", address: "127.0.0.1:8790", at: home.appendingPathComponent(LocalServices.fileName))
+        let result = try KeyTidy.apply(
             [KeyTidy.Change(key: "mykey", id: "resend-hz", description: "Resend de HZ", why: "read hz/.env")],
             home: home, stamp: "t1")
-        #expect(done.count == 1)
+        #expect(result.done.count == 1 && result.skipped.isEmpty)
         let policy = AgentPolicy.load(from: home.appendingPathComponent(AgentPolicy.fileName))
         #expect(policy.levels["resend-hz"] == .always && policy.levels["mykey"] == nil)
         #expect(policy.agents["resend-hz"] == ["mesa"])
@@ -109,6 +114,105 @@ struct KeyTidyTests {
         #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent("agents.toml.antes-tidy-t1").path))
         let index = try KeyIndex.load(from: home.appendingPathComponent(KeyIndex.fileName))
         #expect(index.key("mykey")?.description == "Resend de HZ")
+        // A standing permission, a set and a local service follow the key, so nothing asks again for a finger.
+        let sets = KeySets.load(from: home.appendingPathComponent(KeySets.fileName))
+        #expect(sets.set("hz")?.keys == ["resend-hz", "resend-lh"])
+        #expect(sets.standing.first?.keys == ["resend-hz"])
+        #expect(LocalServices.load(from: home.appendingPathComponent(LocalServices.fileName)).approved == ["resend-hz": "127.0.0.1:8790"])
+    }
+
+    @Test func aSecondApplyInTheSameSecondKeepsTheFirstCopy() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("tidy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let keys = home.appendingPathComponent(KeyIndex.fileName)
+        try PrivateFile.write(Data(Self.index().toml.utf8), to: keys)
+        let first = try Data(contentsOf: keys)
+        try KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")], home: home, stamp: "t1")
+        try KeyTidy.apply([KeyTidy.Change(key: "resend-hz", description: "HZ", why: "read hz/.env")], home: home, stamp: "t1")
+        #expect(try Data(contentsOf: home.appendingPathComponent("keys.toml.antes-tidy-t1")) == first)
+    }
+
+    @Test func aKeyIsNotArchivedWhenTheLogIsTooShortToTell() {
+        let now = Date()
+        let short = KeyTidy.check(
+            [["key": "mykey", "archive": true, "why": "nothing in the log uses it"]], index: Self.index(),
+            providers: ["resend"], visible: Self.visible, usage: [:], logSince: now.addingTimeInterval(-3 * 86400), now: now)
+        #expect(short.accepted.isEmpty)
+        #expect(short.refused.first?.contains("under 30 days") == true)
+        let long = KeyTidy.check(
+            [["key": "mykey", "archive": true, "why": "nothing in the log uses it"]], index: Self.index(),
+            providers: ["resend"], visible: Self.visible, usage: [:], logSince: now.addingTimeInterval(-40 * 86400), now: now)
+        #expect(long.accepted.count == 1)
+    }
+
+    @Test func aKeyMayTakeBackAnOldNameOfItsOwn() {
+        var index = Self.index()
+        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")], to: &index)
+        let back = KeyTidy.apply([KeyTidy.Change(key: "resend-hz", id: "mykey", why: "the old name was right")], to: &index)
+        #expect(back.skipped.isEmpty)
+        #expect(index.has("mykey") && index.key("mykey")?.more.formerly == ["resend-hz"])
+    }
+
+    @Test func anOldNameIsTakenButIsNoKey() {
+        var index = Self.index()
+        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")], to: &index)
+        #expect(index.isTaken("mykey"))
+        #expect(!index.has("mykey") && index.has("resend-hz"))
+    }
+
+    @Test func aReviewWithoutAllNamesNoProjectOfAKeyNotOffered() throws {
+        var index = Self.index()
+        for name in ["zz-a", "zz-b", "zz-c"] {
+            index.unoffered.append(KeyIndex.Key(id: name, source: "\(name).txt", project: "secret-project"))
+        }
+        var bridge = AgentBridge(
+            policy: { AgentPolicy() }, names: { [] }, open: { _, _ in Data() },
+            run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            describe: { index.agentDescriptions }, inventory: { Data("[]".utf8) })
+        bridge.tidyContext = { KeyTidy.Context(index: index, entries: [], digests: ValueDigests()) }
+        let review = try AgentTests().call(bridge, "review_keys", ["only": "all"])
+        #expect(!review.text.contains("secret-project") && !review.text.contains("zz-"))
+    }
+
+    @Test func whatChangedSinceTheProposalIsLeftOutAndSaidSo() {
+        var index = Self.index()
+        // Since the proposal, another key took the new id, and the key to archive was used.
+        index.keys.append(KeyIndex.Key(id: "resend-hz", source: "other.txt", provider: "resend"))
+        var use = KeyTidy.Use()
+        use.last = Date().addingTimeInterval(-600)
+        let result = KeyTidy.apply([
+            KeyTidy.Change(key: "mykey", id: "resend-hz", description: "Resend de HZ", why: "read hz/.env"),
+            KeyTidy.Change(key: "restoiq-jwt", archive: true, why: "looked dead at proposal time"),
+            KeyTidy.Change(key: "gone-key", description: "x", why: "was there at proposal time"),
+        ], to: &index, usage: ["restoiq-jwt": use])
+        #expect(result.done.isEmpty)
+        #expect(result.skipped.count == 3)
+        #expect(result.skipped[0].contains("was taken since"))
+        #expect(result.skipped[1].contains("not archived"))
+        #expect(result.skipped[2].contains("gone"))
+        // Nothing half applied: the description that came with the refused rename is not written either.
+        #expect(index.key("mykey")?.description == nil)
+        #expect(index.key("restoiq-jwt")?.more.archived == false)
+    }
+
+    @Test func theDifferencesAreWhatTheCardAndTheLogSay() {
+        let before = KeyIndex.Key(id: "mykey", source: "m.txt", provider: "resend")
+        let change = KeyTidy.Change(key: "mykey", id: "resend-hz", provider: "resend", tags: ["hz"], archive: true, why: "read hz/.env")
+        #expect(change.differences(from: before).map(\.field) == ["id", "tags"])
+        #expect(change.summary(from: before) == "id: mykey → resend-hz; tags + hz; archive")
+    }
+
+    @Test func tidyingWaitsForTheSwitchThatLetsAgentsSort() throws {
+        let index = Self.index()
+        var bridge = AgentBridge(
+            policy: { AgentPolicy() }, names: { [] }, open: { _, _ in Data() },
+            run: { _, _, _ in AgentBridge.Output(status: 0, text: "") }, record: { _, _, _ in },
+            describe: { index.agentDescriptions })
+        bridge.tidyContext = { KeyTidy.Context(index: index, entries: [], digests: ValueDigests()) }
+        let review = try AgentTests().call(bridge, "review_keys", [:])
+        #expect(review.error)
+        #expect(review.text.contains("Agents can sort my keys"))
     }
 
     @Test func theServiceTakesAnOldNameAsTheNewOne() throws {
@@ -133,7 +237,8 @@ struct KeyTidyTests {
             describe: { index.agentDescriptions },
             offered: { ["resend"] },
             requests: { kept.requests },
-            addRequest: { kept.requests.append($0) })
+            addRequest: { kept.requests.append($0) },
+            inventory: { Data("[]".utf8) })
         bridge.tidyContext = { KeyTidy.Context(index: index, entries: [], digests: ValueDigests()) }
         bridge.saveTidy = { _, data in kept.saved = data }
         let review = try AgentTests().call(bridge, "review_keys", [:])

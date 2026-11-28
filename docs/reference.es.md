@@ -321,9 +321,13 @@ variables, simplemente no logra autenticarse.
 
 `--real`, `run` y `env` tachan la clave real en lo que imprime el comando. Cuando stdout o stderr no es una terminal, como cuando lo
 corre un agente, keyreeve queda como su padre y saca la clave de esa salida, escrita tal cual, en base64 (también la variante para URL)
-o codificada para URL, aunque venga partida en dos lecturas. Una terminal recibe la salida tal cual, así que un editor o una consola de
-base de datos siguen funcionando. Esto atrapa un comando que imprime la clave por error, no uno que la esconde a propósito: lo que
-protege la clave es el reemplazo.
+o codificada para URL, o escapada como la escribe JSON, aunque venga partida en dos lecturas. Una clave de varias líneas (una PEM, un
+.env) también se tacha línea por línea, y un archivo JSON texto por texto, así que imprimir un campo del archivo de una cuenta de
+servicio también se atrapa. Una terminal recibe la salida tal cual, así que un editor o una consola de base de datos siguen
+funcionando; un agente que corre comandos en una terminal propia (un PTY) también la recibe tal cual. El comando conserva sus señales:
+Ctrl-C, cerrar la terminal o un pipe que se cierra (`| head`) lo detienen como sin keyreeve. Un programa que el comando deja corriendo
+de fondo puede seguir imprimiendo dos segundos después de que termine; pasado eso, su salida ya no se entrega. Esto atrapa un comando
+que imprime la clave por error, no uno que la esconde a propósito: lo que protege la clave es el reemplazo.
 
 Cada decisión queda en `~/.keyreeve/audit.jsonl`: qué clave, qué permiso, el proceso y sus padres según los informa el sistema, y
 aparte de eso lo que quien llama dice de sí mismo. No guarda ningún valor ni argumentos. Cada línea lleva el hash de la anterior, así
@@ -494,7 +498,8 @@ después de que confirmas y prueba la clave ahí.
 
 ### Cuando un agente ordena tus claves
 
-Nadie quiere ordenar sus propias claves, así que lo hace un agente y tú apruebas. `review_keys` lista cada clave por id con su
+Nadie quiere ordenar sus propias claves, así que lo hace un agente y tú apruebas, mientras **Los agentes pueden ordenar mis claves**
+esté encendido en **Agentes**. `review_keys` lista cada clave por id con su
 proveedor, proyecto, variable y descripción, cómo se usó últimamente (cuántas veces, el último día, qué agentes, desde qué carpetas,
 hacia qué hosts) y lo que le falta: sin proyecto o variable, un id que no sigue la convención de nombres, el mismo valor que otra
 clave (comparado por huella) o sin uso. Nunca un valor. Empieza con la convención y los proyectos que ya nombran tus claves, incluidos
@@ -505,10 +510,15 @@ archivar, cada uno con cómo lo sabe el agente. keyreeve los revisa antes de que
 con el motivo, para que el agente los corrija: un id empieza con su proveedor (`resend-lh`) o, si es un secreto de tu propio software,
 con su proyecto (`restoiq-erp-jwt-secret`); una descripción no lleva ningún valor; una clave usada en los últimos 30 días no se
 archiva. El resto espera en **Agentes** como una tarjeta con cada cambio, lo que reemplaza y por qué, todos elegidos de entrada.
-**Aplicar** es un clic sin huella, porque solo cambian nombres y notas. Antes se copian keys.toml y agents.toml al lado.
+**Aplicar** es un clic sin huella, porque solo cambian nombres y notas. Antes se copian keys.toml y agents.toml al lado, y cada
+cambio se revisa de nuevo contra la lista y el registro de ese momento: si la clave ya no está, si su id nuevo se ocupó entretanto o si
+la clave que se iba a archivar se usó después de la propuesta, el cambio queda fuera entero y la app dice cuál. Una clave se archiva
+por no usarse solo si el registro leído alcanza 30 días hacia atrás; si un registro muy activo cubre menos, se dice y la clave se queda.
 
 Una clave renombrada guarda su id anterior en `formerly`, así que un script, un conjunto o un permiso escrito con él sigue
-funcionando: keyreeve toma el id anterior como el nuevo donde sea que se pida una clave, y mueve sus permisos y lugares al id nuevo.
+funcionando: keyreeve toma el id anterior como el nuevo donde sea que se pida una clave, y mueve al id nuevo sus permisos, lugares,
+conjuntos, permisos "siempre, para este programa en esta carpeta" y servicio local. Un permiso abierto al momento del cambio se cierra
+con cualquiera de los dos nombres. El id anterior de una clave que no se ofrece a los agentes no lleva al nuevo, así que no lo revela.
 
 ### Cuando un agente trae tus claves
 

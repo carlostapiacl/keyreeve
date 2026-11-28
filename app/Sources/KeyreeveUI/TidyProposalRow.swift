@@ -44,8 +44,11 @@ struct TidyProposalRow: View {
                                         Text(T("new project")).font(Theme.caption).foregroundStyle(Theme.warn)
                                     }
                                 }
-                                Text(change.summary(from: model.tidyKey(change.key)))
-                                    .font(Theme.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                                let summary = Self.summary(change, from: model.tidyKey(change.key))
+                                if !summary.isEmpty {
+                                    Text(summary)
+                                        .font(Theme.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+                                }
                                 Text(change.why).font(Theme.caption).foregroundStyle(Theme.faint).lineLimit(2)
                             }
                         }
@@ -69,5 +72,14 @@ struct TidyProposalRow: View {
             changes = model.tidyChanges(for: request)
             chosen = Set(changes.map(\.key))
         }
+    }
+
+    /// What changes, in the person's language. Archiving is said by its own label above.
+    static func summary(_ change: KeyTidy.Change, from before: KeyIndex.Key?) -> String {
+        change.differences(from: before).map { difference in
+            let name = T(difference.field == "id" ? "name" : difference.field)
+            return difference.field == "tags"
+                ? "\(name) \(difference.new)" : "\(name): \(difference.old ?? "—") → \(difference.new)"
+        }.joined(separator: " · ")
     }
 }

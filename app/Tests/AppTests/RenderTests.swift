@@ -225,3 +225,32 @@ struct RenderTests {
                 named: "agents-terminal-\(code)", appearance: .darkAqua)
     }
 }
+
+extension RenderTests {
+    /// Home answers what waits and shows what is in use, with who used it.
+    @Test func testHomeShowsWhatWaitsAndWhatIsInUse() throws {
+        let model = model()
+        let id = "r-render-tidy"
+        let changes = [
+            KeyTidy.Change(key: "mykey", id: "resend-shop", project: "shop", variable: "RESEND_API_KEY", why: "read shop/.env: names RESEND_API_KEY"),
+            KeyTidy.Change(key: "old-mail", archive: true, why: "its check failed with 401 on 2026-11-20"),
+        ]
+        try AgentSorting.save(JSONEncoder().encode(changes), id: id, home: model.files.directory)
+        model.pendingRequests = [AccessRequests.Entry(
+            id: id, at: Date(), event: .asked, agent: "claude", provider: "keyreeve", reason: "name keys by provider and project",
+            key: nil, kind: KeyTidy.requestKind)]
+        var use = KeyTidy.Use()
+        use.count = 12
+        use.last = Date().addingTimeInterval(-3600)
+        use.agents = ["claude", "motor-comercial"]
+        use.hosts = ["api.resend.com"]
+        model.inUse = [
+            KeyInUse(id: "resend-shop", source: "mail-token.txt", project: "shop", provider: "resend", description: "Mail of the shop", use: use),
+            KeyInUse(id: "hosting-token", source: "hosting-readonly.txt", project: "infra", provider: "hetzner", description: "Read-only hosting", use: use),
+        ]
+        let home = HomeView(stats: model.summary.stats, activity: model.activity, model: model, checkAll: {}, open: { _, _ in })
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            try render(home, named: "home-tidy-\(appearance == .aqua ? "light" : "dark")", appearance: appearance)
+        }
+    }
+}

@@ -310,8 +310,13 @@ simply fails to authenticate.
 
 `--real`, `run` and `env` hide the real value in what the command prints. When stdout or stderr is not a terminal, as when an agent
 runs the command, keyreeve stays as its parent and takes the key out of that output, written plainly, in base64 (also URL-safe) or
-percent-encoded, even split across two reads. A terminal gets the output as it is, so an editor or a database shell still works.
-This catches a command that prints the key by mistake, not one that hides it on purpose: the stand-in is what protects the key.
+percent-encoded, or escaped as JSON writes it, even split across two reads. A key on several lines (a PEM, an .env) is also taken
+out line by line, and a JSON file string by string, so printing one field of a service account's file is caught too. A terminal gets
+the output as it is, so an editor or a database shell still works; an agent that runs commands in a terminal of its own (a PTY) gets
+it as it is too. The command keeps its own signals: Ctrl-C, a closed terminal and a closed pipe (`| head`) stop it as without
+keyreeve. A program the command leaves running in the background may go on printing for two seconds after it ends; after that its
+output is no longer passed on. This catches a command that prints the key by mistake, not one that hides it on purpose: the
+stand-in is what protects the key.
 
 Every decision goes in `~/.keyreeve/audit.jsonl`: which key, which permission, the process and its parents as the system reports them,
 and apart from those what the caller says about itself. It holds no value and no arguments. Each line carries the hash of the one
@@ -476,7 +481,8 @@ confirm and checks the key there.
 
 ### When an agent tidies your keys
 
-Nobody wants to sort their own keys, so an agent does it and you approve. `review_keys` lists each key by id with its provider,
+Nobody wants to sort their own keys, so an agent does it and you approve, while **Agents can sort my keys** is on under
+**Agents**. `review_keys` lists each key by id with its provider,
 project, variable and description, how it was used lately (how often, the last day, which agents, from which folders, to which
 hosts) and what it needs: no project or variable, an id that breaks the naming convention, the same value as another key (compared
 by digest), or no use. Never a value. It starts with the convention and the projects your keys already name, including the short
@@ -487,10 +493,15 @@ with why the agent knows. keyreeve checks them before they reach you and sends b
 reason, so the agent fixes them: an id starts with its provider (`resend-lh`) or, for a secret of your own software, its project
 (`restoiq-erp-jwt-secret`); a description holds no value; a key used in the last 30 days is not archived. The rest wait under
 **Agents** as one card with each change, what it replaces and why, all chosen to start. **Apply** takes a click and no fingerprint,
-since only names and notes change. keys.toml and agents.toml are copied beside them first.
+since only names and notes change. keys.toml and agents.toml are copied beside them first, and each change is checked again against
+the list and the log as they are then: one whose key is gone, whose new id was taken since, or whose key was used since it was proposed
+for archiving is left out whole, and the app says which. A key is archived for being unused only when the usage log read reaches back
+30 days; a busy log that holds fewer days says so, and the key stays.
 
 A renamed key keeps its old id in `formerly`, so a script, a set or a permission written with it goes on working: keyreeve takes the
-old id as the new one wherever a key is asked for, and moves its permissions and places to the new id.
+old id as the new one wherever a key is asked for, and moves to the new id its permissions, places, sets, "always, for this program
+in this folder" permissions and local service. A permission open at the moment of the rename ends by either name. The old id of a key
+not offered to agents does not lead to the new one, so it never tells its new name.
 
 ### When an agent brings keys in
 

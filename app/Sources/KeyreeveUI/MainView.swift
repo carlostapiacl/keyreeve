@@ -38,9 +38,24 @@ public struct MainView: View {
     /// What this view worked out from the keys, kept until the keys, the filter or the search change.
     @State private var memo = ViewMemo()
 
+    /// The tab a chosen key's page opens on.
+    private let keyTab: KeyDetail.Tab
+
     public init(model: AppModel, initial: Sidebar = .home, chosen: CatalogItem.ID? = nil) {
+        self.init(model: model, initial: initial, chosen: chosen, keyTab: .summary)
+    }
+
+    init(model: AppModel, initial: Sidebar, chosen: CatalogItem.ID?, keyTab: KeyDetail.Tab) {
         self.model = model
-        _selection = State(initialValue: initial)
+        self.keyTab = keyTab
+        // A part of Tools opens Tools on that part, as going there does.
+        switch initial {
+        case .vault, .agents, .providers, .rotation, .log:
+            _selection = State(initialValue: .tools)
+            _toolsPart = State(initialValue: initial)
+        default:
+            _selection = State(initialValue: initial)
+        }
         _chosenRows = State(initialValue: chosen.map { [$0] } ?? [])
     }
 
@@ -205,7 +220,7 @@ public struct MainView: View {
                 if let chosenItem {
                     Rectangle().fill(Theme.border).frame(width: 1)
                     // Wide enough to read without truncating, with the technical parts behind a disclosure.
-                    KeyDetail(item: chosenItem, model: model).frame(width: 440)
+                    KeyDetail(item: chosenItem, model: model, tab: keyTab).frame(width: 440)
                 }
             }
             // An inset, not the first row of a stack: a scroll view at the column's top edge reaches under the

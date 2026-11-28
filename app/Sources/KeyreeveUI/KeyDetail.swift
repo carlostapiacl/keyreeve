@@ -20,6 +20,12 @@ struct KeyDetail: View {
     @State private var tab: Tab = .summary
     @State private var showsMore = false
 
+    init(item: CatalogItem, model: AppModel, tab: Tab = .summary) {
+        self.item = item
+        self.model = model
+        _tab = State(initialValue: tab)
+    }
+
     private var isSealed: Bool { item.vault == .sealed || item.vault == .outdated }
     private var identifiers: [KeyIndex.Key] { model.allKeys(forSource: item.path) }
 

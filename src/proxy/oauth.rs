@@ -746,7 +746,7 @@ impl Proxy {
                 .unwrap_or_default(),
         };
         let socket = connect_within(&addresses)?;
-        socket.set_read_timeout(Some(IO_TIMEOUT))?;
+        socket.set_read_timeout(Some(self.reply_timeout()))?;
         socket.set_write_timeout(Some(IO_TIMEOUT))?;
         Ok(StreamOwned::new(connection, socket))
     }

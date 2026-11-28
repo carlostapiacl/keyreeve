@@ -64,11 +64,28 @@ public struct AuditLog: Sendable {
         return encoder
     }
 
-    private static func hash(of entry: Entry) throws -> String {
+    /// A reader of the whole log passes one encoder for every line: making one per line was most of the time
+    /// it took to open the app.
+    private static func hash(of entry: Entry, encoder: JSONEncoder = encoder()) throws -> String {
         var unhashed = entry
         unhashed.hash = ""
-        let data = try encoder().encode(unhashed)
-        return SHA256.hash(data: Data(entry.prev.utf8) + data).map { String(format: "%02x", $0) }.joined()
+        var hasher = SHA256()
+        hasher.update(data: Data(entry.prev.utf8))
+        hasher.update(data: try encoder.encode(unhashed))
+        return hex(hasher.finalize())
+    }
+
+    private static let hexDigits = Array("0123456789abcdef".utf8)
+
+    /// Lowercase hex, as `String(format: "%02x")` gave, without formatting each byte on its own.
+    public static func hex<D: Sequence>(_ digest: D) -> String where D.Element == UInt8 {
+        var out: [UInt8] = []
+        out.reserveCapacity(64)
+        for byte in digest {
+            out.append(hexDigits[Int(byte >> 4)])
+            out.append(hexDigits[Int(byte & 0x0f)])
+        }
+        return String(decoding: out, as: UTF8.self)
     }
 
     /// Adds a line. Any process can call this, so the lock covers reading the last hash and writing.
@@ -205,29 +222,94 @@ public struct AuditLog: Sendable {
     public func firstBrokenLine() -> Int? { recent(0).brokenLine }
 
     /// The newest `count` entries, newest last, and whether the chain holds, from one reading of the file.
-    /// What the app shows on each refresh, so a log that grows all day is read and decoded once, not twice.
+    /// What the app shows on each refresh. The chain is checked from where the last reading in this process
+    /// left it, when the bytes up to there are the same, so a log of many thousand lines is not decoded and
+    /// hashed again each time; any change to those bytes checks it all again. Only the newest lines are
+    /// decoded to be shown, from the end.
     public func recent(_ count: Int) -> (entries: [Entry], brokenLine: Int?) {
         guard FileManager.default.fileExists(atPath: url.path) else { return ([], nil) }
-        guard let data = try? Data(contentsOf: url) else { return ([], 0) }
+        guard let read = try? Data(contentsOf: url) else { return ([], 0) }
+        let data = Data(read)
         let decoder = Self.decoder()
-        var kept: [Entry] = []
-        var broken: Int?
+        let checked = Self.check(data, path: url.path, decoder: decoder)
+        guard count > 0 else { return ([], checked.broken) }
+        // A line that is not an entry ends what can be shown; what came before still is.
+        var end = checked.undecodableAt ?? data.endIndex
+        var entries: [Entry] = []
+        while entries.count < count {
+            while end > data.startIndex, data[end - 1] == 10 { end -= 1 }
+            guard end > data.startIndex else { break }
+            let start = data[data.startIndex..<end].lastIndex(of: 10).map { $0 + 1 } ?? data.startIndex
+            guard let entry = try? decoder.decode(Entry.self, from: data[start..<end]) else { break }
+            entries.append(entry)
+            end = start
+        }
+        return (entries.reversed(), checked.broken)
+    }
+
+    /// How far the chain was checked: through the end of a complete line, with the digest of the bytes up to
+    /// there, the last hash, the lines counted and the first that did not hold.
+    struct Checked: Sendable {
+        var length = 0
+        var digest = SHA256.hash(data: Data())
         var previous = ""
-        for (index, line) in data.split(separator: 10).enumerated() {
-            guard let entry = try? decoder.decode(Entry.self, from: Data(line)) else {
-                // A line that is not an entry ends what can be shown; what came before still is.
-                if broken == nil { broken = index + 1 }
+        var lines = 0
+        var broken: Int?
+    }
+
+    final class CheckedCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var byPath: [String: Checked] = [:]
+        subscript(path: String) -> Checked? {
+            get { lock.lock(); defer { lock.unlock() }; return byPath[path] }
+            set { lock.lock(); defer { lock.unlock() }; byPath[path] = newValue }
+        }
+    }
+
+    static let checkedCache = CheckedCache()
+
+    /// The first line that does not hold, numbered from 1 as the lines that are not empty, and where the first
+    /// line that is not an entry starts, if any. Checking stops at that line.
+    static func check(_ data: Data, path: String, decoder: JSONDecoder) -> (broken: Int?, undecodableAt: Int?) {
+        var state = Checked()
+        if let cached = checkedCache[path], cached.length <= data.count,
+            SHA256.hash(data: data[data.startIndex..<data.startIndex + cached.length]) == cached.digest
+        {
+            state = cached
+        }
+        let encoder = encoder()
+        var good = state
+        var position = data.startIndex + state.length
+        var undecodable: Int?
+        while position < data.endIndex {
+            let newline = data[position...].firstIndex(of: 10)
+            let lineEnd = newline ?? data.endIndex
+            let next = newline.map { $0 + 1 } ?? data.endIndex
+            defer { position = next }
+            guard lineEnd > position else {
+                if newline != nil { good.length = next - data.startIndex }
+                continue
+            }
+            guard let entry = try? decoder.decode(Entry.self, from: data[position..<lineEnd]) else {
+                if state.broken == nil { state.broken = state.lines + 1 }
+                undecodable = position
                 break
             }
             // A log that goes on from one set aside starts from that one's last hash, which its first line holds.
-            if index == 0, entry.event == Self.continued { previous = entry.prev }
-            if broken == nil, entry.prev != previous || (try? Self.hash(of: entry)) != entry.hash { broken = index + 1 }
-            previous = entry.hash
-            if count > 0 {
-                kept.append(entry)
-                if kept.count > count * 2 { kept.removeFirst(kept.count - count) }
+            if state.lines == 0, entry.event == Self.continued { state.previous = entry.prev }
+            if state.broken == nil, entry.prev != state.previous || (try? Self.hash(of: entry, encoder: encoder)) != entry.hash {
+                state.broken = state.lines + 1
+            }
+            state.previous = entry.hash
+            state.lines += 1
+            // Only a complete line is kept as checked: a line still being written is read again next time.
+            if newline != nil {
+                state.length = next - data.startIndex
+                good = state
             }
         }
-        return (Array(kept.suffix(count)), broken)
+        good.digest = SHA256.hash(data: data[data.startIndex..<data.startIndex + good.length])
+        checkedCache[path] = good
+        return (state.broken, undecodable)
     }
 }

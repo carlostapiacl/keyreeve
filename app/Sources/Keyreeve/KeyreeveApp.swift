@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // app. Set once here, for the whole process, rather than by each call.
         signal(SIGPIPE, SIG_IGN)
         AppModel.learnValueDigests()
+        AppModel.checkUsageLogEarly()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {
@@ -63,6 +64,8 @@ struct KeyreeveApp: App {
                 if !model.unlocked {
                     LockedView(message: model.lockMessage, unlock: model.unlock)
                         .onAppear(perform: model.unlock)
+                } else if !model.firstLoadDone {
+                    OpeningView()
                 } else if model.needsWelcome {
                     WelcomeView(
                         busy: model.busy, choose: model.chooseFolder, withoutFolder: model.startWithoutFolder,

@@ -104,6 +104,15 @@ public struct VaultFile: Codable, Equatable {
         if let old { replaced = (replaced ?? [:]).merging([name: [old]]) { $0 + $1 } }
     }
 
+    /// Seals a renewed value in place of the old, with no old copy kept: a refresh token the provider rotated,
+    /// whose old value it no longer accepts. It rotates on every renewal, so copies would pile up for nothing.
+    public mutating func renew(name: String, value: Data, now: Date = Date()) throws {
+        try Self.check(name: name)
+        guard let old = entries[name] else { throw VaultError("\(name) is not in the vault") }
+        entries[name] = try seal(name: name, value: value, now: now, source: old.source)
+        if old.unattendedSealed != nil, unattended != nil { try sealUnattended(name: name, value: value) }
+    }
+
     /// Opens a copy that was replaced. Index 0 is the oldest.
     public func openReplaced(name: String, index: Int, with identity: Age.Identity) throws -> Data {
         guard let list = replaced?[name], list.indices.contains(index) else {

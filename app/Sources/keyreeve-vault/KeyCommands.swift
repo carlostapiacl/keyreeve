@@ -285,6 +285,17 @@ func serveKeys() throws {
     proxy?.onAuthorization = { key, state in
         try? KeyStates.mark(id: key, active: state == "active", in: home.appendingPathComponent(KeyStates.fileName))
     }
+    // A provider that rotates refresh tokens spent the old one, so the new one is sealed in its place at once: a
+    // restart starts from it. Sealing needs no fingerprint.
+    proxy?.onRenewed = { key, text in
+        guard let source = (try? KeyIndex.load(from: keysFile))?.key(key)?.source else { return }
+        do {
+            try store.update { vault in try vault.renew(name: source, value: Data(text.utf8)) }
+            try? auditLog.append(event: "renewed", key: key, detail: "the provider rotated its refresh token, sealed again")
+        } catch {
+            try? auditLog.append(event: "renewed", key: key, detail: "the provider rotated its refresh token, and it could not be sealed: \(error)")
+        }
+    }
     // Stops after a while with nothing in force, so no process stays around for nothing. It also stops when
     // this program or the proxy is replaced on disk: an agent that uses a key all day would otherwise keep an
     // old version running, with fixes built since never in force. The next use starts the new one.

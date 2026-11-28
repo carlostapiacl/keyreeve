@@ -61,6 +61,12 @@ enum Reply {
         error: String,
     },
     Event(Event),
+    /// A provider rotated a key's refresh token: the sealed file's text with the new one, for the vault to seal
+    /// in place of the old, which no longer works. Only the vault's service reads this pipe.
+    Renewed {
+        key: String,
+        text: String,
+    },
 }
 
 /// The running proxy, driven by the vault's service: requests come on stdin and answers go to stdout.
@@ -92,6 +98,15 @@ pub fn serve_from_stdin(folder: &Path) -> Result<(), String> {
                 say(&Reply::Event(event));
             }
         });
+    }
+    {
+        let say = say.clone();
+        proxy.on_renewed(Box::new(move |key, text| {
+            say(&Reply::Renewed {
+                key: key.to_owned(),
+                text: text.expose().to_owned(),
+            });
+        }));
     }
     for line in io::stdin().lock().lines() {
         let line = zeroize::Zeroizing::new(line.map_err(|e| e.to_string())?);
@@ -262,6 +277,16 @@ mod tests {
         }
         // A key too short to have a stand-in that cannot be guessed is not given one.
         assert!(prepare_local("g", "k", "127.0.0.1:8790", "abc", None, 9).is_err());
+    }
+
+    #[test]
+    fn a_rotated_refresh_token_goes_to_the_vault_as_its_own_message() {
+        let line = serde_json::to_string(&Reply::Renewed {
+            key: "restoiq-mcp".into(),
+            text: "{}".into(),
+        })
+        .unwrap();
+        assert_eq!(line, r#"{"op":"renewed","key":"restoiq-mcp","text":"{}"}"#);
     }
 
     #[test]

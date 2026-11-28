@@ -14,6 +14,9 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
     public var onEvent: (@Sendable (String, String, String) -> Void)?
     /// What a provider said of an OAuth credential the proxy exchanged: key, then `active` or `reauthorize`.
     public var onAuthorization: (@Sendable (String, String) -> Void)?
+    /// A provider rotated a key's refresh token: key, then the sealed file's text with the new one. The old one no
+    /// longer works, so the vault seals this in its place.
+    public var onRenewed: (@Sendable (String, String) -> Void)?
 
     public init(binary: URL, runFolder: URL) throws {
         for handle in [input.fileHandleForReading, input.fileHandleForWriting, output.fileHandleForReading, output.fileHandleForWriting] {
@@ -56,6 +59,8 @@ public final class ProxyProcess: KeyProxy, @unchecked Sendable {
                 ready = KeyService.ProxyEndpoint(port: port, ca: ca, bundle: bundle)
             }
             started.signal()
+        case "renewed":
+            if let key = message["key"] as? String, let text = message["text"] as? String { onRenewed?(key, text) }
         case "event":
             guard let grant = message["grant"] as? String, let key = message["key"] as? String else { return }
             let parts = [message["method"], message["host"], message["path"], message["status"]]

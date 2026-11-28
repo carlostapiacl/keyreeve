@@ -66,7 +66,7 @@ func useKey() throws {
         fail(answer.sshSocket == nil && (options["--as"] ?? answer.variable) == nil
             ? "\(id) has no variable set, so say which with --as" : error.description, code: 2)
     }
-    run(prepared)
+    run(prepared, hiding: wantsReal ? [answer.value].compactMap { $0 } : [])
 }
 
 /// Where the program is on disk, and the script it runs when its first argument is a file: what a permission given
@@ -149,14 +149,13 @@ func useKeys(
     run(prepared)
 }
 
-/// Runs the command in this process, so a permission "until it finishes" ends when it does.
-func run(_ prepared: UseEnvironment) -> Never {
+/// Runs the command in this process, so a permission "until it finishes" ends when it does. With a real value to
+/// hide, this process stays as its parent instead, and ends with it.
+func run(_ prepared: UseEnvironment, hiding secrets: [String] = []) -> Never {
     for name in prepared.unset { unsetenv(name) }
     for (name, value) in prepared.setIfMissing { setenv(name, value, 0) }
     for (name, value) in prepared.set { setenv(name, value, 1) }
-    var pointers: [UnsafeMutablePointer<CChar>?] = prepared.command.map { strdup($0) } + [nil]
-    execvp(prepared.command[0], &pointers)
-    fail("could not run \(prepared.command[0])")
+    runHiding(secrets.map { Data($0.utf8) }, command: prepared.command)
 }
 
 /// Opens a permission ahead of time, so what runs later does not stop to ask.

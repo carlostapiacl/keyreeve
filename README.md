@@ -111,7 +111,8 @@ Each offered key has a level, set in the app.
 | Free | One fingerprint, then any command until you quit Keyreeve, for a day at most. |
 | Always, no fingerprint | One fingerprint to seal a second copy, then agents use it through the proxy with no question, across restarts. Keep it for keys that only read. |
 
-The real key itself (`keyreeve-vault get`, `--real`, `run_with_key`) asks for your fingerprint every time. Quitting
+The real key itself (`keyreeve-vault get`, `--real`, `run_with_key`) asks for your fingerprint every time. What such a command prints reaches you with the key
+taken out (written plainly, in base64 or in a URL) unless it prints to your terminal. Quitting
 Keyreeve, **Lock everything** in the menu bar or `keyreeve-vault revoke` ends every permission.
 
 An OAuth credential, such as a Google sign-in with a refresh token, takes the same levels. keyreeve keeps the refresh token

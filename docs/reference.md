@@ -308,6 +308,11 @@ keyreeve-vault use search-console --as GOOGLE_APPLICATION_CREDENTIALS -- python3
 own. It asks for your finger every time and is logged apart. A command that sends a stand-in past the proxy, or ignores its variables,
 simply fails to authenticate.
 
+`--real`, `run` and `env` hide the real value in what the command prints. When stdout or stderr is not a terminal, as when an agent
+runs the command, keyreeve stays as its parent and takes the key out of that output, written plainly, in base64 (also URL-safe) or
+percent-encoded, even split across two reads. A terminal gets the output as it is, so an editor or a database shell still works.
+This catches a command that prints the key by mistake, not one that hides it on purpose: the stand-in is what protects the key.
+
 Every decision goes in `~/.keyreeve/audit.jsonl`: which key, which permission, the process and its parents as the system reports them,
 and apart from those what the caller says about itself. It holds no value and no arguments. Each line carries the hash of the one
 before, so `--verify` finds an edit. Another program running as you could rewrite the whole chain, so this detects changes and does

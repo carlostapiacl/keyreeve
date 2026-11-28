@@ -636,9 +636,7 @@ public struct AgentBridge {
     /// which is why the list of allowed programs is the real protection.
     static func redact(_ text: String, value: String) -> String {
         guard !value.isEmpty else { return text }
-        let encoded = Data(value.utf8).base64EncodedString()
-        return text.replacingOccurrences(of: value, with: "[redacted]")
-            .replacingOccurrences(of: encoded, with: "[redacted]")
+        return OutputRedactor.redact(text, secrets: [value])
     }
 
     private func reply(id: Any, result: [String: Any]) -> String? {

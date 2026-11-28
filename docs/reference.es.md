@@ -319,6 +319,12 @@ keyreeve-vault use search-console --as GOOGLE_APPLICATION_CREDENTIALS -- python3
 script tuyo. Pide tu dedo cada vez y queda registrado aparte. Un comando que manda un reemplazo saltándose el proxy, o que ignora sus
 variables, simplemente no logra autenticarse.
 
+`--real`, `run` y `env` tachan la clave real en lo que imprime el comando. Cuando stdout o stderr no es una terminal, como cuando lo
+corre un agente, keyreeve queda como su padre y saca la clave de esa salida, escrita tal cual, en base64 (también la variante para URL)
+o codificada para URL, aunque venga partida en dos lecturas. Una terminal recibe la salida tal cual, así que un editor o una consola de
+base de datos siguen funcionando. Esto atrapa un comando que imprime la clave por error, no uno que la esconde a propósito: lo que
+protege la clave es el reemplazo.
+
 Cada decisión queda en `~/.keyreeve/audit.jsonl`: qué clave, qué permiso, el proceso y sus padres según los informa el sistema, y
 aparte de eso lo que quien llama dice de sí mismo. No guarda ningún valor ni argumentos. Cada línea lleva el hash de la anterior, así
 que `--verify` encuentra una edición. Otro programa que corra como tú podría reescribir la cadena entera, así que esto detecta cambios

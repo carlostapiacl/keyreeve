@@ -1,0 +1,110 @@
+# Downloads for a tag v*: Keyreeve.app for Apple silicon, zipped, and the keyreeve command for Linux, in a GitHub
+# release with their SHA-256. Runs only for a tag. The Homebrew cask and formula in carlostapiacl/homebrew-tap point
+# at these files.
+#
+# The app is signed ad hoc (build-app.sh), not with a Developer ID, so macOS asks the person to allow it the first
+# time. The README says how.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The tag is the version in Cargo.toml
+        id: v
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$GITHUB_REF_NAME" != "v$v" ]; then echo "::error::tag $GITHUB_REF_NAME is not v$v (Cargo.toml)"; exit 1; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  mac:
+    needs: version
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: swift --version
+      - name: Build Keyreeve.app
+        run: KEYREEVE_BUILD_ONLY=1 app/build-app.sh
+      - name: Smoke
+        run: |
+          app/dist/Keyreeve.app/Contents/MacOS/keyreeve-cli --version
+          app/dist/Keyreeve.app/Contents/MacOS/keyreeve-vault help >/dev/null 2>&1 || true
+          codesign --verify --deep --strict app/dist/Keyreeve.app
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' app/dist/Keyreeve.app/Contents/Info.plist | grep -qx '${{ needs.version.outputs.version }}'
+      - name: Zip
+        run: |
+          mkdir -p out
+          ditto -c -k --keepParent app/dist/Keyreeve.app "out/Keyreeve-${{ needs.version.outputs.version }}-macos-arm64.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mac
+          path: out/*
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64, runner: ubuntu-24.04, target: x86_64-unknown-linux-musl }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Stage and smoke
+        run: |
+          mkdir -p out
+          cp target/${{ matrix.target }}/release/keyreeve out/keyreeve-${{ matrix.platform }}
+          out/keyreeve-${{ matrix.platform }} --version | grep -q '${{ needs.version.outputs.version }}'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.platform }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: [version, mac, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS && cd ..
+          # The notes are this version's section of the changelog.
+          awk -v v="## ${{ needs.version.outputs.version }}" 'index($0, v) == 1 {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          test -s notes.md
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" out/* --title "keyreeve $GITHUB_REF_NAME" --notes-file notes.md $pre

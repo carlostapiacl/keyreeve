@@ -533,7 +533,7 @@ field = "client_id+client_secret+refresh_token"
 
     #[test]
     fn every_part_survives_writing_and_reading_again() {
-        let mut key = BookKey::new("paypal-lh", "paypal-lh.json");
+        let mut key = BookKey::new("paypal-acme", "paypal-acme.json");
         key.set_field("client_id+secret");
         key.auth = Some(Auth::Oauth);
         key.state = Some(KeyState::Reauthorize);
@@ -541,7 +541,7 @@ field = "client_id+client_secret+refresh_token"
         key.recipes = Some(vec!["paypal".into()]);
         key.description = Some("PayPal \"de\" LH\nsegunda línea".into());
         key.level = Some(Level::Never);
-        key.tags = Some(vec!["liquidity-hunters".into(), "provider:paypal".into()]);
+        key.tags = Some(vec!["acme-labs".into(), "provider:paypal".into()]);
         key.host = Some("panel.example.com:8443".into());
         key.local = Some("127.0.0.1:8790".into());
         key.expires = Some("2027-02-08".into());

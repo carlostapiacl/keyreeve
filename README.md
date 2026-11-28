@@ -10,8 +10,8 @@ provider's quirks live in a small recipe file the community writes.
 
 ![A short tour of the keyreeve window: Home, My keys, a key offered to agents and Agents, all made-up examples](docs/img/tour.gif)
 
-**Status: early.** The vault, the agent tools and the checks are used every day on one Mac. The rotation engine passes the
-simulator but has not run against a real provider yet. There are no prebuilt downloads.
+**Status: alpha** ([0.1.0-alpha.1](CHANGELOG.md)). The vault, the agent tools and the checks are used every day on one Mac.
+Rotation is experimental: it passes the simulator but has not run against a real provider yet.
 
 ## What it does
 
@@ -20,22 +20,31 @@ simulator but has not run against a real provider yet. There are no prebuilt dow
 - **Checks them.** One read-only request per key tells you whether it still works, and whose it is.
 - **Lets agents use them.** A command runs with a stand-in of the same shape. A local proxy puts the real key only on
   requests to that key's provider. The agent sees the output and never the key.
-- **Rotates them.** A recipe says how to create and revoke a key at a provider. This part is the least tested.
+- **Rotates them (experimental).** A recipe says how to create and revoke a key at a provider.
 
 ## Install
 
-You need macOS 14 or later, the Command Line Tools and [Rust](https://rustup.rs).
+On a Mac with Apple silicon and macOS 14 or later:
+
+```bash
+brew install --cask carlostapiacl/tap/keyreeve
+```
+
+It installs Keyreeve.app and the `keyreeve` command. Keyreeve is not signed with an Apple Developer ID yet, so the first
+time macOS says it cannot check it. Open it once from **System Settings > Privacy & Security > Open Anyway** (on macOS 14
+you can also right-click Keyreeve in Applications and choose **Open**). The download is also on the
+[releases page](https://github.com/carlostapiacl/keyreeve/releases).
+
+On Linux, the `keyreeve` command alone (checks, recipes and the proxy, no vault): `brew install carlostapiacl/tap/keyreeve`.
+
+To build it yourself you need the Command Line Tools and [Rust](https://rustup.rs):
 
 ```bash
 git clone https://github.com/carlostapiacl/keyreeve
 cd keyreeve
 app/build-app.sh
 ditto app/dist/Keyreeve.app /Applications/Keyreeve.app   # once
-open /Applications/Keyreeve.app
 ```
-
-Each later run of `build-app.sh` updates the copy in /Applications. The build is not notarized, so macOS warns you the
-first time. The `keyreeve` command alone runs on Linux too: `cargo install --git https://github.com/carlostapiacl/keyreeve`.
 
 ## The first five minutes
 

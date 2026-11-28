@@ -291,14 +291,14 @@ struct UnsavedRequestTests {
             try AgentTests().call(
                 bridge, "request_access", ["key": key, "reason": "the bot polls all day", "duration": duration, "for_agent": other])
         }
-        let answer = try ask("bot", "wapentakebot", "no-fingerprint")
-        #expect(!answer.error && answer.text.contains("KEYREEVE_AGENT=wapentakebot"))
-        #expect(box.asked.map(\.forAgent) == ["wapentakebot"] && box.asked.map(\.agent) == ["claude"])
-        #expect(box.policy.agents["bot"] == ["claude", "wapentakebot"] && box.policy.levels["bot"] == .always)
-        #expect(try ask("bot", "wapentakebot", "no-fingerprint").text.contains("already needs no fingerprint for wapentakebot"))
+        let answer = try ask("bot", "nightly-bot", "no-fingerprint")
+        #expect(!answer.error && answer.text.contains("KEYREEVE_AGENT=nightly-bot"))
+        #expect(box.asked.map(\.forAgent) == ["nightly-bot"] && box.asked.map(\.agent) == ["claude"])
+        #expect(box.policy.agents["bot"] == ["claude", "nightly-bot"] && box.policy.levels["bot"] == .always)
+        #expect(try ask("bot", "nightly-bot", "no-fingerprint").text.contains("already needs no fingerprint for nightly-bot"))
         // Not through a key the asker cannot use, open to others or closed: nothing is asked.
-        #expect(try ask("mine", "wapentakebot", "no-fingerprint").error)
-        #expect(try ask("closed", "wapentakebot", "no-fingerprint").error)
+        #expect(try ask("mine", "nightly-bot", "no-fingerprint").error)
+        #expect(try ask("closed", "nightly-bot", "no-fingerprint").error)
         // Only with no-fingerprint, and only a clean name.
         #expect(try ask("bot", "x", "4h").error)
         #expect(try ask("bot", "Bad Name", "no-fingerprint").error)

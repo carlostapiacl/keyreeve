@@ -59,7 +59,7 @@ extension KeyTidy {
             return "that text holds something shaped like a key or a password; write what it is, never the value"
         }
         if let project = change.project, !KeyIndex.isValid(id: project) {
-            return "a project is lower case with dashes, like restoiq or liquidity-hunters"
+            return "a project is lower case with dashes, like shop or acme-labs"
         }
         let provider = change.provider ?? before.provider
         if let new = change.provider, !providers.contains(new) {
@@ -129,7 +129,7 @@ extension KeyTidy {
         return oneCase && run.split(whereSeparator: { "-_/".contains($0) }).allSatisfy { $0.count < 20 }
     }
 
-    /// The short starts the person already uses for a project's keys, such as lh- for liquidity-hunters: a start
+    /// The short starts the person already uses for a project's keys, such as acme- for acme-labs: a start
     /// that at least three of its keys share, and that is not a provider.
     public static func projectPrefixes(_ index: KeyIndex) -> [String: Set<String>] {
         let all = index.all.filter { !$0.more.archived }

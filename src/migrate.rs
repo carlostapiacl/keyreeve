@@ -263,17 +263,17 @@ mod tests {
     const INVENTORY: &str = r#"{"schema":1,"items":[
  {"path":"gsc-token.json","modified":1,"format":"json","fields":["client_id","client_secret","refresh_token","token"],"kinds":[]},
  {"path":"youtube_token.json","modified":1,"format":"json","fields":["client_id","client_secret","refresh_token"],"kinds":[]},
- {"path":"paypal-lh.json","modified":1,"format":"json","fields":["api_base","client_id","secret"],"kinds":[]},
+ {"path":"paypal-acme.json","modified":1,"format":"json","fields":["api_base","client_id","secret"],"kinds":[]},
  {"path":"telegram-agentes.env","modified":1,"format":"env","fields":["TELEGRAM_BOT_TOKEN","TELEGRAM_CHAT_ID"],"kinds":["telegram"]},
  {"path":"inbox-ig-token.txt","modified":1,"format":"single-value","fields":[],"kinds":[]},
  {"path":"coolify.env","modified":1,"format":"env","fields":["COOLIFY_TOKEN"],"kinds":[]},
- {"path":"calcom-carlos.txt","modified":1,"format":"single-value","fields":[],"kinds":["calcom"]},
+ {"path":"calcom-me.txt","modified":1,"format":"single-value","fields":[],"kinds":["calcom"]},
  {"path":"asistente-cobros.env","modified":1,"format":"env","fields":["MP_ACCESS_TOKEN","PAYPAL_CLIENT_ID","PAYPAL_SECRET"],"kinds":[]},
  {"path":"meta-old-2026.txt","modified":1,"format":"single-value","fields":[],"kinds":[]},
  {"path":"meta-new.txt","modified":1,"format":"single-value","fields":[],"kinds":[]},
  {"path":"RUNBOOK.md","modified":1,"format":"text","fields":[],"kinds":[]},
  {"path":"deploy.pub","modified":1,"format":"single-value","fields":[],"kinds":[]},
- {"path":"resend-yumo.txt","modified":1,"format":"single-value","fields":[],"kinds":["resend"]}
+ {"path":"resend-kids.txt","modified":1,"format":"single-value","fields":[],"kinds":["resend"]}
 ]}"#;
 
     const RULES: &str = r#"
@@ -288,13 +288,13 @@ files:
     const EDITS: &str = r#"{
  "gsc-token.json": {"field": "", "description": "Search Console del portfolio"},
  "youtube_token.json": {"recipes": ["google"], "field": "client_id+client_secret+refresh_token"},
- "paypal-lh.json": {"recipes": ["paypal"], "field": "client_id+secret", "description": "PayPal de LH"},
+ "paypal-acme.json": {"recipes": ["paypal"], "field": "client_id+secret", "description": "PayPal de LH"},
  "inbox-ig-token.txt": {"recipes": ["instagram"]},
  "coolify.env": {"recipes": ["coolify-panel"], "host": "panel.example.com"},
- "calcom-carlos.txt": {"recipes": ["calcom"], "expires": "2027-02-08", "criticality": 2},
+ "calcom-me.txt": {"recipes": ["calcom"], "expires": "2027-02-08", "criticality": 2},
  "meta-old-2026.txt": {"recipes": ["meta"], "tags": ["status:archived"], "description": "Copia rechazada"},
  "meta-new.txt": {"recipes": ["meta"]},
- "resend-yumo.txt": {"recipes": ["resend"], "description": "Resend de Yumo", "name": "Resend · yumo"}
+ "resend-kids.txt": {"recipes": ["resend"], "description": "Resend de Kids", "name": "Resend · kids"}
 }"#;
 
     const BOOK: &str = r#"
@@ -319,7 +319,7 @@ source = "inbox-ig-token.txt"
 variable = "IG_ACCESS_TOKEN"
 
 [[key]]
-id = "meta-carlostapia"
+id = "meta-blog"
 provider = "meta"
 source = "meta-old-2026.txt"
 
@@ -346,7 +346,7 @@ field = "PAYPAL_CLIENT_ID+PAYPAL_SECRET"
 
     fn details() -> HashMap<String, String> {
         accounts(
-            r#"{"paypal-lh.json":{"fields":{"account":"lh@example.com"}},"calcom-carlos.txt":{"fields":{"account":" "}}}"#,
+            r#"{"paypal-acme.json":{"fields":{"account":"acme@example.com"}},"calcom-me.txt":{"fields":{"account":" "}}}"#,
         )
     }
 
@@ -424,24 +424,24 @@ field = "PAYPAL_CLIENT_ID+PAYPAL_SECRET"
             Some("client_id+client_secret+refresh_token")
         );
         assert!(!youtube.offered);
-        let paypal = book.for_source("paypal-lh.json").unwrap();
-        assert_eq!(paypal.id, "paypal-lh");
+        let paypal = book.for_source("paypal-acme.json").unwrap();
+        assert_eq!(paypal.id, "paypal-acme");
         assert_eq!(
             paypal.parts,
             Some(vec!["client_id".into(), "secret".into()])
         );
-        assert_eq!(paypal.account.as_deref(), Some("lh@example.com"));
+        assert_eq!(paypal.account.as_deref(), Some("acme@example.com"));
         assert_eq!(paypal.level, Some(Level::Never));
         let coolify = book.for_source("coolify.env").unwrap();
         assert_eq!(coolify.host.as_deref(), Some("panel.example.com"));
-        let calcom = book.for_source("calcom-carlos.txt").unwrap();
+        let calcom = book.for_source("calcom-me.txt").unwrap();
         assert_eq!(calcom.expires.as_deref(), Some("2027-02-08"));
         assert_eq!(calcom.criticality, Some(2));
         assert_eq!(calcom.account, None, "a blank account says nothing");
         // An identifier keeps its own provider and says when the list checks the file another way.
         assert_eq!(key("ig-inbox").provider.as_deref(), Some("instagram"));
-        assert!(key("meta-carlostapia").archived);
-        assert_eq!(report.archived, vec!["meta-carlostapia".to_string()]);
+        assert!(key("meta-blog").archived);
+        assert_eq!(report.archived, vec!["meta-blog".to_string()]);
         // Two identifiers on one file keep their own fields: the file's is not pressed on either.
         assert_eq!(key("cobros-mp").field.as_deref(), Some("MP_ACCESS_TOKEN"));
         assert_eq!(
@@ -455,7 +455,7 @@ field = "PAYPAL_CLIENT_ID+PAYPAL_SECRET"
             Some("TELEGRAM_BOT_TOKEN")
         );
         assert_eq!(key("telegram").account.as_deref(), Some("a_bot"));
-        assert!(report.added.contains(&"resend-yumo".to_string()));
+        assert!(report.added.contains(&"resend-kids".to_string()));
         assert!(report.added.contains(&"meta-new".to_string()));
     }
 

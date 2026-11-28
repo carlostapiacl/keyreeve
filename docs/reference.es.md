@@ -358,9 +358,9 @@ con tu huella, en la app (en la página de la clave, en **Uso**: escribe la dire
 o en una terminal:
 
 ```bash
-keyreeve local mesa-token=127.0.0.1:8790 motor-lectura-token=127.0.0.1:8787   # una huella para las dos
+keyreeve local desk-token=127.0.0.1:8790 motor-lectura-token=127.0.0.1:8787   # una huella para las dos
 keyreeve local                       # lo aprobado
-keyreeve local mesa-token --off      # lo quita y cierra sus permisos, sin huella
+keyreeve local desk-token --off      # lo quita y cierra sus permisos, sin huella
 ```
 
 Eso escribe `local = "127.0.0.1:8790"` en `keys.toml` y la aprobación en `~/.keyreeve/local-services.json`. Las dos tienen que
@@ -372,7 +372,7 @@ con el sustituto en la URL se rechaza y no sale. `urllib` y `requests` de Python
 proxy para `127.0.0.1`. `net/http` de Go nunca usa proxy para loopback, así que un cliente en Go necesita `--real` o un proxy en su código.
 
 ```bash
-keyreeve use mesa-token --as MESA_TOKEN -- python3 -m motor eventos
+keyreeve use desk-token --as MESA_TOKEN -- python3 -m motor eventos
 ```
 
 Un comando con una clave así no llega por el proxy a ninguna otra dirección HTTP, así que uno que además llama a otro servicio local
@@ -382,7 +382,7 @@ sin clave falla ahí.
 No lo necesita si guarda el SHA-256 del token y compara el SHA-256 de lo que recibe:
 
 ```bash
-keyreeve verifier mesa-token        # sha256:<hex>, una huella
+keyreeve verifier desk-token        # sha256:<hex>, una huella
 ```
 
 El hash no abre nada, así que puede vivir en la configuración del servidor, y el servidor arranca sin secreto y sin huella. Solo se
@@ -554,12 +554,12 @@ esté encendido en **Agentes**. `review_keys` lista cada clave por id con su
 proveedor, proyecto, variable y descripción, cómo se usó últimamente (cuántas veces, el último día, qué agentes, desde qué carpetas,
 hacia qué hosts) y lo que le falta: sin proyecto o variable, un id que no sigue la convención de nombres, el mismo valor que otra
 clave (comparado por huella) o sin uso. Nunca un valor. Empieza con la convención y los proyectos que ya nombran tus claves, incluidos
-los inicios cortos que usas, como `lh-` para liquidity-hunters.
+los inicios cortos que usas, como `acme-` para acme-labs.
 
 `propose_tidy` manda cambios por id: un id nuevo, descripción, proyecto, proveedor, variable, cuenta, campo, etiquetas para agregar o
 archivar, cada uno con cómo lo sabe el agente. keyreeve los revisa antes de que te lleguen y devuelve los que no siguen la convención,
-con el motivo, para que el agente los corrija: un id empieza con su proveedor (`resend-lh`) o, si es un secreto de tu propio software,
-con su proyecto (`restoiq-erp-jwt-secret`); una descripción no lleva ningún valor; una clave usada en los últimos 30 días no se
+con el motivo, para que el agente los corrija: un id empieza con su proveedor (`resend-acme`) o, si es un secreto de tu propio software,
+con su proyecto (`shop-api-jwt-secret`); una descripción no lleva ningún valor; una clave usada en los últimos 30 días no se
 archiva. El resto espera en **Agentes** como una tarjeta con cada cambio, lo que reemplaza y por qué, todos elegidos de entrada.
 **Aplicar** es un clic sin huella, porque solo cambian nombres y notas. Antes se copian keys.toml y agents.toml al lado, y cada
 cambio se revisa de nuevo contra la lista y el registro de ese momento: si la clave ya no está, si su id nuevo se ocupó entretanto o si

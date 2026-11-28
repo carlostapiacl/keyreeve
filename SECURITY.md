@@ -4,7 +4,13 @@ keyreeve holds API keys, so a flaw in it can expose them. Thank you for taking t
 
 ## Supported versions
 
-There are no releases yet. Fixes go to the `main` branch, and only `main` is supported. Build from it to get them.
+keyreeve is in alpha. Only the latest release is supported, and fixes go to `main` and into the next release. An alpha
+may change formats between releases; [CHANGELOG.md](CHANGELOG.md) says when it does.
+
+| version | supported |
+|---|---|
+| latest `0.1.0-alpha.*` | yes |
+| older releases | no: update |
 
 ## Reporting a vulnerability
 

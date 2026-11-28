@@ -130,8 +130,8 @@ struct KeySetTests {
     /// marked "always, no fingerprint" for its agent open with none, as they do one at a time.
     @Test func keysMarkedAlwaysOpenWithNoFingerprintWhenAskedTogether() throws {
         let f = SetFixture()
-        f.markedAlways = ["meta-ads": ["witan"], "calcom": ["witan"]]
-        let answer = f.many(["meta-ads", "calcom"], agent: "witan", unattended: true)
+        f.markedAlways = ["meta-ads": ["reporter"], "calcom": ["reporter"]]
+        let answer = f.many(["meta-ads", "calcom"], agent: "reporter", unattended: true)
         #expect(answer.ok && answer.many?.allSatisfy(\.ok) == true)
         #expect(f.fingerprints.isEmpty && f.windows.isEmpty)
         #expect(f.granted == ["meta-ads", "calcom"])
@@ -141,20 +141,20 @@ struct KeySetTests {
     /// Only the marked ones: the rest are asked in the window, with one fingerprint, and say why "always" did not apply.
     @Test func onlyTheKeysMarkedForThisAgentSkipTheFinger() throws {
         let f = SetFixture()
-        f.markedAlways = ["meta-ads": ["witan"], "calcom": ["claude"]]
-        let answer = f.many(["meta-ads", "calcom", "sentry"], agent: "witan", unattended: true)
+        f.markedAlways = ["meta-ads": ["reporter"], "calcom": ["claude"]]
+        let answer = f.many(["meta-ads", "calcom", "sentry"], agent: "reporter", unattended: true)
         #expect(answer.ok)
         #expect(f.windows.count == 1 && f.windows[0].items.map(\.key) == ["calcom", "sentry"])
         #expect(f.fingerprints.count == 1)
         let calcom = try f.log.entries().first { $0.event == "granted" && $0.key == "calcom" }
-        #expect(calcom?.detail?.contains("always is only for claude, and this was witan") == true)
+        #expect(calcom?.detail?.contains("always is only for claude, and this was reporter") == true)
     }
 
     /// The mark is the person's: a request that does not say it runs unattended, such as the real key, still asks.
     @Test func withoutTheUnattendedAskTheMarkIsNotUsed() throws {
         let f = SetFixture()
-        f.markedAlways = ["meta-ads": ["witan"]]
-        let answer = f.many(["meta-ads"], agent: "witan")
+        f.markedAlways = ["meta-ads": ["reporter"]]
+        let answer = f.many(["meta-ads"], agent: "reporter")
         #expect(answer.ok)
         #expect(f.fingerprints.count == 1)
     }

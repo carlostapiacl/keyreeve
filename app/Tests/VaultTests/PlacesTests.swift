@@ -19,7 +19,7 @@ struct PlacesTests {
 
     static func key(_ id: String) -> KeyIndex.Key { KeyIndex.Key(id: id, source: id + ".env", field: "TOKEN", provider: "openai") }
 
-    func bridge(_ world: World, offered: [String] = ["openai-lh"], folder: URL? = nil) -> AgentBridge {
+    func bridge(_ world: World, offered: [String] = ["openai-acme"], folder: URL? = nil) -> AgentBridge {
         var bridge = AgentBridge(
             policy: { AgentPolicy() }, names: { offered },
             open: { _, _ in
@@ -42,9 +42,9 @@ struct PlacesTests {
     }
 
     static let place: [String: Any] = [
-        "key": "openai-lh", "procedure": "ssh-env",
-        "params": ["host": "vps2", "file": "/opt/lh/.env", "variable": "OPENAI_API_KEY"],
-        "label": "VPS2 · /opt/lh/.env · OPENAI_API_KEY", "why": "the env file names OPENAI_API_KEY",
+        "key": "openai-acme", "procedure": "ssh-env",
+        "params": ["host": "vps2", "file": "/opt/acme/.env", "variable": "OPENAI_API_KEY"],
+        "label": "VPS2 · /opt/acme/.env · OPENAI_API_KEY", "why": "the env file names OPENAI_API_KEY",
     ]
 
     @Test func aProposalAddsNothingAndWaitsForThePerson() throws {
@@ -94,7 +94,7 @@ struct PlacesTests {
         let world = World()
         world.book = PlaceBook(places: [
             PlaceBook.Place(
-                key: "openai-lh", procedure: "ssh-env", params: ["host": "vps2"], label: "VPS2 · OPENAI_API_KEY",
+                key: "openai-acme", procedure: "ssh-env", params: ["host": "vps2"], label: "VPS2 · OPENAI_API_KEY",
                 sha256: "ab", lastCheck: PlaceBook.Check(at: Date(timeIntervalSince1970: 0), result: .old)),
             PlaceBook.Place(key: "secret-thing", procedure: "github-secret", params: ["repo": "me/hidden-repo"], label: "hidden-label"),
             PlaceBook.Place(key: "secret-thing", procedure: "ssh-env", params: [:], label: "hidden-label-2"),
@@ -108,7 +108,7 @@ struct PlacesTests {
         // Asked by name, a key not offered answers as one that is not there.
         let hidden = try call(bridge, "list_places", ["key": "secret-thing"])
         #expect(hidden.error && !hidden.text.contains("hidden-label"))
-        let one = try call(bridge, "list_places", ["key": "openai-lh"])
+        let one = try call(bridge, "list_places", ["key": "openai-acme"])
         #expect(!one.error && one.text.contains("VPS2"))
     }
 
@@ -117,7 +117,7 @@ struct PlacesTests {
         let digest = PlaceBook.sha256(Data(Self.canary.utf8))
         world.book = PlaceBook(places: [
             PlaceBook.Place(
-                key: "openai-lh", procedure: "ssh-env", params: ["host": "vps2"], label: "VPS2", sha256: "ab",
+                key: "openai-acme", procedure: "ssh-env", params: ["host": "vps2"], label: "VPS2", sha256: "ab",
                 lastCheck: PlaceBook.Check(at: Date(), result: .same))
         ])
         let bridge = bridge(world)
@@ -189,19 +189,19 @@ struct PlacesTests {
     @Test func digestsTellTheValueNowFromAnEarlierOne() throws {
         let key = try Self.digestKey()
         var digests = ValueDigests()
-        digests.learn(name: "lh.env", revision: "r1", value: Data("OPENAI_API_KEY=CANARY-one\nOTHER=x\n".utf8), key: key)
+        digests.learn(name: "acme.env", revision: "r1", value: Data("OPENAI_API_KEY=CANARY-one\nOTHER=x\n".utf8), key: key)
         let one = PlaceBook.sha256(Data("CANARY-one".utf8))
         let two = PlaceBook.sha256(Data("CANARY-two".utf8))
         let compare = { (hash: String, revision: String) in
-            digests.compare(hash, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: key)
+            digests.compare(hash, name: "acme.env", field: "OPENAI_API_KEY", revision: revision, key: key)
         }
         #expect(compare(one, "r1") == .same)
         #expect(compare(two, "r1") == .different)
         // Each field is its own value: OTHER holds another.
-        #expect(digests.compare(one, name: "lh.env", field: "OTHER", revision: "r1", key: key) == .different)
+        #expect(digests.compare(one, name: "acme.env", field: "OTHER", revision: "r1", key: key) == .different)
         // After a rotation the value now was never seen: no guess.
         #expect(compare(one, "r2") == .notCompared)
-        digests.learn(name: "lh.env", revision: "r2", value: Data("OPENAI_API_KEY=CANARY-two\n".utf8), key: key)
+        digests.learn(name: "acme.env", revision: "r2", value: Data("OPENAI_API_KEY=CANARY-two\n".utf8), key: key)
         #expect(compare(one, "r2") == .old)
         #expect(compare(two.uppercased(), "r2") == .same)
         // A one-line file is its whole value.
@@ -252,25 +252,25 @@ struct PlacesTests {
         let chip = SoftwareRecipient()
         var vault = VaultFile(enclave: chip.publicKey, recovery: Age.X25519Identity().recipient)
         let value = Data("OPENAI_API_KEY=\(Self.canary)\n".utf8)
-        try vault.add(name: "lh.env", value: value)
-        let revision = try #require(vault.entries["lh.env"]?.revision)
+        try vault.add(name: "acme.env", value: value)
+        let revision = try #require(vault.entries["acme.env"]?.revision)
         let record = VaultEvents.recorder(store: VaultStore(directory: home.appendingPathComponent("vault")), file: file, key: { _ in key })
-        record(vault, "lh.env", revision, value)
+        record(vault, "acme.env", revision, value)
         let text = try String(contentsOf: file, encoding: .utf8)
         let plain = PlaceBook.sha256(Data(Self.canary.utf8))
         #expect(!text.contains(plain) && !text.contains(PlaceBook.sha256(value)) && !text.contains(Self.canary))
         let digests = ValueDigests.load(from: file)
-        #expect(digests.compare(plain, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: key) == .same)
+        #expect(digests.compare(plain, name: "acme.env", field: "OPENAI_API_KEY", revision: revision, key: key) == .same)
         // Without the chip key there is nothing to compare with: not compared, never an error or a guess.
-        #expect(digests.compare(plain, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: nil) == .notCompared)
+        #expect(digests.compare(plain, name: "acme.env", field: "OPENAI_API_KEY", revision: revision, key: nil) == .notCompared)
         // Another Mac's key makes other digests.
-        #expect(digests.compare(plain, name: "lh.env", field: "OPENAI_API_KEY", revision: revision, key: try Self.digestKey()) == .different)
+        #expect(digests.compare(plain, name: "acme.env", field: "OPENAI_API_KEY", revision: revision, key: try Self.digestKey()) == .different)
         // With no chip key, the recorder writes nothing.
         let other = home.appendingPathComponent("other.json")
-        VaultEvents.recorder(store: VaultStore(directory: home.appendingPathComponent("vault")), file: other)(vault, "lh.env", revision, value)
+        VaultEvents.recorder(store: VaultStore(directory: home.appendingPathComponent("vault")), file: other)(vault, "acme.env", revision, value)
         #expect(!FileManager.default.fileExists(atPath: other.path))
         // A file of plain hashes from before is dropped, never trusted.
-        try Data(#"{"keys":{"lh.env":{"r":"\#(plain)"}}}"#.utf8).write(to: other)
+        try Data(#"{"keys":{"acme.env":{"r":"\#(plain)"}}}"#.utf8).write(to: other)
         #expect(ValueDigests.load(from: other).entries.isEmpty)
     }
 

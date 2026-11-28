@@ -95,14 +95,14 @@ struct KeepWhatAKeyHasTests {
 struct FieldsInPartsTests {
     static let approved = #"""
         [{"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"gsc-token.json","provider":"google"},
-         {"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"youtube_token_restoiq.json","provider":"google"},
-         {"field":"client_id+secret","kind":"provider","path":"paypal-lh.json","provider":"paypal"},
-         {"field":"client_id+secret","kind":"provider","path":"paypal-recetas.json","provider":"paypal"}]
+         {"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"youtube_token_shop.json","provider":"google"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-acme.json","provider":"paypal"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-recipes.json","provider":"paypal"}]
         """#
     static let providers = ProviderDirectory([
         ProviderInfo(id: "google", name: "Google account", can_identify: true), ProviderInfo(id: "paypal", name: "PayPal", can_identify: true),
     ])
-    static let paths = ["gsc-token.json", "youtube_token_restoiq.json", "paypal-lh.json", "paypal-recetas.json"]
+    static let paths = ["gsc-token.json", "youtube_token_shop.json", "paypal-acme.json", "paypal-recipes.json"]
 
     @Test func aFieldTheListCannotVouchForYetIsKeptFromTheAgentsProposal() {
         // The list of a key whose field names were not read yet, as when the app has just opened.
@@ -119,10 +119,10 @@ struct FieldsInPartsTests {
     }
 
     @Test func aFieldTheListSaysTheFileLacksIsLeftOutAndSaid() {
-        let items = [CatalogItem(path: "paypal-lh.json", recipes: ["paypal"], labels: ["api_base", "client_id"])]
+        let items = [CatalogItem(path: "paypal-acme.json", recipes: ["paypal"], labels: ["api_base", "client_id"])]
         let proposal = SortProposal.read(Data(Self.approved.utf8), items: items, providers: Self.providers)
-        #expect(proposal.suggestion(for: "paypal-lh.json")?.kind == .provider("paypal", field: nil))
-        #expect(proposal.fieldsLeftOut == ["paypal-lh.json": "client_id+secret"])
+        #expect(proposal.suggestion(for: "paypal-acme.json")?.kind == .provider("paypal", field: nil))
+        #expect(proposal.fieldsLeftOut == ["paypal-acme.json": "client_id+secret"])
     }
 
     @Test func anEmptyFieldAlreadyWrittenIsDroppedAtTheNextWrite() {

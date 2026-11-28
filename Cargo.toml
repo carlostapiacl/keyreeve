@@ -1,11 +1,11 @@
 [package]
 name = "keyreeve"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT"
-description = "Rotate API keys on your own machine, with recipes the community writes for each provider."
+description = "A key vault for your Mac: keys sealed by the Secure Enclave, used by agents through a proxy without seeing them, with recipes the community writes for each provider."
 repository = "https://github.com/carlostapiacl/keyreeve"
-keywords = ["secrets", "rotation", "api-keys", "security", "cli"]
+keywords = ["secrets", "api-keys", "mcp", "agents", "security"]
 categories = ["command-line-utilities"]
 
 [dependencies]

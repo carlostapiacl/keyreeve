@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// Where each key lives, and how to update it there: a place is a key, a procedure that knows that kind of
-/// place, its parameters and a label a person reads, such as "VPS2 · /opt/lh/.env · OPENAI_API_KEY". It holds
+/// place, its parameters and a label a person reads, such as "VPS2 · /opt/acme/.env · OPENAI_API_KEY". It holds
 /// no value. A place receives the real key when it is updated, so it is pinned to the SHA-256 of the procedure
 /// a person approved with their fingerprint, and a procedure that changed does not run until they approve it
 /// again. The app owns this file; agents only propose places, which wait for the person.

@@ -10,8 +10,8 @@ propio de cada proveedor vive en una receta chica que escribe la comunidad.
 
 ![Un recorrido corto por la ventana de keyreeve: Inicio, Mis claves, una clave ofrecida a los agentes y Agentes, todo de ejemplo](docs/img/es/tour.gif)
 
-**Estado: temprano.** La bóveda, las herramientas para agentes y las pruebas se usan a diario en un Mac. El motor de rotación
-pasa el simulador, pero todavía no ha corrido contra un proveedor real. No hay descargas listas.
+**Estado: alpha** ([0.1.0-alpha.1](CHANGELOG.md)). La bóveda, las herramientas para agentes y las pruebas se usan a diario
+en un Mac. La rotación es experimental: pasa el simulador, pero todavía no ha corrido contra un proveedor real.
 
 ## Qué hace
 
@@ -21,23 +21,31 @@ pasa el simulador, pero todavía no ha corrido contra un proveedor real. No hay 
 - **Las prueba.** Una sola consulta de lectura por clave te dice si sigue funcionando y de quién es.
 - **Deja que los agentes las usen.** Un comando corre con un reemplazo de la misma forma. Un proxy local pone la clave real
   solo en las consultas que van al proveedor de esa clave. El agente ve la salida y nunca la clave.
-- **Las rota.** Una receta dice cómo crear y revocar una clave en un proveedor. Es la parte menos probada.
+- **Las rota (experimental).** Una receta dice cómo crear y revocar una clave en un proveedor.
 
 ## Instalar
 
-Necesitas macOS 14 o más nuevo, las Command Line Tools y [Rust](https://rustup.rs).
+En un Mac con Apple silicon y macOS 14 o más nuevo:
+
+```bash
+brew install --cask carlostapiacl/tap/keyreeve
+```
+
+Instala Keyreeve.app y el comando `keyreeve`. Keyreeve todavía no está firmado con un Developer ID de Apple, así que la
+primera vez macOS dice que no lo puede verificar. Ábrelo una vez desde **Ajustes del Sistema > Privacidad y seguridad >
+Abrir igualmente** (en macOS 14 también puedes hacer clic derecho en Keyreeve, en Aplicaciones, y elegir **Abrir**). La
+descarga también está en la [página de versiones](https://github.com/carlostapiacl/keyreeve/releases).
+
+En Linux, el comando `keyreeve` solo (pruebas, recetas y el proxy, sin bóveda): `brew install carlostapiacl/tap/keyreeve`.
+
+Para compilarlo tú necesitas las Command Line Tools y [Rust](https://rustup.rs):
 
 ```bash
 git clone https://github.com/carlostapiacl/keyreeve
 cd keyreeve
 app/build-app.sh
 ditto app/dist/Keyreeve.app /Applications/Keyreeve.app   # una vez
-open /Applications/Keyreeve.app
 ```
-
-Desde ahí, cada vez que corres `build-app.sh` se actualiza la copia de Aplicaciones. La compilación no está notarizada, así
-que macOS te avisa la primera vez. El comando `keyreeve` solo también corre en Linux:
-`cargo install --git https://github.com/carlostapiacl/keyreeve`.
 
 ## Los primeros cinco minutos
 

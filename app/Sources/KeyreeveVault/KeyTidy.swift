@@ -112,9 +112,9 @@ public enum KeyTidy {
     /// The convention, as the agent reads it in the tool's description and at the top of a review.
     public static let guide = """
         How keys are named and sorted (the tool refuses what breaks it, and says why):
-        - id: lower case, digits and dashes, at most 40. A provider's key starts with the provider: resend-lh, \
+        - id: lower case, digits and dashes, at most 40. A provider's key starts with the provider: resend-acme, \
         meta-hz, coolify-v2-deploy. A secret of the person's own software starts with its project: \
-        restoiq-erp-jwt-secret, mesa-token. Then the account or project, then what it is for, only if needed to tell \
+        shop-api-jwt-secret, desk-token. Then the account or project, then what it is for, only if needed to tell \
         two apart.
         - Renaming keeps the old id working (scripts and permissions that name it go on), so rename only to follow \
         this convention, never to taste.

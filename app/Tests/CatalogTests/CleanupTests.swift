@@ -12,8 +12,8 @@ struct CleanupTests {
         let mixed = "voz sk_AAAA1111 pagos sk_test_BBBB2222 sk_CCCC3333"
         #expect(KeySplit.keys(in: mixed, prefixes: ["sk_"], others: ["sk_live_", "sk_test_"]) == ["sk_AAAA1111", "sk_CCCC3333"])
         #expect(KeySplit.keys(in: mixed, prefixes: ["sk_live_", "sk_test_"], others: ["sk_"]) == ["sk_test_BBBB2222"])
-        let names = KeySplit.names(for: "mail/resend-hz.txt", count: 2) { $0 == "mail/resend-hz-1.txt" }
-        #expect(names == ["mail/resend-hz-2.txt", "mail/resend-hz-3.txt"])
+        let names = KeySplit.names(for: "mail/resend-globex.txt", count: 2) { $0 == "mail/resend-globex-1.txt" }
+        #expect(names == ["mail/resend-globex-2.txt", "mail/resend-globex-3.txt"])
         #expect(KeySplit.names(for: "token", count: 1) { _ in false } == ["token-1"])
     }
 

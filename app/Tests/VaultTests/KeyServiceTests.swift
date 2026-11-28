@@ -492,14 +492,14 @@ struct KeyServiceTests {
     /// agent the mark does not name otherwise asks for a fingerprint every day with no word.
     @Test func aKeyMarkedAlwaysThatStillAsksSaysWhy() throws {
         let f = Fixture()
-        f.whyAsked = "always is only for claude, and this was wapentakebot"
-        var request = KeyService.Request(op: "use", key: "netlify", program: "/usr/bin/curl", agent: "wapentakebot", reason: "bot")
+        f.whyAsked = "always is only for claude, and this was nightly-bot"
+        var request = KeyService.Request(op: "use", key: "netlify", program: "/usr/bin/curl", agent: "nightly-bot", reason: "bot")
         request.unattended = true
         request.anyProgram = true
         #expect(f.service.handle(request, caller: f.caller).ok)
         #expect(f.prompts.count == 1)
         let granted = try f.log.entries().first { $0.event == "granted" }
-        #expect(granted?.detail?.hasSuffix(", always is only for claude, and this was wapentakebot") == true)
+        #expect(granted?.detail?.hasSuffix(", always is only for claude, and this was nightly-bot") == true)
         // A caller that does not ask for "always" gets no such words.
         _ = f.service.handle(.init(op: "revoke"), caller: f.caller)
         #expect(f.use("netlify").ok)

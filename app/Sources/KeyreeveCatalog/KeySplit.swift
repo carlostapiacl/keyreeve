@@ -18,7 +18,7 @@ public enum KeySplit {
         return found
     }
 
-    /// Names for the new files beside the old one, such as `resend-hz-1.txt`, skipping names already taken.
+    /// Names for the new files beside the old one, such as `resend-globex-1.txt`, skipping names already taken.
     public static func names(for path: String, count: Int, taken: (String) -> Bool) -> [String] {
         let url = URL(fileURLWithPath: path)
         let ext = url.pathExtension

@@ -229,7 +229,7 @@ func serveKeys() throws {
         confirm: { prompt in (try? EnclaveRecipient.confirm(reason: prompt)) != nil },
         log: auditLog,
         paused: { AgentBridge.isPaused(home: home) },
-        revision: { source in (try? store.load())?.entries[source]?.revision },
+        revision: { source in (try? store.load())?.entries[source]?.permitRevision },
         openUnattended: { id, agent, source in
             // The person's own mark, read here and now: the key at "always", open to this agent, not paused.
             guard let policy = try? AgentPolicy.loadStrict(from: home.appendingPathComponent(AgentPolicy.fileName)), policy.level(of: id, at: Date()) == .always,

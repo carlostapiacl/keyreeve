@@ -104,6 +104,20 @@ struct VaultTests {
         #expect(throws: VaultError.self) { try file.renew(name: "b/missing.txt", value: value) }
     }
 
+    /// Permissions are tied to the sealing the person said yes to. Renewals keep it; a replaced value does not.
+    @Test func aRenewalKeepsThePermissionsAndAReplacementEndsThem() throws {
+        var file = try vault()
+        let approved = try #require(file.entries["a/key.txt"]).permitRevision
+        try file.renew(name: "a/key.txt", value: Data("RENEWED-1".utf8))
+        try file.renew(name: "a/key.txt", value: Data("RENEWED-2".utf8))
+        let renewed = try #require(file.entries["a/key.txt"])
+        #expect(renewed.revision != approved)
+        #expect(renewed.permitRevision == approved)
+        try file.replace(name: "a/key.txt", value: Data("ROTATED".utf8))
+        let replaced = try #require(file.entries["a/key.txt"])
+        #expect(replaced.permitRevision == replaced.revision && replaced.permitRevision != approved)
+    }
+
     /// A vault with copies that need no fingerprint is saved in a format older versions refuse, rather than read,
     /// drop those copies, and write back; without them it stays in the format every version reads.
     @Test func aVaultWithNoFingerprintCopiesIsOneOldVersionsRefuse() throws {

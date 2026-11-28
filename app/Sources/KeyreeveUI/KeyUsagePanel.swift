@@ -8,7 +8,7 @@ struct KeyUsagePanel: View {
     @ObservedObject var model: AppModel
     @State private var showingAll = false
 
-    private var identifiers: [KeyIndex.Key] { model.keyIndex.keys(forSource: item.path) }
+    private var identifiers: [KeyIndex.Key] { model.offeredKeys(forSource: item.path) }
     private var names: Set<String> { Set(identifiers.map(\.id)).union([item.path]) }
     private var grants: [KeyService.GrantInfo] { model.usage.grants.filter { names.contains($0.key) } }
     private var recent: [AuditLog.Entry] { Array(model.usage.entries.filter { names.contains($0.key) }.prefix(8)) }

@@ -11,7 +11,7 @@ struct KeyAccessPanel: View {
     @State private var newField = ""
 
     /// Every identifier of the file, offered to agents or not: the person sees them all.
-    private var identifiers: [KeyIndex.Key] { model.keyIndex.allKeys(forSource: item.path) }
+    private var identifiers: [KeyIndex.Key] { model.allKeys(forSource: item.path) }
     private var allowed: [String] { identifiers.flatMap { model.agentPolicy.commands[$0.id] ?? [] } }
 
     /// How agents reach this key through the proxy, as the permissions say now, one line per identifier.

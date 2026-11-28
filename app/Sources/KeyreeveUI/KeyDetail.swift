@@ -21,7 +21,7 @@ struct KeyDetail: View {
     @State private var showsMore = false
 
     private var isSealed: Bool { item.vault == .sealed || item.vault == .outdated }
-    private var identifiers: [KeyIndex.Key] { model.keyIndex.allKeys(forSource: item.path) }
+    private var identifiers: [KeyIndex.Key] { model.allKeys(forSource: item.path) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

@@ -55,7 +55,7 @@ extension AppModel {
     // MARK: Usage
 
     /// Names a file by its identifier when it has one, so the log reads the same from every side.
-    func auditName(of path: String) -> String { keyIndex.keys(forSource: path).first?.id ?? path }
+    func auditName(of path: String) -> String { offeredKeys(forSource: path).first?.id ?? path }
 
     func note(_ event: String, path: String, detail: String? = nil) {
         try? AuditLog(url: files.audit).append(event: event, key: auditName(of: path), detail: detail)
@@ -314,7 +314,7 @@ extension AppModel {
             message = T("%@ can print or send whatever it gets, so it cannot be allowed.", URL(fileURLWithPath: program).lastPathComponent)
             return
         }
-        guard let id = (keyIndex.keys(forSource: item.path).first ?? keyIndex.allKeys(forSource: item.path).first)?.id else { return }
+        guard let id = (offeredKeys(forSource: item.path).first ?? allKeys(forSource: item.path).first)?.id else { return }
         allow(program: program, keyID: id)
     }
 
@@ -390,11 +390,19 @@ extension AppModel {
     /// The agents a key can be opened to: those the usage log has seen and those already named in the permissions,
     /// besides Claude and Codex, so a bot that runs at login can be chosen like any agent.
     public var knownAgents: [String] {
+        // Worked out again only when the log or the permissions changed: each key's row asks for it.
+        var hasher = Hasher()
+        hasher.combine(usage.entries.count)
+        hasher.combine(usage.entries.first?.at)
+        hasher.combine(agentPolicy.agents.description)
+        let key = hasher.finalize()
+        if let memo = agentsMemo, memo.key == key { return memo.names }
         let seen = usage.entries.compactMap { $0.declared?.agent }
         let named = agentPolicy.agents.values.flatMap { $0 }
         // Remembered across refreshes, so a bot that has been quiet for a while is still offered.
         let names = Self.agentNames(seen + named + Self.rememberedAgents())
         Self.rememberAgents(names)
+        agentsMemo = (key, names)
         return names
     }
 
@@ -457,20 +465,20 @@ extension AppModel {
 
     /// Sealed keys that still need an identifier before an agent can be allowed.
     public var sealedWithoutIdentifier: Int {
-        items.filter { ($0.vault == .sealed || $0.vault == .outdated) && keyIndex.allKeys(forSource: $0.path).isEmpty }.count
+        items.filter { ($0.vault == .sealed || $0.vault == .outdated) && allKeys(forSource: $0.path).isEmpty }.count
     }
 
     /// Sealed keys with an identifier that no agent sees, since no person offered them yet.
     public var sealedNotOffered: Int {
         items.filter { item in
-            (item.vault == .sealed || item.vault == .outdated) && keyIndex.keys(forSource: item.path).isEmpty
-                && !keyIndex.allKeys(forSource: item.path).isEmpty
+            (item.vault == .sealed || item.vault == .outdated) && offeredKeys(forSource: item.path).isEmpty
+                && !allKeys(forSource: item.path).isEmpty
         }.count
     }
 
     public func disallow(program: String, for item: CatalogItem) {
         updatePolicy { policy in
-            for key in keyIndex.keys(forSource: item.path) {
+            for key in offeredKeys(forSource: item.path) {
                 policy.commands[key.id]?.removeAll { $0 == program }
                 policy.hashes[key.id]?[program] = nil
             }

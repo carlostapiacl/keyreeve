@@ -87,7 +87,21 @@ public final class AppModel: ObservableObject {
     var requestsStamp = ""
     /// keys.toml as the list on screen read it, so a change from elsewhere, such as an agent's add, shows up.
     var indexStamp = ""
-    @Published public var keyIndex = KeyIndex()
+    @Published public var keyIndex = KeyIndex() {
+        didSet {
+            offeredBySource = Dictionary(grouping: keyIndex.keys, by: \.source)
+            allBySource = Dictionary(grouping: keyIndex.all, by: \.source)
+        }
+    }
+    /// The keys of each file, looked up instead of searched: a view asks for them once per key it draws.
+    private var offeredBySource: [String: [KeyIndex.Key]] = [:]
+    private var allBySource: [String: [KeyIndex.Key]] = [:]
+    /// The keys of a file that agents may see.
+    public func offeredKeys(forSource source: String) -> [KeyIndex.Key] { offeredBySource[source] ?? [] }
+    /// The keys of a file, offered to agents or not.
+    public func allKeys(forSource source: String) -> [KeyIndex.Key] { allBySource[source] ?? [] }
+    /// The agents worked out from the log and the permissions, and what they were worked out from.
+    var agentsMemo: (key: Int, names: [String])?
     /// Where each key lives, and the procedures that update those places.
     @Published public var placesState = PlacesState()
     /// The usage log, newest first, and what the key service has open now.
@@ -264,20 +278,24 @@ public final class AppModel: ObservableObject {
     }
 
     private func apply(_ snapshot: Snapshot) {
-        firstLoadDone = true
-        hasCatalog = snapshot.hasCatalog
-        hasVault = snapshot.hasVault
-        items = snapshot.items
-        activity = snapshot.activity
-        places = snapshot.places
-        agentPolicy = snapshot.agentPolicy
-        unattendedSources = snapshot.unattendedSources
-        keyIndex = snapshot.keyIndex
+        // Only what changed is set: each change redraws what shows it, and a reload often changes nothing.
+        func set<T: Equatable>(_ path: ReferenceWritableKeyPath<AppModel, T>, _ value: T) {
+            if self[keyPath: path] != value { self[keyPath: path] = value }
+        }
+        set(\.firstLoadDone, true)
+        set(\.hasCatalog, snapshot.hasCatalog)
+        set(\.hasVault, snapshot.hasVault)
+        set(\.items, snapshot.items)
+        set(\.activity, snapshot.activity)
+        set(\.places, snapshot.places)
+        set(\.agentPolicy, snapshot.agentPolicy)
+        set(\.unattendedSources, snapshot.unattendedSources)
+        set(\.keyIndex, snapshot.keyIndex)
         indexStamp = snapshot.indexStamp
-        usage = snapshot.usage
-        if let providers = snapshot.providers { self.providers = providers }
-        if let rotations = snapshot.rotations { self.rotations = rotations }
-        if snapshot.inUse != inUse { inUse = snapshot.inUse }
+        set(\.usage, snapshot.usage)
+        if let providers = snapshot.providers { set(\.providers, providers) }
+        if let rotations = snapshot.rotations { set(\.rotations, rotations) }
+        set(\.inUse, snapshot.inUse)
         if !snapshot.problems.isEmpty { message = snapshot.problems.joined(separator: " ") }
         reloadRequests()
         publishOffered()
@@ -492,8 +510,47 @@ struct Snapshot: Sendable {
         self.problems = problems
         unattendedSources = Set((vault?.entries ?? [:]).filter { $0.value.unattendedSealed != nil }.keys)
         usage = UsageSnapshot(files: files)
-        providers = source.binary.map { CheckRunner.providers(binary: $0) }
-        rotations = source.binary.map { CheckRunner.rotations(binary: $0, files: files) }
+        // Each runs the command, so each runs again only when what it reads changed.
+        providers = source.binary.map { binary in
+            providerCache.value(stamp: fileStamp(binary, files.directory.appendingPathComponent("providers"),
+                                                               files.directory.appendingPathComponent("approved-providers.json"))) {
+                CheckRunner.providers(binary: binary)
+            }
+        }
+        rotations = source.binary.map { binary in
+            rotationCache.value(stamp: fileStamp(binary, files.rotations, files.directory.appendingPathComponent("vault"))) {
+                CheckRunner.rotations(binary: binary, files: files)
+            }
+        }
         inUse = KeyInUse.read(home: files.directory, index: keyIndex)
     }
 }
+
+/// What a command said, kept until the files it reads change: running it on every reload made each one slow.
+final class CheckCache<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var kept: (stamp: String, value: Value)?
+
+    func value(stamp: String, _ make: () -> Value) -> Value {
+        if let kept = lock.withLock({ kept }), kept.stamp == stamp { return kept.value }
+        let fresh = make()
+        lock.withLock { kept = (stamp, fresh) }
+        return fresh
+    }
+}
+
+/// The size and date of each file, and of each file in each folder, one level down.
+func fileStamp(_ urls: URL...) -> String {
+    let manager = FileManager.default
+    func one(_ path: String) -> String {
+        let attributes = try? manager.attributesOfItem(atPath: path)
+        return "\(path):\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0):\((attributes?[.size] as? Int) ?? 0)"
+    }
+    return urls.flatMap { url -> [String] in
+        let inside = (try? manager.contentsOfDirectory(atPath: url.path))?.sorted() ?? []
+        return [one(url.path)] + inside.map { one(url.appendingPathComponent($0).path) }
+    }.joined(separator: "|")
+}
+
+private let providerCache = CheckCache<ProviderDirectory>()
+private let rotationCache = CheckCache<[RotationStatus]>()

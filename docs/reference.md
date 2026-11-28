@@ -661,6 +661,19 @@ The program gets the key on stdin and answers in JSON, such as `{"result":"works
 environment and a time limit, and only after you approve it. Changing the file or the program by even a byte undoes the approval. A
 file that ships with keyreeve can never run a program.
 
+**Rotating with your program.** A service with no way to make keys over the web, such as one you reach only by ssh, can still rotate:
+add `rotates: true` to `auth`, and the same program makes and revokes keys. `KEYREEVE_MODE` says what to do, and the current key
+comes on stdin as always:
+
+- `create` gets the name for the new key in `KEYREEVE_KEY_NAME` and answers
+  `{"result":"created","fields":{"id":"tok-42"},"value":"<new key>"}`, or `{"result":"refused"}` when it made none. The id goes in
+  the rotation's journal, so it must not appear inside the key: give it a prefix of your own.
+- `check` tests a key, as before. The rotation uses it on the new key before any place receives it.
+- `revoke` gets the id in `KEYREEVE_ID` and answers `{"result":"revoked"}`, or `{"result":"not_found"}`.
+
+The new key never reaches a message, a log or the screen. The order is the one every rotation keeps: make, check, save, update the
+places, revoke the old one last.
+
 A secret with no provider, such as a signing key, is marked as internal, and no check is offered. Secrets for your own products go
 the same way: a file of yours, in that folder, never in a repository.
 

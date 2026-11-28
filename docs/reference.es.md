@@ -429,6 +429,36 @@ como la configuración y los informes de uso de Claude Code, y esas pasan igual:
 Cada comando que corre el agente hereda el reemplazo y el proxy, así que la terminal del agente puede usar la clave del
 modelo, sin leerla. Impedirlo necesita un sandbox, y keyreeve no lo es.
 
+Una clave para algo que no es el modelo funciona igual: va en la configuración del agente como variable, por ejemplo
+`{env:GITHUB_TOKEN}` en opencode, y se le da a `use` junto a la clave del modelo.
+
+### Un servidor MCP remoto que inicia sesión con OAuth
+
+Un servidor MCP remoto que pide iniciar sesión (OAuth 2.1, con descubrimiento, registro dinámico del cliente y PKCE) lo
+puede iniciar keyreeve una vez. keyreeve guarda el refresh token, renueva el token de acceso por su cuenta y vuelve a sellar
+el refresh token nuevo cuando el servidor lo rota. El agente solo recibe un token de acceso de reemplazo.
+
+```bash
+keyreeve-cli oauth-login https://mcp.example.com/mcp --provider example-mcp \
+  | keyreeve-vault add example-mcp --description "MCP de ejemplo, con sesión de keyreeve"
+```
+
+Abre el navegador, espera el inicio de sesión en una dirección local y escribe las credenciales en la bóveda, nunca en una
+terminal. También imprime la receta para guardar como `~/.keyreeve/providers/example-mcp.yaml`, con `gives: bearer` y el
+servidor. Aprueba ese servidor en **Herramientas > Proveedores**, ofrece la clave a los agentes y apunta la configuración
+del agente a ella:
+
+```json
+"mcp": { "example": { "type": "remote", "url": "https://mcp.example.com/mcp",
+  "headers": { "Authorization": "Bearer {env:EXAMPLE_MCP_TOKEN}" }, "oauth": false } }
+```
+
+```bash
+keyreeve-vault use example-mcp --as EXAMPLE_MCP_TOKEN -- opencode
+```
+
+Una renovación mantiene el nivel de la clave y los permisos que tenía. Probar una clave así nunca gasta su refresh token.
+
 ### Agentes por MCP
 
 Un agente puede usar claves por [MCP](https://modelcontextprotocol.io) con `keyreeve-vault mcp`. La sección **Agentes** de la app

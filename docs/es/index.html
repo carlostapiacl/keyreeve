@@ -161,12 +161,20 @@
 <figcaption>Agentes: qué puede usar cada agente, y cómo.</figcaption>
 </figure>
 
-<p>Los agentes se conectan por <a href="https://modelcontextprotocol.io">MCP</a> con <code>keyreeve-vault mcp</code>. Tienen <code>list_keys</code>, <code>use_key</code>, <code>request_access</code>, <code>run_with_key</code> y <code>rotate_key</code>, y mientras tú lo permitas, <code>inventory</code> y <code>propose</code> para ayudar a ordenar una carpeta de claves sueltas. Ninguna entrega un valor.</p>
+<p>Los agentes se conectan por <a href="https://modelcontextprotocol.io">MCP</a> con <code>keyreeve-vault mcp</code>. Tienen <code>list_keys</code>, <code>use_key</code>, <code>request_access</code>, <code>run_with_key</code> y <code>rotate_key</code>, y, para que tú las apruebes, herramientas para encontrar claves, traerlas, ordenar sus nombres y decir dónde vive cada una. Ninguna entrega un valor. Una <a href="https://github.com/carlostapiacl/keyreeve/blob/main/skills/keyreeve/SKILL.md">skill</a> le enseña a un agente a usarlas bien.</p>
 
 <figure class="shot">
 <img src="../img/es/vault.png" width="1600" height="927" alt="Seguridad y respaldo: la bóveda, las claves selladas y el respaldo.">
 <figcaption>Seguridad y respaldo. Cada clave sellada es un archivo <a href="https://age-encryption.org">age</a> estándar, así que puedes abrirla sin keyreeve.</figcaption>
 </figure>
+
+<h2>Agentes de código y servidores MCP</h2>
+
+<p>Un agente de código como opencode o Claude Code puede correr entero bajo <code>use</code>, así que su configuración, su base de datos y sus registros solo tienen reemplazos:</p>
+
+<pre><code>keyreeve-vault use openai,github --as openai=OPENAI_API_KEY,github=GITHUB_TOKEN --for 8h -- opencode</code></pre>
+
+<p>Su configuración apunta a las variables, también los encabezados de un servidor MCP remoto. Un servidor MCP remoto que pide iniciar sesión con OAuth lo inicia keyreeve una vez, y después guarda el refresh token y renueva el token de acceso por su cuenta. <a href="https://github.com/carlostapiacl/keyreeve/blob/main/docs/reference.es.md#un-servidor-mcp-remoto-que-inicia-sesión-con-oauth">Cómo</a>.</p>
 
 <h2>Instalar</h2>
 

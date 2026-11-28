@@ -416,6 +416,35 @@ Code's settings and usage reports, and those go through too: the proxy decides b
 Every command the agent runs inherits the stand-in and the proxy, so the agent's shell can use the model key, without
 reading it. Keeping it from that needs a sandbox, which keyreeve is not.
 
+A key for something other than the model works the same way: put it in the agent's config as a variable, such as
+`{env:GITHUB_TOKEN}` in opencode, and give it to `use` beside the model key.
+
+### A remote MCP server that signs in with OAuth
+
+A remote MCP server that asks you to sign in (OAuth 2.1, with discovery, dynamic client registration and PKCE) can be
+signed in once by keyreeve. keyreeve keeps the refresh token, renews the access token itself, and seals the new refresh
+token when the server rotates it. The agent only ever gets a stand-in access token.
+
+```bash
+keyreeve-cli oauth-login https://mcp.example.com/mcp --provider example-mcp \
+  | keyreeve-vault add example-mcp --description "Example MCP, signed in by keyreeve"
+```
+
+It opens the browser, waits for the sign-in on a loopback address, and writes the credentials to the vault, never to a
+terminal. It also prints the recipe to save as `~/.keyreeve/providers/example-mcp.yaml`, with `gives: bearer` and the
+server's host. Approve that host in **Tools > Providers**, offer the key to agents, and point the agent's config at it:
+
+```json
+"mcp": { "example": { "type": "remote", "url": "https://mcp.example.com/mcp",
+  "headers": { "Authorization": "Bearer {env:EXAMPLE_MCP_TOKEN}" }, "oauth": false } }
+```
+
+```bash
+keyreeve-vault use example-mcp --as EXAMPLE_MCP_TOKEN -- opencode
+```
+
+A renewal keeps the key's level and the permissions it had. A check of such a key never spends its refresh token.
+
 ### Agents over MCP
 
 An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. The app's **Agents** section shows

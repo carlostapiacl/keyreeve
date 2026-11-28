@@ -19,8 +19,8 @@ pasa el simulador, pero todavía no ha corrido contra un proveedor real. No hay 
   guardas en otro lado. Los archivos sellados son archivos [age](https://age-encryption.org) estándar, así que puedes
   abrirlos sin keyreeve.
 - **Las prueba.** Una sola consulta de lectura por clave te dice si sigue funcionando y de quién es.
-- **Deja que los agentes las usen.** Un agente corre un comando con un reemplazo de la misma forma. Un proxy local pone la
-  clave real solo en las consultas que van al proveedor de esa clave. El agente ve la salida y nunca la clave.
+- **Deja que los agentes las usen.** Un comando corre con un reemplazo de la misma forma. Un proxy local pone la clave real
+  solo en las consultas que van al proveedor de esa clave. El agente ve la salida y nunca la clave.
 - **Las rota.** Una receta dice cómo crear y revocar una clave en un proveedor. Es la parte menos probada.
 
 ## Instalar
@@ -35,128 +35,64 @@ ditto app/dist/Keyreeve.app /Applications/Keyreeve.app   # una vez
 open /Applications/Keyreeve.app
 ```
 
-Después de esa primera copia, cada vez que corres `build-app.sh` se actualiza la copia de Aplicaciones. Si Keyreeve estaba
-abierto, lo cierra antes y lo vuelve a abrir al final. La compilación no está notarizada, así que macOS te avisa la primera vez.
-
-El comando `keyreeve` solo, sin la app, también corre en Linux: `cargo install --git https://github.com/carlostapiacl/keyreeve`.
+Desde ahí, cada vez que corres `build-app.sh` se actualiza la copia de Aplicaciones. La compilación no está notarizada, así
+que macOS te avisa la primera vez. El comando `keyreeve` solo también corre en Linux:
+`cargo install --git https://github.com/carlostapiacl/keyreeve`.
 
 ## Los primeros cinco minutos
 
-1. **Abre la app** y aprieta **Trae tus claves**. Busca donde las herramientas guardan claves en este Mac (y en las carpetas
-   de proyectos que marques, para los `.env`) o en una carpeta que elijas, prueba cada clave y te muestra lo que encontró con
-   los valores tapados. Tú decides solo las dudosas y sellas con tu huella una vez. Tus archivos quedan donde están.
-2. **Crea la bóveda.** En **Seguridad y respaldo**, aprieta **Crear mi bóveda**. Anota la clave de recuperación que muestra
-   una sola vez, lejos de este Mac.
-3. **Sella una clave.** Copia una clave desde tu proveedor y aprieta **+** (Agregar clave). keyreeve reconoce el
-   proveedor por el inicio de la clave y la sella sin dejar un archivo en disco. Las claves que ya están en tu carpeta se
-   sellan desde **Seguridad y respaldo** con **Sellar**.
-4. **Elige qué ven los agentes.** Una clave que agregas con **+** queda ofrecida a los agentes con el nivel *Solo yo*: ven
-   su nombre y pueden pedirla. Una clave de tu carpeta no está ofrecida hasta que abres su página, vas a **Uso** y marcas
-   **Ofrecida a los agentes**, o le das un nivel. Después elige un nivel, por ejemplo *Preguntar*.
-5. **Conecta tu agente.** **Agentes** copia el comando que conecta Claude Code:
+La ventana tiene tres lugares: **Inicio** (lo que espera por ti y las claves en uso), **Mis claves** (la lista) y
+**Herramientas** (Agentes, Seguridad y respaldo, Rotación, Registro y Proveedores).
+
+1. **Trae tus claves.** En la primera pantalla, o después en **Herramientas > Seguridad y respaldo** o en
+   **Archivo > Traer claves…**. Busca donde las herramientas guardan claves en este Mac, o en una carpeta que elijas, prueba
+   cada clave y te muestra lo que encontró con los valores tapados. Tú decides las dudosas y sellas con una huella. Tus
+   archivos quedan donde están.
+2. **Crea la bóveda.** En **Herramientas > Seguridad y respaldo**, aprieta **Crear mi bóveda**. Anota la clave de
+   recuperación que muestra una sola vez, lejos de este Mac.
+3. **Agrega una clave.** Cópiala desde tu proveedor y aprieta **+**. keyreeve reconoce el proveedor por el inicio de la clave.
+4. **Ofrécela a los agentes.** En la página de la clave, en **Uso**, marca **Ofrecida a los agentes** y elige un nivel.
+5. **Conecta tu agente.** **Herramientas > Agentes** copia el comando para Claude Code:
    `claude mcp add --scope user keyreeve -- "<ruta>/keyreeve-vault" mcp`. Otros clientes MCP corren `keyreeve-vault mcp`.
 
-Ahora pídele al agente que use la clave. Llama a `use_key` con un comando como `curl`, tú lo apruebas con tu huella y el
-comando corre con el reemplazo. Desde una terminal funciona igual:
+Después pídele al agente que use la clave. Llama a `use_key` con un comando como `curl`, tú lo apruebas con tu huella y el
+comando corre con el reemplazo. Lo mismo desde una terminal:
 
 ```bash
 keyreeve-vault use github --reason "listar repos" -- gh repo list
-```
-
-Un proyecto que necesita varias claves las pide juntas: una ventana las muestra todas, desmarcas las que no quieras y una huella
-abre el resto, por 5 minutos, hasta que termine el comando, un día, o siempre para ese programa en esa carpeta. Guarda la lista
-como conjunto en **Agentes**.
-
-```bash
-keyreeve-vault use meta-ads,calcom,sentry -- python3 reporte.py
-keyreeve-vault use --set reporte-semanal -- python3 reporte.py
+keyreeve-vault use meta-ads,calcom,sentry -- python3 reporte.py   # varias claves, una ventana, una huella
 ```
 
 ![La página de una clave, en la pestaña Uso, ofrecida a los agentes](docs/img/es/key-usage.png)
 
-## Ofrecida o no
+## Agentes de código y servidores MCP
 
-Los agentes solo ven las claves que tú les ofreces. Una clave no ofrecida no aparece en `list_keys`, no se puede pedir y no se
-puede usar, ni por un agente ni con `keyreeve-vault use`. Los identificadores que se dan en bloque, con **Darles identificador**
-en **Agentes** o con `keyreeve migrate`, parten sin ofrecer. Si dejas de ofrecer una clave, también se cierra: se van su nivel, sus agentes y sus programas
-permitidos.
-
-## Cómo entran las claves
-
-Toda entrada a la bóveda deja el mismo rastro. Una clave sellada con **+**, **Trae tus claves** o **Sellar**, o desde una
-terminal o un agente con `keyreeve-vault add`, recibe un identificador en `keys.toml` que dice quién la agregó y cuándo. Agregar
-no pide huella y no permite leer nada de vuelta:
+Un agente de código puede correr entero bajo `use`, así que solo tiene reemplazos: su configuración, su base de datos y sus
+registros nunca tienen una clave real.
 
 ```bash
-pbpaste | keyreeve-vault add added/hosting --description "Hosting, producción" --tags trabajo
+keyreeve-vault use openai,github --as openai=OPENAI_API_KEY,github=GITHUB_TOKEN --for 8h -- opencode
 ```
 
-Una clave que agregó algo distinto de ti en la app no se ofrece a los agentes y espera en **Mis claves** bajo **Nuevas, sin
-revisar**, con un aviso en la barra de menús y en **Agentes**, como "claude agregó 21 claves". Revisar es mirarla, nombrarla y
-apretar **Marcar como revisada**, y no ofrece nada.
-
-`keyreeve-vault put` sobre una clave que ya está no la reemplaza. El valor nuevo espera al lado, la clave conserva el que tenía,
-y la app dice "Hay un valor nuevo para hosting esperando, de claude". Lo aceptas con tu huella, y el valor anterior queda
-sellado, o lo descartas. Solo la rotación de la propia clave la reemplaza directo. Una clave en la bóveda sin identificador,
-como una que selló una versión anterior, aparece como **Sellada sin registro** con un botón para darle uno, y `keyreeve-vault
-orphans` las lista.
+Su configuración apunta a las variables (`{env:OPENAI_API_KEY}` en opencode), también en los encabezados de un servidor MCP
+remoto. Un servidor MCP remoto que pide iniciar sesión con OAuth lo inicia keyreeve una vez, y después guarda el refresh
+token y renueva el token de acceso por su cuenta: ver
+[la referencia](docs/reference.es.md#un-servidor-mcp-remoto-que-inicia-sesión-con-oauth).
 
 ## Niveles
-
-Cada clave ofrecida tiene un nivel, que eliges en la app.
 
 | nivel | qué pasa |
 |---|---|
 | Solo yo | El que viene por defecto. Los agentes ven el nombre y pueden pedirla con `request_access`. Nada más. |
-| Preguntar | Una ventana muestra la clave, el comando y el motivo del agente. Eliges una vez o 1, 4, 8 o 24 horas, o la niegas, y confirmas con tu huella. |
+| Preguntar | Una ventana muestra la clave, el comando y el motivo del agente. La permites una vez o de 1 a 24 horas, con tu huella. |
 | Libre | Una huella y después cualquier comando hasta que cierres Keyreeve, un día como máximo. |
-| Siempre, sin huella | Una huella para sellar una segunda copia, y desde ahí los agentes la usan por el proxy sin preguntar, aunque reinicies. Déjalo para claves que solo leen. |
+| Siempre, sin huella | Los agentes la usan por el proxy sin preguntar, aunque reinicies. Déjalo para claves que solo leen. |
 
-La clave real (`keyreeve-vault get`, `--real`, `run_with_key`) pide tu huella cada vez. Lo que imprime ese comando te llega con la clave
-tachada (escrita tal cual, en base64 o en una URL), salvo que imprima en tu terminal. Cerrar Keyreeve, **Bloquear todo** en
-la barra de menú o `keyreeve-vault revoke` terminan todos los permisos.
-
-Una credencial OAuth, como un inicio de sesión de Google con refresh token, toma los mismos niveles. keyreeve guarda el refresh
-token y pide los tokens de acceso por su cuenta, así una tarea sin nadie al lado puede leer Search Console cada lunes sin tener
-ninguno de los dos.
+El valor real (`keyreeve-vault get`, `--real`, `run_with_key`) pide tu huella cada vez. Cerrar Keyreeve, **Bloquear todo**
+en la barra de menú o `keyreeve-vault revoke` terminan todos los permisos. Cada sí, no y uso queda en
+`~/.keyreeve/audit.jsonl`, sin valores y con cada línea encadenada a la anterior.
 
 ![La sección Agentes, con las claves ofrecidas y sus niveles](docs/img/es/agents.png)
-
-## Cómo la usan los agentes
-
-Los agentes se conectan por [MCP](https://modelcontextprotocol.io) con `keyreeve-vault mcp`. Ninguna herramienta entrega el
-valor de una clave.
-
-| herramienta | qué hace |
-|---|---|
-| `list_keys` | las claves ofrecidas que este agente puede usar, las que tiene cerradas y los proveedores sin clave guardada |
-| `use_key` | corre un comando con el reemplazo, a través del proxy local |
-| `request_access` | te pide abrir una clave cerrada, o varias a la vez con `keys`, o guardar una para un proveedor |
-| `run_with_key` | corre un programa que tú permitiste, fijado por su SHA-256, con la clave real en una variable |
-| `rotate_key` | te pide rotar una clave sellada |
-| `inventory`, `propose` | leen la carpeta sin valores y proponen cambios, solo mientras tú lo permites |
-| `review_keys`, `propose_tidy` | ven lo que le falta a cada clave y cómo se usa, y proponen ordenar nombres, proyectos y notas, que apruebas con un clic |
-| `list_places`, `propose_places` | ven dónde viven las claves ofrecidas y proponen lugares nuevos, que apruebas con tu huella |
-| `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
-| `propose_bring` | propone cuáles sellar de las encontradas; tú la revisas en Traer y sellas con una sola huella |
-
-Cada sí, cada no y cada uso queda en `~/.keyreeve/audit.jsonl`, sin valores. Cada línea lleva el hash de la anterior, así
-`keyreeve-vault audit --verify` encuentra una edición.
-
-## Dónde vive cada clave
-
-La página de una clave dice dónde vive: "en el VPS2 en `/opt/lh/.env` como `OPENAI_API_KEY`, y en la app X de Coolify". Cada lugar es
-una clave, un procedimiento y sus parámetros. Un procedimiento es un script pequeño que conoce un tipo de lugar: `apply` recibe el valor
-nuevo por stdin y lo pone ahí, y `check` imprime solo el SHA-256 del valor que hay, o `absent`. Nunca contiene una clave, así que los
-tuyos pueden vivir en git, en `~/.keyreeve/procedures`. Vienen seis: `ssh-env`, `github-secret`, `vercel-env`, `netlify-env`,
-`coolify-env` y `supabase-secret`.
-
-**Revisar lugares** le pide a cada lugar su hash y lo compara con la bóveda: igual, un valor anterior, otro valor, o no está. No
-necesita huella y no muestra ningún valor, así que después de una rotación ves dónde se sigue usando la clave antigua. **Actualizar**
-pone el valor actual en un lugar, y una rotación los actualiza todos antes de revocar la clave antigua. Un lugar queda fijado al hash de
-su procedimiento cuando lo apruebas: un procedimiento que cambió no corre hasta que lo apruebes de nuevo. Un agente puede encontrar
-lugares por su cuenta, por ejemplo leyendo qué variables nombra el archivo env de un servidor, y proponerlos con `propose_places`; tú
-los revisas y los apruebas con una huella.
 
 ## Recetas
 
@@ -171,21 +107,24 @@ auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /user }
 ```
 
-Una receta es solo datos y no puede correr código. Habla por HTTPS solo con los servidores que declara, sin redirecciones.
-keyreeve trae 33 recetas, y 22 ya pasaron una prueba con una clave real. Las tuyas van en `~/.keyreeve/providers/`.
+Una receta es solo datos y no puede correr código. Habla por HTTPS solo con los servidores que declara. keyreeve trae 33
+recetas; las tuyas van en `~/.keyreeve/providers/`, y tú apruebas cada servidor nuevo.
 
 ## Seguridad
 
-keyreeve cuida claves. No es un sandbox: un programa que corre con tu usuario puede hacer lo mismo que tú. El código de la
-bóveda no ha tenido revisión externa. [THREAT_MODEL.md](THREAT_MODEL.md) dice de qué protege y de qué no, y
-[SECURITY.md](SECURITY.md) dice cómo reportar una vulnerabilidad.
+keyreeve cuida claves. No es un sandbox: un programa que corre con tu usuario puede hacer lo mismo que tú, y un comando que
+un agente corre con un reemplazo puede usar la clave, sin leerla. El código de la bóveda no ha tenido revisión externa.
+[THREAT_MODEL.md](THREAT_MODEL.md) dice de qué protege y de qué no, y [SECURITY.md](SECURITY.md) dice cómo reportar una
+vulnerabilidad.
 
 ## Más
 
-- [docs/reference.es.md](docs/reference.es.md): la bóveda desde una terminal, `keys.toml` y `keyreeve migrate`, claves SSH,
-  archivos env, la barra de menú, las pruebas, los campos de una receta y la rotación.
-- [CONTRIBUTING.es.md](CONTRIBUTING.es.md): lo que más sirve es una receta para un proveedor que uses.
-- [Código de conducta](CODE_OF_CONDUCT.md)
+La [referencia](docs/reference.es.md) tiene el resto: [ofrecida o no](docs/reference.es.md#ofrecida-a-los-agentes),
+[cómo entran las claves](docs/reference.es.md#cómo-entran-las-claves),
+[todas las herramientas MCP](docs/reference.es.md#agentes-por-mcp),
+[dónde vive una clave](docs/reference.es.md#dónde-vive-una-clave), [rotación](docs/reference.es.md#rotar-una-clave), los
+comandos de terminal y los campos de las recetas. [CONTRIBUTING.es.md](CONTRIBUTING.es.md): lo más útil es una receta para
+un proveedor que uses. Una [skill para agentes](skills/keyreeve/SKILL.md) le enseña a un agente a usar bien keyreeve.
 
 ## Licencia
 

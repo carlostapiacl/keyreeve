@@ -18,8 +18,8 @@ simulator but has not run against a real provider yet. There are no prebuilt dow
 - **Seals keys.** Each key is sealed for a key in your Mac's Secure Enclave and for a recovery key you keep elsewhere. The
   sealed files are standard [age](https://age-encryption.org) files, so you can open them without keyreeve.
 - **Checks them.** One read-only request per key tells you whether it still works, and whose it is.
-- **Lets agents use them.** An agent runs a command with a stand-in of the same shape. A local proxy puts the real key only
-  on requests to that key's provider. The agent sees the output and never the key.
+- **Lets agents use them.** A command runs with a stand-in of the same shape. A local proxy puts the real key only on
+  requests to that key's provider. The agent sees the output and never the key.
 - **Rotates them.** A recipe says how to create and revoke a key at a provider. This part is the least tested.
 
 ## Install
@@ -34,126 +34,61 @@ ditto app/dist/Keyreeve.app /Applications/Keyreeve.app   # once
 open /Applications/Keyreeve.app
 ```
 
-After that first copy, each run of `build-app.sh` updates the copy in /Applications. If Keyreeve was open, it quits it first
-and opens it again at the end. The build is not notarized, so macOS warns you the first time.
-
-The `keyreeve` command alone, without the app, runs on Linux too: `cargo install --git https://github.com/carlostapiacl/keyreeve`.
+Each later run of `build-app.sh` updates the copy in /Applications. The build is not notarized, so macOS warns you the
+first time. The `keyreeve` command alone runs on Linux too: `cargo install --git https://github.com/carlostapiacl/keyreeve`.
 
 ## The first five minutes
 
-1. **Open the app** and press **Bring in your keys**. It looks where tools keep keys on this Mac (and in the project
-   folders you turn on for `.env` files) or in a folder you choose, checks each key, and shows what it found with the values
-   hidden. You decide only the doubtful ones, and seal with your fingerprint once. Your files stay where they are.
-2. **Create the vault.** In **Security and backup**, press **Create my vault**. Write down the recovery key it shows once,
-   away from this Mac.
-3. **Seal a key.** Copy a key from your provider and press **+** (Add a key). keyreeve tells the provider from how the key
-   starts and seals it with no file on disk. Keys already in your folder are sealed from **Security and backup** with
-   **Seal**.
-4. **Choose what agents see.** A key you add with **+** is offered to agents at the level *Only me*: they see its name
-   and can ask for it. A key from your folder is not offered until you open its page, go to **Usage** and check
-   **Offered to agents**, or give it a level. Then pick a level, such as *Ask*.
-5. **Connect your agent.** **Agents** copies the command that connects Claude Code:
+The window has three places: **Home** (what waits on you and the keys in use), **My keys** (the list) and **Tools**
+(Agents, Security and backup, Rotation, Log and Providers).
+
+1. **Bring in your keys.** On the first screen, or later in **Tools > Security and backup** or **File > Bring in keys…**.
+   It looks where tools keep keys on this Mac, or in a folder you choose, checks each key and shows what it found with the
+   values hidden. You decide the doubtful ones and seal with one fingerprint. Your files stay where they are.
+2. **Create the vault.** In **Tools > Security and backup**, press **Create my vault**. Write down the recovery key it
+   shows once, away from this Mac.
+3. **Add a key.** Copy it from your provider and press **+**. keyreeve tells the provider from how the key starts.
+4. **Offer it to agents.** On the key's page, under **Usage**, check **Offered to agents** and pick a level.
+5. **Connect your agent.** **Tools > Agents** copies the command for Claude Code:
    `claude mcp add --scope user keyreeve -- "<path>/keyreeve-vault" mcp`. Other MCP clients run `keyreeve-vault mcp`.
 
-Now ask the agent to use the key. It calls `use_key` with a command such as `curl`, you approve it with your fingerprint,
-and the command runs with a stand-in. The same works from a terminal:
+Then ask the agent to use the key. It calls `use_key` with a command such as `curl`, you approve with your fingerprint, and
+the command runs with a stand-in. The same from a terminal:
 
 ```bash
 keyreeve-vault use github --reason "list repos" -- gh repo list
-```
-
-A project that needs several keys asks for them together: one window lists them all, you untick what you do not want, and
-one fingerprint opens the rest, for 5 minutes, until the command finishes, a day, or always for that program in that folder.
-Save the list as a set under **Agents**.
-
-```bash
-keyreeve-vault use meta-ads,calcom,sentry -- python3 report.py
-keyreeve-vault use --set weekly-report -- python3 report.py
+keyreeve-vault use meta-ads,calcom,sentry -- python3 report.py   # several keys, one window, one fingerprint
 ```
 
 ![A key's page, on the Usage tab, with the key offered to agents](docs/img/key-usage.png)
 
-## Offered or not
+## Coding agents and MCP servers
 
-Agents only see the keys you offer them. A key that is not offered does not appear in `list_keys`, cannot be asked for and
-cannot be used, by agents or by `keyreeve-vault use`. Identifiers given in bulk, by **Give them identifiers** in **Agents** or by
-`keyreeve migrate`, start not offered.
-Taking a key back closes it too: its level, agents and allowed programs go.
-
-## How keys get in
-
-Every way into the vault leaves the same trace. A key sealed with **+**, **Bring in your keys** or **Seal**, or from a
-terminal or an agent with `keyreeve-vault add`, gets an identifier in `keys.toml` that says who added it and when. Adding needs
-no fingerprint and cannot read anything back:
+A coding agent can run under `use` as a whole, so it holds only stand-ins: its config, its database and its logs never
+have a real key.
 
 ```bash
-pbpaste | keyreeve-vault add added/hosting --description "Hosting, production" --tags work
+keyreeve-vault use openai,github --as openai=OPENAI_API_KEY,github=GITHUB_TOKEN --for 8h -- opencode
 ```
 
-A key that anything other than you in the app added is not offered to agents, and waits in **My keys** under **New, not
-reviewed**, with a notice in the menu bar and in **Agents**, such as "claude added 21 keys". Reviewing is looking at it, naming
-it and pressing **Mark reviewed**, and it offers nothing.
-
-`keyreeve-vault put` on a key already there does not replace it. The new value waits beside it, the key keeps the value it had,
-and the app says "A new value for hosting is waiting, from claude". You accept it with your fingerprint, and the old value
-stays sealed, or you discard it. Only the key's own rotation replaces it directly. A key in the vault with no identifier, such
-as one an older version sealed, shows as **Sealed without a record** with a button to give it one, and `keyreeve-vault
-orphans` lists them.
+Point its config at the variables (`{env:OPENAI_API_KEY}` in opencode), including the headers of a remote MCP server. A
+remote MCP server that signs in with OAuth is signed in once by keyreeve, which then keeps the refresh token and renews
+the access token itself: see [the reference](docs/reference.md#a-remote-mcp-server-that-signs-in-with-oauth).
 
 ## Levels
-
-Each offered key has a level, set in the app.
 
 | level | what happens |
 |---|---|
 | Only me | The default. Agents see the name and can ask for it with `request_access`. Nothing else. |
-| Ask | A window shows the key, the command and the agent's reason. You choose once or 1, 4, 8 or 24 hours, or deny, and confirm with your fingerprint. |
+| Ask | A window shows the key, the command and the agent's reason. You allow it once or for 1 to 24 hours, with your fingerprint. |
 | Free | One fingerprint, then any command until you quit Keyreeve, for a day at most. |
-| Always, no fingerprint | One fingerprint to seal a second copy, then agents use it through the proxy with no question, across restarts. Keep it for keys that only read. |
+| Always, no fingerprint | Agents use it through the proxy with no question, across restarts. Keep it for keys that only read. |
 
-The real key itself (`keyreeve-vault get`, `--real`, `run_with_key`) asks for your fingerprint every time. What such a command prints reaches you with the key
-taken out (written plainly, in base64 or in a URL) unless it prints to your terminal. Quitting
-Keyreeve, **Lock everything** in the menu bar or `keyreeve-vault revoke` ends every permission.
-
-An OAuth credential, such as a Google sign-in with a refresh token, takes the same levels. keyreeve keeps the refresh token
-and gets the access tokens itself, so an unattended job can read Search Console every Monday and never hold either.
+The real value (`keyreeve-vault get`, `--real`, `run_with_key`) asks for your fingerprint every time. Quitting Keyreeve,
+**Lock everything** in the menu bar or `keyreeve-vault revoke` ends every permission. Every yes, no and use goes in
+`~/.keyreeve/audit.jsonl`, with no values and each line chained to the one before.
 
 ![The Agents section, with the keys offered to agents and their levels](docs/img/agents.png)
-
-## How agents use it
-
-Agents connect over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. No tool returns a key's value.
-
-| tool | what it does |
-|---|---|
-| `list_keys` | the offered keys this agent may use, the ones closed to it, and providers with no key saved yet |
-| `use_key` | runs a command with a stand-in, through the local proxy |
-| `request_access` | asks you to open a closed key, or several at once with `keys`, or to save one for a provider |
-| `run_with_key` | runs a program you allowed, pinned by its SHA-256, with the real key in one variable |
-| `rotate_key` | asks you to rotate a sealed key |
-| `inventory`, `propose` | read the folder without values and propose changes, only while you allow it |
-| `review_keys`, `propose_tidy` | see what each key lacks and how it is used, and propose tidying names, projects and notes, which you approve with one click |
-| `list_places`, `propose_places` | see where offered keys live and propose new places, which you approve with your fingerprint |
-| `find_keys` | finds keys everywhere in your home folder, in the usual places or in folders, with no value and no provider check |
-| `propose_bring` | proposes which keys found to seal; you review it in Bring in and seal with one fingerprint |
-
-Every yes, no and use goes in `~/.keyreeve/audit.jsonl`, with no values. Each line carries the hash of the one before, so
-`keyreeve-vault audit --verify` finds an edit.
-
-## Where each key lives
-
-A key's page says where it lives: "on VPS2 in `/opt/lh/.env` as `OPENAI_API_KEY`, and in Coolify app X". Each place is a key, a
-procedure and its parameters. A procedure is a small script that knows one kind of place: `apply` gets the new value on stdin and
-puts it there, and `check` prints only the SHA-256 of the value in place, or `absent`. It never holds a key, so your own can live in
-git, in `~/.keyreeve/procedures`. Six ship: `ssh-env`, `github-secret`, `vercel-env`, `netlify-env`, `coolify-env` and
-`supabase-secret`.
-
-**Check places** asks each place for its hash and compares it with the vault: same, an older value, another value, or absent. It
-needs no fingerprint and shows no value, so after a rotation you see where the old key is still in use. **Update** puts the current
-value in one place, and a rotation updates them all before the old key is revoked. A place is pinned to its procedure's hash when
-you approve it: a procedure that changed does not run until you approve it again. An agent can find places on its own, such as by
-reading which variables a server's env file names, and propose them with `propose_places`; you review them and approve with one
-fingerprint.
 
 ## Recipes
 
@@ -168,21 +103,23 @@ auth: { header: Authorization, prefix: "Bearer " }
 verify: { method: GET, path: /user }
 ```
 
-A recipe is data and cannot run code. It talks HTTPS only to the hosts it lists, with redirects off. keyreeve ships 33
-recipes, and 22 have passed a check with a real key. Your own go in `~/.keyreeve/providers/`.
+A recipe is data and cannot run code. It talks HTTPS only to the hosts it lists. keyreeve ships 33 recipes; your own go in
+`~/.keyreeve/providers/`, and you approve each new host.
 
 ## Security
 
-keyreeve guards keys. It is not a sandbox: a program running as you can do what you can. The vault's code has had no outside
-review. [THREAT_MODEL.md](THREAT_MODEL.md) lists what it protects against and what it does not, and
-[SECURITY.md](SECURITY.md) says how to report a vulnerability.
+keyreeve guards keys. It is not a sandbox: a program running as you can do what you can, and a command an agent runs with
+a stand-in can use the key, without reading it. The vault's code has had no outside review.
+[THREAT_MODEL.md](THREAT_MODEL.md) lists what it protects against and what it does not, and [SECURITY.md](SECURITY.md)
+says how to report a vulnerability.
 
 ## More
 
-- [docs/reference.md](docs/reference.md): the vault from a terminal, `keys.toml` and `keyreeve migrate`, SSH keys, env
-  files, the menu bar, checks, recipe fields and rotation.
-- [CONTRIBUTING.md](CONTRIBUTING.md): the most useful contribution is a recipe for a provider you use.
-- [Code of Conduct](CODE_OF_CONDUCT.md)
+The [reference](docs/reference.md) has the rest: [offered or not](docs/reference.md#offered-to-agents),
+[how keys get in](docs/reference.md#how-keys-get-in), [every MCP tool](docs/reference.md#agents-over-mcp),
+[where a key lives](docs/reference.md#where-a-key-lives), [rotation](docs/reference.md#rotate-a-key), the terminal
+commands and the recipe fields. [CONTRIBUTING.md](CONTRIBUTING.md): the most useful contribution is a recipe for a
+provider you use. An [agent skill](skills/keyreeve/SKILL.md) teaches an agent to use keyreeve well.
 
 ## License
 

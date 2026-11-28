@@ -8,7 +8,7 @@ provider's quirks live in a small recipe file the community writes.
 [Website](https://carlostapiacl.github.io/keyreeve/) · [Español](README.es.md) · [Reference](docs/reference.md) ·
 [Threat model](THREAT_MODEL.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-![The keyreeve window with the list of keys, all made-up examples](docs/img/keys.png)
+![A short tour of the keyreeve window: Home, My keys, a key offered to agents and Agents, all made-up examples](docs/img/tour.gif)
 
 **Status: early.** The vault, the agent tools and the checks are used every day on one Mac. The rotation engine passes the
 simulator but has not run against a real provider yet. There are no prebuilt downloads.

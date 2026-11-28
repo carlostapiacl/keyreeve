@@ -37,3 +37,6 @@ cd app && swift test
 
 `app/build-app.sh` compila la app. Si hay una copia en Aplicaciones la reemplaza, y si Keyreeve estaba abierto lo cierra y lo
 vuelve a abrir, así que no lo corras si solo quieres los tests.
+
+Después de un cambio en la ventana, `app/docs-screenshots.sh` vuelve a dibujar las capturas del README y del sitio, desde
+las vistas reales con claves inventadas, y el GIF del recorrido si está ffmpeg. Sube las imágenes con el cambio.

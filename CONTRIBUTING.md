@@ -80,6 +80,9 @@ the tests.
 Run `swift test` in `app/`, which needs only the Command Line Tools. Set `KEYREEVE_RENDER_DIR` to a folder to keep
 images of each view, in light and dark. CI builds the app and runs the test groups a change reaches, on macOS. The rendered images are only made by hand.
 
+After a change to the window, `app/docs-screenshots.sh` draws the screenshots of the README and the site again, from
+the real views over made-up keys, and the tour GIF when ffmpeg is installed. Commit the images with the change.
+
 ## Changing the engine
 
 `cargo test` must pass, and so must `cargo clippy --all-targets -- -D warnings`. If you change the order of

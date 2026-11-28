@@ -8,7 +8,7 @@ propio de cada proveedor vive en una receta chica que escribe la comunidad.
 [Sitio](https://carlostapiacl.github.io/keyreeve/es/) · [English](README.md) · [Referencia](docs/reference.es.md) ·
 [Modelo de amenazas](THREAT_MODEL.md) · [Seguridad](SECURITY.md) · [Cómo contribuir](CONTRIBUTING.es.md)
 
-![La ventana de keyreeve con la lista de claves, todas de ejemplo](docs/img/es/keys.png)
+![Un recorrido corto por la ventana de keyreeve: Inicio, Mis claves, una clave ofrecida a los agentes y Agentes, todo de ejemplo](docs/img/es/tour.gif)
 
 **Estado: temprano.** La bóveda, las herramientas para agentes y las pruebas se usan a diario en un Mac. El motor de rotación
 pasa el simulador, pero todavía no ha corrido contra un proveedor real. No hay descargas listas.

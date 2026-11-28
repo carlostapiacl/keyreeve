@@ -398,6 +398,25 @@ usó este proyecto**, que sugiere las claves que usó una carpeta y un programa 
 `~/.keyreeve/sets.toml`. Un conjunto por sí solo no permite nada y solo lista claves ofrecidas a agentes. Ninguna herramienta de los
 agentes crea uno.
 
+### La clave del modelo de un agente de código
+
+Un agente de código como opencode o Claude Code puede correr entero bajo `use`, así el programa tiene solo un reemplazo de la
+clave de su modelo:
+
+```bash
+keyreeve-vault use anthropic --as ANTHROPIC_API_KEY --for 8h -- opencode
+keyreeve-vault use anthropic --as ANTHROPIC_API_KEY --for 8h -- claude
+```
+
+Lo que el agente anote lleva entonces el reemplazo: su configuración, su base de datos, sus registros y lo que devuelve su
+propia API. Se probaron los dos el 2026-11-28, opencode 1.18 y Claude Code: sus pedidos llegaron al proveedor por el proxy,
+porque Bun y Node leen el proxy y el certificado que pone `use`. Una respuesta puede tardar minutos en empezar, y el proxy
+espera lo mismo que los clientes de los propios proveedores. El agente también manda la clave a otras rutas del mismo host,
+como la configuración y los informes de uso de Claude Code, y esas pasan igual: el proxy decide por host, no por ruta.
+
+Cada comando que corre el agente hereda el reemplazo y el proxy, así que la terminal del agente puede usar la clave del
+modelo, sin leerla. Impedirlo necesita un sandbox, y keyreeve no lo es.
+
 ### Agentes por MCP
 
 Un agente puede usar claves por [MCP](https://modelcontextprotocol.io) con `keyreeve-vault mcp`. La sección **Agentes** de la app

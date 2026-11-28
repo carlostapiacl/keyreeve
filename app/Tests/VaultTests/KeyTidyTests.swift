@@ -6,31 +6,31 @@ struct KeyTidyTests {
     static func index() -> KeyIndex {
         var index = KeyIndex()
         index.keys = [
-            KeyIndex.Key(id: "resend-lh", source: "resend-lh.txt", provider: "resend", project: "liquidity-hunters"),
+            KeyIndex.Key(id: "resend-acme", source: "resend-acme.txt", provider: "resend", project: "acme-labs"),
             KeyIndex.Key(id: "mykey", source: "mykey.txt", provider: "resend"),
-            KeyIndex.Key(id: "restoiq-jwt", source: "jwt.txt", project: "restoiq", description: "JWT del backend"),
+            KeyIndex.Key(id: "shop-jwt", source: "jwt.txt", project: "shop", description: "JWT del backend"),
         ]
         index.unoffered = [KeyIndex.Key(id: "hidden-one", source: "hidden.txt")]
         return index
     }
 
-    static let visible: Set<String> = ["resend-lh", "mykey", "restoiq-jwt"]
+    static let visible: Set<String> = ["resend-acme", "mykey", "shop-jwt"]
 
     func check(_ changes: [[String: Any]], usage: [String: KeyTidy.Use] = [:]) -> (accepted: [KeyTidy.Change], refused: [String]) {
         KeyTidy.check(changes, index: Self.index(), providers: ["resend", "meta"], visible: Self.visible, usage: usage)
     }
 
     @Test func aRenameThatFollowsTheConventionIsAccepted() {
-        let result = check([["key": "mykey", "id": "resend-hz", "project": "hernan-zurita", "why": "read hz/.env: RESEND_API_KEY"]])
+        let result = check([["key": "mykey", "id": "resend-globex", "project": "globex", "why": "read globex/.env: RESEND_API_KEY"]])
         #expect(result.refused.isEmpty)
-        #expect(result.accepted.first?.id == "resend-hz")
+        #expect(result.accepted.first?.id == "resend-globex")
     }
 
     @Test func whatBreaksTheConventionComesBackWithTheReason() {
         let result = check([
             ["key": "mykey", "id": "my-resend", "why": "looks nicer this way"],
-            ["key": "resend-lh", "id": "restoiq-jwt", "why": "taken on purpose here"],
-            ["key": "restoiq-jwt", "description": "token=abcdef1234567890 for the api", "why": "copied from the file"],
+            ["key": "resend-acme", "id": "shop-jwt", "why": "taken on purpose here"],
+            ["key": "shop-jwt", "description": "token=abcdef1234567890 for the api", "why": "copied from the file"],
             ["key": "hidden-one", "description": "x", "why": "not visible to this agent"],
         ])
         #expect(result.accepted.isEmpty)
@@ -43,14 +43,14 @@ struct KeyTidyTests {
 
     @Test func aShortStartThePersonAlreadyUsesForAProjectCounts() {
         var index = Self.index()
-        for name in ["lh-a", "lh-b", "lh-c"] {
-            index.keys.append(KeyIndex.Key(id: name, source: "\(name).txt", project: "liquidity-hunters"))
+        for name in ["acme-a", "acme-b", "acme-c"] {
+            index.keys.append(KeyIndex.Key(id: name, source: "\(name).txt", project: "acme-labs"))
         }
         let result = KeyTidy.check(
-            [["key": "resend-lh", "id": "lh-mail", "provider": "resend", "why": "the LH mail key, read lh/.env"]],
+            [["key": "resend-acme", "id": "acme-mail", "provider": "resend", "why": "the Acme mail key, read acme/.env"]],
             index: index, providers: ["resend"], visible: Self.visible, usage: [:])
         #expect(result.refused.isEmpty)
-        #expect(KeyTidy.projectPrefixes(index)["liquidity-hunters"] == ["lh"])
+        #expect(KeyTidy.projectPrefixes(index)["acme-labs"] == ["acme"])
     }
 
     @Test func aKeyUsedLatelyIsNotArchived() {
@@ -65,7 +65,7 @@ struct KeyTidyTests {
     @Test func aWhyIsNeededAndAnUnknownProviderIsRefused() {
         let result = check([
             ["key": "mykey", "description": "Resend de HZ"],
-            ["key": "restoiq-jwt", "provider": "madeup", "why": "guessed from the name"],
+            ["key": "shop-jwt", "provider": "madeup", "why": "guessed from the name"],
         ])
         #expect(result.accepted.isEmpty)
         #expect(result.refused.count == 2)
@@ -73,16 +73,16 @@ struct KeyTidyTests {
 
     @Test func aRenamedKeyKeepsItsOldNameWorking() throws {
         var index = Self.index()
-        let change = KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")
+        let change = KeyTidy.Change(key: "mykey", id: "resend-globex", why: "read globex/.env")
         let result = KeyTidy.apply([change], to: &index)
-        #expect(result.renamed.first! == ("mykey", "resend-hz"))
-        #expect(index.key("mykey")?.id == "resend-hz")
-        #expect(index.current("mykey") == "resend-hz")
+        #expect(result.renamed.first! == ("mykey", "resend-globex"))
+        #expect(index.key("mykey")?.id == "resend-globex")
+        #expect(index.current("mykey") == "resend-globex")
         #expect(index.isTaken("mykey"))
         // Written and read back, the old name is still there.
         let again = try KeyIndex.parse(index.toml)
-        #expect(again.key("mykey")?.id == "resend-hz")
-        #expect(again.key("resend-hz")?.more.formerly == ["mykey"])
+        #expect(again.key("mykey")?.id == "resend-globex")
+        #expect(again.key("resend-globex")?.more.formerly == ["mykey"])
     }
 
     @Test func applyingInFilesMovesPermissionsAndPlacesAndKeepsACopy() throws {
@@ -98,27 +98,27 @@ struct KeyTidyTests {
             $0.places.append(PlaceBook.Place(id: "p-1", key: "mykey", procedure: "ssh-env", params: [:], label: "VPS1"))
         }
         try KeySets.update(at: home.appendingPathComponent(KeySets.fileName)) {
-            $0.sets.append(KeySets.Set(name: "hz", keys: ["mykey", "resend-lh"]))
+            $0.sets.append(KeySets.Set(name: "hz", keys: ["mykey", "resend-acme"]))
             $0.standing.append(KeySets.Standing(keys: ["mykey"], program: "/usr/bin/env", hash: "h", folder: "/tmp", since: Date()))
         }
         try LocalServices.approve(key: "mykey", address: "127.0.0.1:8790", at: home.appendingPathComponent(LocalServices.fileName))
         let result = try KeyTidy.apply(
-            [KeyTidy.Change(key: "mykey", id: "resend-hz", description: "Resend de HZ", why: "read hz/.env")],
+            [KeyTidy.Change(key: "mykey", id: "resend-globex", description: "Resend de HZ", why: "read globex/.env")],
             home: home, stamp: "t1")
         #expect(result.done.count == 1 && result.skipped.isEmpty)
         let policy = AgentPolicy.load(from: home.appendingPathComponent(AgentPolicy.fileName))
-        #expect(policy.levels["resend-hz"] == .always && policy.levels["mykey"] == nil)
-        #expect(policy.agents["resend-hz"] == ["mesa"])
-        #expect(PlaceBook.load(from: PlaceBook.file(home: home)).places.first?.key == "resend-hz")
+        #expect(policy.levels["resend-globex"] == .always && policy.levels["mykey"] == nil)
+        #expect(policy.agents["resend-globex"] == ["mesa"])
+        #expect(PlaceBook.load(from: PlaceBook.file(home: home)).places.first?.key == "resend-globex")
         #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent("keys.toml.antes-tidy-t1").path))
         #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent("agents.toml.antes-tidy-t1").path))
         let index = try KeyIndex.load(from: home.appendingPathComponent(KeyIndex.fileName))
         #expect(index.key("mykey")?.description == "Resend de HZ")
         // A standing permission, a set and a local service follow the key, so nothing asks again for a finger.
         let sets = KeySets.load(from: home.appendingPathComponent(KeySets.fileName))
-        #expect(sets.set("hz")?.keys == ["resend-hz", "resend-lh"])
-        #expect(sets.standing.first?.keys == ["resend-hz"])
-        #expect(LocalServices.load(from: home.appendingPathComponent(LocalServices.fileName)).approved == ["resend-hz": "127.0.0.1:8790"])
+        #expect(sets.set("hz")?.keys == ["resend-globex", "resend-acme"])
+        #expect(sets.standing.first?.keys == ["resend-globex"])
+        #expect(LocalServices.load(from: home.appendingPathComponent(LocalServices.fileName)).approved == ["resend-globex": "127.0.0.1:8790"])
     }
 
     @Test func aSecondApplyInTheSameSecondKeepsTheFirstCopy() throws {
@@ -128,8 +128,8 @@ struct KeyTidyTests {
         let keys = home.appendingPathComponent(KeyIndex.fileName)
         try PrivateFile.write(Data(Self.index().toml.utf8), to: keys)
         let first = try Data(contentsOf: keys)
-        try KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")], home: home, stamp: "t1")
-        try KeyTidy.apply([KeyTidy.Change(key: "resend-hz", description: "HZ", why: "read hz/.env")], home: home, stamp: "t1")
+        try KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-globex", why: "read globex/.env")], home: home, stamp: "t1")
+        try KeyTidy.apply([KeyTidy.Change(key: "resend-globex", description: "HZ", why: "read globex/.env")], home: home, stamp: "t1")
         #expect(try Data(contentsOf: home.appendingPathComponent("keys.toml.antes-tidy-t1")) == first)
     }
 
@@ -148,17 +148,17 @@ struct KeyTidyTests {
 
     @Test func aKeyMayTakeBackAnOldNameOfItsOwn() {
         var index = Self.index()
-        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")], to: &index)
-        let back = KeyTidy.apply([KeyTidy.Change(key: "resend-hz", id: "mykey", why: "the old name was right")], to: &index)
+        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-globex", why: "read globex/.env")], to: &index)
+        let back = KeyTidy.apply([KeyTidy.Change(key: "resend-globex", id: "mykey", why: "the old name was right")], to: &index)
         #expect(back.skipped.isEmpty)
-        #expect(index.has("mykey") && index.key("mykey")?.more.formerly == ["resend-hz"])
+        #expect(index.has("mykey") && index.key("mykey")?.more.formerly == ["resend-globex"])
     }
 
     @Test func anOldNameIsTakenButIsNoKey() {
         var index = Self.index()
-        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")], to: &index)
+        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-globex", why: "read globex/.env")], to: &index)
         #expect(index.isTaken("mykey"))
-        #expect(!index.has("mykey") && index.has("resend-hz"))
+        #expect(!index.has("mykey") && index.has("resend-globex"))
     }
 
     @Test func aReviewWithoutAllNamesNoProjectOfAKeyNotOffered() throws {
@@ -178,14 +178,14 @@ struct KeyTidyTests {
     @Test func whatChangedSinceTheProposalIsLeftOutAndSaidSo() {
         var index = Self.index()
         // Since the proposal, another key took the new id, and the key to archive was used.
-        index.keys.append(KeyIndex.Key(id: "resend-hz", source: "other.txt", provider: "resend"))
+        index.keys.append(KeyIndex.Key(id: "resend-globex", source: "other.txt", provider: "resend"))
         var use = KeyTidy.Use()
         use.last = Date().addingTimeInterval(-600)
         let result = KeyTidy.apply([
-            KeyTidy.Change(key: "mykey", id: "resend-hz", description: "Resend de HZ", why: "read hz/.env"),
-            KeyTidy.Change(key: "restoiq-jwt", archive: true, why: "looked dead at proposal time"),
+            KeyTidy.Change(key: "mykey", id: "resend-globex", description: "Resend de HZ", why: "read globex/.env"),
+            KeyTidy.Change(key: "shop-jwt", archive: true, why: "looked dead at proposal time"),
             KeyTidy.Change(key: "gone-key", description: "x", why: "was there at proposal time"),
-        ], to: &index, usage: ["restoiq-jwt": use])
+        ], to: &index, usage: ["shop-jwt": use])
         #expect(result.done.isEmpty)
         #expect(result.skipped.count == 3)
         #expect(result.skipped[0].contains("was taken since"))
@@ -193,14 +193,14 @@ struct KeyTidyTests {
         #expect(result.skipped[2].contains("gone"))
         // Nothing half applied: the description that came with the refused rename is not written either.
         #expect(index.key("mykey")?.description == nil)
-        #expect(index.key("restoiq-jwt")?.more.archived == false)
+        #expect(index.key("shop-jwt")?.more.archived == false)
     }
 
     @Test func theDifferencesAreWhatTheCardAndTheLogSay() {
         let before = KeyIndex.Key(id: "mykey", source: "m.txt", provider: "resend")
-        let change = KeyTidy.Change(key: "mykey", id: "resend-hz", provider: "resend", tags: ["hz"], archive: true, why: "read hz/.env")
+        let change = KeyTidy.Change(key: "mykey", id: "resend-globex", provider: "resend", tags: ["hz"], archive: true, why: "read globex/.env")
         #expect(change.differences(from: before).map(\.field) == ["id", "tags"])
-        #expect(change.summary(from: before) == "id: mykey → resend-hz; tags + hz; archive")
+        #expect(change.summary(from: before) == "id: mykey → resend-globex; tags + hz; archive")
     }
 
     @Test func tidyingWaitsForTheSwitchThatLetsAgentsSort() throws {
@@ -217,9 +217,9 @@ struct KeyTidyTests {
 
     @Test func theServiceTakesAnOldNameAsTheNewOne() throws {
         var index = Self.index()
-        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-hz", why: "read hz/.env")], to: &index)
-        #expect(index.current("mykey") == "resend-hz")
-        #expect(index.current("resend-hz") == "resend-hz")
+        KeyTidy.apply([KeyTidy.Change(key: "mykey", id: "resend-globex", why: "read globex/.env")], to: &index)
+        #expect(index.current("mykey") == "resend-globex")
+        #expect(index.current("resend-globex") == "resend-globex")
         #expect(index.current("unknown") == "unknown")
     }
 
@@ -249,20 +249,20 @@ struct KeyTidyTests {
         let proposed = try AgentTests().call(bridge, "propose_tidy", [
             "reason": "name keys by provider",
             "changes": [
-                ["key": "mykey", "id": "resend-hz", "why": "read hz/.env: RESEND_API_KEY"],
-                ["key": "resend-lh", "id": "lh-mail", "why": "shorter to type"],
+                ["key": "mykey", "id": "resend-globex", "why": "read globex/.env: RESEND_API_KEY"],
+                ["key": "resend-acme", "id": "acme-mail", "why": "shorter to type"],
             ],
         ])
         #expect(!proposed.error)
         #expect(proposed.text.contains("1 changes wait"))
-        #expect(proposed.text.contains("resend-lh → lh-mail"))
+        #expect(proposed.text.contains("resend-acme → acme-mail"))
         #expect(kept.requests.first?.kind == KeyTidy.requestKind)
         let saved = try JSONDecoder().decode([KeyTidy.Change].self, from: try #require(kept.saved))
         #expect(saved.map(\.key) == ["mykey"])
     }
 
     @Test func aWhyMayCiteAPathOrAVariableButNotAValue() {
-        #expect(!KeyTidy.looksLikeValue("read hansa/mesa-de-ventas/cmd/mesa/ficha.go: --as PID_HMAC_CLAVE"))
+        #expect(!KeyTidy.looksLikeValue("read sales/desk/cmd/desk/card.go: --as PID_HMAC_CLAVE"))
         #expect(!KeyTidy.looksLikeValue("keyreeve use google --as GOOGLE_APPLICATION_CREDENTIALS"))
         #expect(!KeyTidy.looksLikeValue("read 03-automatizacion-claude/herramientas/gsc"))
         #expect(KeyTidy.looksLikeValue("token sk-proj-Ab3dEf9hIjKlMn0pQrStUvWxYz12"))

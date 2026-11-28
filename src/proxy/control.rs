@@ -254,7 +254,7 @@ mod tests {
         let text = "MESA_TOKEN=Zq8rT2vX9kLm4NpQ7sWy3BcD6fGh1JkA\n";
         let grant = prepare_local(
             "g",
-            "mesa-token",
+            "desk-token",
             "127.0.0.1:8790",
             text,
             Some("MESA_TOKEN"),
@@ -282,11 +282,11 @@ mod tests {
     #[test]
     fn a_rotated_refresh_token_goes_to_the_vault_as_its_own_message() {
         let line = serde_json::to_string(&Reply::Renewed {
-            key: "restoiq-mcp".into(),
+            key: "shop-mcp".into(),
             text: "{}".into(),
         })
         .unwrap();
-        assert_eq!(line, r#"{"op":"renewed","key":"restoiq-mcp","text":"{}"}"#);
+        assert_eq!(line, r#"{"op":"renewed","key":"shop-mcp","text":"{}"}"#);
     }
 
     #[test]

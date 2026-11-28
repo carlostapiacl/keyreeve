@@ -347,9 +347,9 @@ your finger, in the app (the key's page, under **Usage**: type the address next 
 terminal:
 
 ```bash
-keyreeve local mesa-token=127.0.0.1:8790 motor-lectura-token=127.0.0.1:8787   # one fingerprint for both
+keyreeve local desk-token=127.0.0.1:8790 motor-lectura-token=127.0.0.1:8787   # one fingerprint for both
 keyreeve local                       # what is approved
-keyreeve local mesa-token --off      # takes it away and ends its permissions, with no fingerprint
+keyreeve local desk-token --off      # takes it away and ends its permissions, with no fingerprint
 ```
 
 That writes `local = "127.0.0.1:8790"` in `keys.toml` and the approval in `~/.keyreeve/local-services.json`. Both must say the same
@@ -361,7 +361,7 @@ the URL, is refused and never forwarded. Python's `urllib` and `requests`, curl 
 proxy for `127.0.0.1`. Go's `net/http` never uses a proxy for loopback, so a Go client needs `--real` or a proxy set in its code.
 
 ```bash
-keyreeve use mesa-token --as MESA_TOKEN -- python3 -m motor eventos
+keyreeve use desk-token --as MESA_TOKEN -- python3 -m motor eventos
 ```
 
 A command with such a key reaches no other plain HTTP address through the proxy, so one that also calls another local service with
@@ -371,7 +371,7 @@ no key fails there.
 start. It does not need it if it keeps the token's SHA-256 and compares the SHA-256 of what it receives:
 
 ```bash
-keyreeve verifier mesa-token        # sha256:<hex>, one fingerprint
+keyreeve verifier desk-token        # sha256:<hex>, one fingerprint
 ```
 
 The hash opens nothing, so it can live in the server's settings and the server starts with no secret and no finger. It is given
@@ -536,12 +536,12 @@ Nobody wants to sort their own keys, so an agent does it and you approve, while 
 project, variable and description, how it was used lately (how often, the last day, which agents, from which folders, to which
 hosts) and what it needs: no project or variable, an id that breaks the naming convention, the same value as another key (compared
 by digest), or no use. Never a value. It starts with the convention and the projects your keys already name, including the short
-starts you use, such as `lh-` for liquidity-hunters.
+starts you use, such as `acme-` for acme-labs.
 
 `propose_tidy` sends changes by id: a new id, description, project, provider, variable, account, field, tags to add, or archive, each
 with why the agent knows. keyreeve checks them before they reach you and sends back the ones that break the convention with the
-reason, so the agent fixes them: an id starts with its provider (`resend-lh`) or, for a secret of your own software, its project
-(`restoiq-erp-jwt-secret`); a description holds no value; a key used in the last 30 days is not archived. The rest wait under
+reason, so the agent fixes them: an id starts with its provider (`resend-acme`) or, for a secret of your own software, its project
+(`shop-api-jwt-secret`); a description holds no value; a key used in the last 30 days is not archived. The rest wait under
 **Agents** as one card with each change, what it replaces and why, all chosen to start. **Apply** takes a click and no fingerprint,
 since only names and notes change. keys.toml and agents.toml are copied beside them first, and each change is checked again against
 the list and the log as they are then: one whose key is gone, whose new id was taken since, or whose key was used since it was proposed

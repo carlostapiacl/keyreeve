@@ -56,14 +56,14 @@ public enum FingerPrompt {
         return head + with + how + said(reason)
     }
 
-    /// "send mesa-token to 127.0.0.1:8790 on this Mac": what approving a local service lets through, from then on.
+    /// "send desk-token to 127.0.0.1:8790 on this Mac": what approving a local service lets through, from then on.
     public static func local(_ pairs: [(key: String, address: String)]) -> String {
         let list = pairs.prefix(6).map { spanish ? "\($0.key) a \($0.address)" : "\($0.key) to \($0.address)" }
             .joined(separator: ", ") + (pairs.count > 6 ? (spanish ? " y \(pairs.count - 6) más" : " and \(pairs.count - 6) more") : "")
         return spanish ? "enviar \(list) en este Mac, por HTTP" : "send \(list) on this Mac, over plain HTTP"
     }
 
-    /// "print the SHA-256 of mesa-token, for a server that checks it"
+    /// "print the SHA-256 of desk-token, for a server that checks it"
     public static func verifier(key: String) -> String {
         spanish ? "mostrar el SHA-256 de \(key), para un servidor que la verifica"
             : "print the SHA-256 of \(key), for a server that checks it"

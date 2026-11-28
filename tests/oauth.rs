@@ -738,7 +738,7 @@ fn bearer_run(answers: Vec<(u16, String)>) -> Bearer {
     }));
     let grant = OAuthGrant::new(
         "g-2",
-        "restoiq-mcp",
+        "shop-mcp",
         &bearer_recipe(),
         &sealed(),
         None,
@@ -803,7 +803,7 @@ fn a_rotated_refresh_token_goes_back_to_the_vault_and_is_used_from_then_on() {
         let renewed = bearer.renewed.lock().unwrap();
         assert_eq!(renewed.len(), 1);
         let (key, text) = &renewed[0];
-        assert_eq!(key, "restoiq-mcp");
+        assert_eq!(key, "shop-mcp");
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(json["refresh_token"], ROTATED_1);
         // The rest of the file stays as it was.
@@ -838,7 +838,7 @@ fn a_second_permission_from_an_older_copy_shares_the_renewed_tokens() {
     for (id, text) in [("g-3", sealed()), ("g-4", renewed_text)] {
         let grant = OAuthGrant::new(
             id,
-            "restoiq-mcp",
+            "shop-mcp",
             &bearer_recipe(),
             &text,
             None,
@@ -860,7 +860,7 @@ fn a_new_authorization_of_the_same_key_starts_afresh() {
     let other = sealed().replace(REFRESH, "1//0gCANARYauthorizedAgain00000000000000");
     let grant = OAuthGrant::new(
         "g-5",
-        "restoiq-mcp",
+        "shop-mcp",
         &bearer_recipe(),
         &other,
         None,

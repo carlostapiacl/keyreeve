@@ -13,7 +13,7 @@ final class LocalFixture: @unchecked Sendable {
     var duringFinger: () -> Void = {}
     var keys = """
         [[key]]
-        id = "mesa-token"
+        id = "desk-token"
         source = "mesa.env"
         field = "MESA_TOKEN"
         variable = "MESA_TOKEN"
@@ -68,8 +68,8 @@ struct LocalServiceTests {
 
     @Test func anApprovedKeyGoesToItsServiceWithAStandIn() throws {
         let f = LocalFixture()
-        f.approvals = LocalServices(approved: ["mesa-token": "127.0.0.1:8790"])
-        let answer = f.use("mesa-token")
+        f.approvals = LocalServices(approved: ["desk-token": "127.0.0.1:8790"])
+        let answer = f.use("desk-token")
         #expect(answer.ok, "\(answer.error ?? "")")
         #expect(answer.standIn == "STAND-IN")
         #expect(answer.local == "127.0.0.1:8790")
@@ -82,7 +82,7 @@ struct LocalServiceTests {
         #expect(logged.contains("to 127.0.0.1:8790"))
         #expect(!logged.contains("CANARY"))
         // A second use rides on the same permission, still for that service.
-        #expect(f.use("mesa-token").local == "127.0.0.1:8790")
+        #expect(f.use("desk-token").local == "127.0.0.1:8790")
         #expect(f.prompts.count == 1)
     }
 
@@ -91,11 +91,11 @@ struct LocalServiceTests {
         for approvals in [
             LocalServices(),
             // Approved for another port, or for another key: neither is this one.
-            LocalServices(approved: ["mesa-token": "127.0.0.1:8791"]),
+            LocalServices(approved: ["desk-token": "127.0.0.1:8791"]),
             LocalServices(approved: ["loose": "127.0.0.1:8790"]),
         ] {
             f.approvals = approvals
-            let answer = f.use("mesa-token")
+            let answer = f.use("desk-token")
             #expect(!answer.ok)
             #expect(answer.error?.contains("has not approved") == true, "\(answer.error ?? "")")
         }
@@ -108,8 +108,8 @@ struct LocalServiceTests {
     @Test func aKeyThatNamesSomewhereElseIsRefusedEvenIfApproved() {
         let f = LocalFixture()
         f.keys = f.keys.replacingOccurrences(of: "127.0.0.1:8790", with: "10.0.0.5:8790")
-        f.approvals = LocalServices(approved: ["mesa-token": "10.0.0.5:8790"])
-        let answer = f.use("mesa-token")
+        f.approvals = LocalServices(approved: ["desk-token": "10.0.0.5:8790"])
+        let answer = f.use("desk-token")
         #expect(!answer.ok)
         #expect(answer.error?.contains("not 127.0.0.1") == true, "\(answer.error ?? "")")
         #expect(f.prompts.isEmpty)
@@ -124,22 +124,22 @@ struct LocalServiceTests {
 
     @Test func anApprovalWithdrawnDuringTheFingerOpensNothing() {
         let f = LocalFixture()
-        f.approvals = LocalServices(approved: ["mesa-token": "127.0.0.1:8790"])
+        f.approvals = LocalServices(approved: ["desk-token": "127.0.0.1:8790"])
         f.duringFinger = { f.approvals = LocalServices() }
-        let answer = f.use("mesa-token")
+        let answer = f.use("desk-token")
         #expect(!answer.ok)
         #expect(f.proxy.added.isEmpty)
     }
 
     @Test func severalKeysAtOnceGoEachWhereItWasApproved() {
         let f = LocalFixture()
-        f.approvals = LocalServices(approved: ["mesa-token": "127.0.0.1:8790"])
+        f.approvals = LocalServices(approved: ["desk-token": "127.0.0.1:8790"])
         let answer = f.service.handle(
-            .init(op: "use-many", program: "/usr/bin/python3", arguments: 1, agent: "claude", cwd: "/w", keys: ["mesa-token", "mail"]),
+            .init(op: "use-many", program: "/usr/bin/python3", arguments: 1, agent: "claude", cwd: "/w", keys: ["desk-token", "mail"]),
             caller: nil)
         let many = answer.many ?? []
         #expect(many.count == 2)
-        #expect(many.first { $0.key == "mesa-token" }?.local == "127.0.0.1:8790")
+        #expect(many.first { $0.key == "desk-token" }?.local == "127.0.0.1:8790")
         #expect(many.first { $0.key == "mail" }?.local == nil)
         #expect(f.proxy.locals.sorted { ($0 ?? "") < ($1 ?? "") } == [nil, "127.0.0.1:8790"])
     }
@@ -150,25 +150,25 @@ struct LocalServiceTests {
         let keys = folder.appendingPathComponent("keys.toml")
         let approvals = folder.appendingPathComponent(LocalServices.fileName)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try Data("[[key]]\nid = \"mesa-token\"\nsource = \"m.env\"\n\n[[key]]\nid = \"vps\"\nsource = \"k\"\nprovider = \"ssh\"\n".utf8)
+        try Data("[[key]]\nid = \"desk-token\"\nsource = \"m.env\"\n\n[[key]]\nid = \"vps\"\nsource = \"k\"\nprovider = \"ssh\"\n".utf8)
             .write(to: keys)
         #expect(throws: VaultError.self) {
-            try LocalServices.apply(["mesa-token": "127.0.0.1:8790", "nobody": "127.0.0.1:1"], keys: keys, approvals: approvals)
+            try LocalServices.apply(["desk-token": "127.0.0.1:8790", "nobody": "127.0.0.1:1"], keys: keys, approvals: approvals)
         }
         #expect(throws: VaultError.self) { try LocalServices.apply(["vps": "127.0.0.1:22"], keys: keys, approvals: approvals) }
-        #expect(throws: VaultError.self) { try LocalServices.apply(["mesa-token": "192.168.0.2:8790"], keys: keys, approvals: approvals) }
-        #expect(try KeyIndex.load(from: keys).key("mesa-token")?.local == nil)
+        #expect(throws: VaultError.self) { try LocalServices.apply(["desk-token": "192.168.0.2:8790"], keys: keys, approvals: approvals) }
+        #expect(try KeyIndex.load(from: keys).key("desk-token")?.local == nil)
         #expect(LocalServices.load(from: approvals).approved.isEmpty)
 
-        try LocalServices.apply(["mesa-token": "LOCALHOST:8790"], keys: keys, approvals: approvals)
-        let key = try #require(try KeyIndex.load(from: keys).key("mesa-token"))
+        try LocalServices.apply(["desk-token": "LOCALHOST:8790"], keys: keys, approvals: approvals)
+        let key = try #require(try KeyIndex.load(from: keys).key("desk-token"))
         #expect(key.local == "localhost:8790")
         #expect(try LocalServices.load(from: approvals).destination(of: key) == "localhost:8790")
         let mode = try FileManager.default.attributesOfItem(atPath: approvals.path)[.posixPermissions] as? NSNumber
         #expect(mode?.intValue == 0o600)
 
-        try LocalServices.remove("mesa-token", keys: keys, approvals: approvals)
-        #expect(try KeyIndex.load(from: keys).key("mesa-token")?.local == nil)
+        try LocalServices.remove("desk-token", keys: keys, approvals: approvals)
+        #expect(try KeyIndex.load(from: keys).key("desk-token")?.local == nil)
         #expect(LocalServices.load(from: approvals).approved.isEmpty)
     }
 
@@ -207,9 +207,9 @@ struct LocalServiceTests {
     }
 
     @Test func thePromptSaysWhereTheKeyGoes() {
-        let one = FingerPrompt.local([("mesa-token", "127.0.0.1:8790")])
-        #expect(one.contains("mesa-token") && one.contains("127.0.0.1:8790"))
-        let use = FingerPrompt.use(who: "claude", key: "mesa-token", program: "python3", to: "127.0.0.1:8790")
+        let one = FingerPrompt.local([("desk-token", "127.0.0.1:8790")])
+        #expect(one.contains("desk-token") && one.contains("127.0.0.1:8790"))
+        let use = FingerPrompt.use(who: "claude", key: "desk-token", program: "python3", to: "127.0.0.1:8790")
         #expect(use.contains("127.0.0.1:8790"))
     }
 }

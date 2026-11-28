@@ -30,12 +30,12 @@ struct KeyBookTests {
         archived = true
 
         [[key]]
-        id = "paypal-lh"
-        name = "PayPal · LH"
+        id = "paypal-acme"
+        name = "PayPal · Acme"
         provider = "paypal"
         recipes = ["paypal"]
-        account = "lh@example.com"
-        source = "paypal-lh.json"
+        account = "acme@example.com"
+        source = "paypal-acme.json"
         parts = ["client_id", "secret"]
         level = "never"
         tags = []
@@ -59,9 +59,9 @@ struct KeyBookTests {
         let index = try KeyIndex.parse(Self.book)
         #expect(index.schema == 2)
         #expect(index.keys.map(\.id) == ["google", "meta-old", "telegram"])
-        #expect(index.unoffered.map(\.id) == ["paypal-lh"])
-        #expect(index.key("paypal-lh") == nil, "a key not offered is not one agents can name")
-        #expect(index.isTaken("paypal-lh"))
+        #expect(index.unoffered.map(\.id) == ["paypal-acme"])
+        #expect(index.key("paypal-acme") == nil, "a key not offered is not one agents can name")
+        #expect(index.isTaken("paypal-acme"))
         let google = try #require(index.key("google"))
         #expect(google.field == "client_id+client_secret+refresh_token")
         #expect(google.more.auth == "oauth")
@@ -98,14 +98,14 @@ struct KeyBookTests {
     @Test func givingAWaitingKeyToAgentsTakesItOverAndNoIdentifierIsGivenTwice() throws {
         var index = try KeyIndex.parse(Self.book)
         // A new name is never one a waiting key already has.
-        #expect(index.identifier(for: "paypal lh") == "paypal-lh-2")
+        #expect(index.identifier(for: "paypal acme") == "paypal-acme-2")
         #expect(index.suggestion(provider: "paypal", project: nil, source: "other.json") == "paypal")
         // Saving the waiting file for agents takes the waiting key over, with what it knew.
-        try index.add(KeyIndex.Key(id: "paypal", source: "paypal-lh.json", variable: "PAYPAL_CLIENT"))
+        try index.add(KeyIndex.Key(id: "paypal", source: "paypal-acme.json", variable: "PAYPAL_CLIENT"))
         #expect(index.unoffered.isEmpty)
         let paypal = try #require(index.key("paypal"))
         #expect(paypal.field == "client_id+secret")
-        #expect(paypal.account == "lh@example.com")
+        #expect(paypal.account == "acme@example.com")
         #expect(paypal.more.level == "never")
         #expect(index.toml.contains("parts = [\"client_id\", \"secret\"]"))
         #expect(!index.toml.contains("offered = false"))

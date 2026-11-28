@@ -75,7 +75,7 @@ fn run_with(reply: &'static str, expires: u64) -> Run {
     let port = proxy.listen().unwrap();
     proxy.add(Grant {
         id: "g-1".into(),
-        key: "mesa-token".into(),
+        key: "desk-token".into(),
         stand_in: Secret::new(FAKE),
         real: Secret::new(REAL),
         hosts: Vec::new(),
@@ -142,7 +142,7 @@ fn the_real_key_reaches_the_approved_service_and_the_command_never_sees_it() {
             event.path.as_str(),
             event.status
         ),
-        ("mesa-token", "GET", "/v1/eventos", 200)
+        ("desk-token", "GET", "/v1/eventos", 200)
     );
     assert_eq!(event.host, format!("127.0.0.1:{}", run.local.port));
     assert_eq!(event.outcome, "complete");
@@ -271,7 +271,7 @@ fn nothing_listening_is_written_down_as_not_sent() {
     let port = proxy.listen().unwrap();
     proxy.add(Grant {
         id: "g-1".into(),
-        key: "mesa-token".into(),
+        key: "desk-token".into(),
         stand_in: Secret::new(FAKE),
         real: Secret::new(REAL),
         hosts: Vec::new(),

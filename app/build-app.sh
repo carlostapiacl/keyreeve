@@ -5,6 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 cargo build --release --locked --manifest-path ../Cargo.toml
+# The app carries the version of the release it comes from, as Cargo.toml says it.
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' ../Cargo.toml | head -1)
 swift build -c release
 BIN=$(swift build -c release --show-bin-path)
 APP="dist/Keyreeve.app"
@@ -12,8 +14,11 @@ APP="dist/Keyreeve.app"
 # format change can drop what it does not know. It is quit here and opened again at the end.
 # A copy installed in /Applications is kept the same as this build, so whatever opens Keyreeve gets this version.
 INSTALLED="/Applications/Keyreeve.app"
+# KEYREEVE_BUILD_ONLY=1 builds the bundle and leaves the Mac alone: no Keyreeve is quit, none is replaced. For a
+# release, and for building beside a Keyreeve in use.
+[ -n "${KEYREEVE_BUILD_ONLY:-}" ] && INSTALLED="/nonexistent/Keyreeve.app"
 RUNNING=""
-if pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
+if [ -z "${KEYREEVE_BUILD_ONLY:-}" ] && pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1; then
     RUNNING=yes
     osascript -e 'tell application id "io.github.carlostapiacl.keyreeve" to quit' >/dev/null 2>&1 || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "Keyreeve.app/Contents/MacOS/Keyreeve\$" >/dev/null 2>&1 || break; sleep 1; done
@@ -49,7 +54,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>Keyreeve</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION%%-*}</string>
+    <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>

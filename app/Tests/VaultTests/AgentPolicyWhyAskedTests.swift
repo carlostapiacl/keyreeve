@@ -30,8 +30,8 @@ struct AgentPolicyWhyAskedTests {
     }
 
     @Test func eachReasonIsNamed() {
-        #expect(policy.whyAsked(key: "bot", agent: "wapentakebot", hasCopy: true, paused: false)
-            == "always is only for claude, and this was wapentakebot")
+        #expect(policy.whyAsked(key: "bot", agent: "nightly-bot", hasCopy: true, paused: false)
+            == "always is only for claude, and this was nightly-bot")
         #expect(policy.whyAsked(key: "bot", agent: nil, hasCopy: true, paused: false)
             == "always is only for claude, and this was an agent with no name")
         #expect(policy.whyAsked(key: "open", agent: "x", hasCopy: true, paused: true) == "always, but agents are paused")

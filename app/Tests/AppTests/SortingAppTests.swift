@@ -313,7 +313,7 @@ struct ApplyReadsNowTests {
         model.unlocked = true
         model.providers = FieldsInPartsTestsData.providers
         // edits.json as it was on 2026-11-09: an empty field left by an older version on each of the four.
-        try Data(#"{"gsc-token.json":{"field":"","recipes":["google"]},"youtube_token_restoiq.json":{"field":"","recipes":["google"]},"paypal-lh.json":{"field":"","recipes":["paypal"]},"paypal-recetas.json":{"field":"","recipes":["paypal"]}}"#.utf8)
+        try Data(#"{"gsc-token.json":{"field":"","recipes":["google"]},"youtube_token_shop.json":{"field":"","recipes":["google"]},"paypal-acme.json":{"field":"","recipes":["paypal"]},"paypal-recipes.json":{"field":"","recipes":["paypal"]}}"#.utf8)
             .write(to: model.files.edits)
         try AgentSorting.save(Data(FieldsInPartsTestsData.approved.utf8), id: "r-fields", home: root)
         let request = AccessRequests.Entry(id: "r-fields", at: Date(), event: .asked, agent: "claude", provider: "keyreeve", reason: "fields", kind: "sort")
@@ -324,19 +324,19 @@ struct ApplyReadsNowTests {
         model.items = [
             CatalogItem(path: "gsc-token.json", recipes: ["google"], labels: ["client_id", "client_secret", "refresh_token", "scopes", "token", "token_uri"]),
             CatalogItem(
-                path: "youtube_token_restoiq.json", recipes: ["google"],
+                path: "youtube_token_shop.json", recipes: ["google"],
                 labels: ["account", "client_id", "client_secret", "expiry", "refresh_token", "scopes", "token", "token_uri", "universe_domain"]),
-            CatalogItem(path: "paypal-lh.json", recipes: ["paypal"], labels: ["api_base", "client_id", "secret"]),
+            CatalogItem(path: "paypal-acme.json", recipes: ["paypal"], labels: ["api_base", "client_id", "secret"]),
             CatalogItem(
-                path: "paypal-recetas.json", recipes: ["paypal"],
+                path: "paypal-recipes.json", recipes: ["paypal"],
                 labels: ["api_base", "client_id", "mode", "plans_monthly", "plans_yearly", "product_id", "secret", "trial_enabled", "webhook_id"]),
         ]
         model.applyProposal(for: request, chosen: Set(FieldsInPartsTestsData.paths))
         let edits = try JSONDecoder().decode([String: KeyEdit].self, from: Data(contentsOf: model.files.edits))
         #expect(edits["gsc-token.json"]?.field == "client_id+client_secret+refresh_token")
-        #expect(edits["youtube_token_restoiq.json"]?.field == "client_id+client_secret+refresh_token")
-        #expect(edits["paypal-lh.json"]?.field == "client_id+secret")
-        #expect(edits["paypal-recetas.json"]?.field == "client_id+secret")
+        #expect(edits["youtube_token_shop.json"]?.field == "client_id+client_secret+refresh_token")
+        #expect(edits["paypal-acme.json"]?.field == "client_id+secret")
+        #expect(edits["paypal-recipes.json"]?.field == "client_id+secret")
         #expect(!String(decoding: try Data(contentsOf: model.files.edits), as: UTF8.self).contains(#""field":"""#))
         #expect(!String(decoding: try Data(contentsOf: model.files.edits), as: UTF8.self).contains(#""field" : """#))
     }
@@ -346,12 +346,12 @@ struct ApplyReadsNowTests {
 enum FieldsInPartsTestsData {
     static let approved = #"""
         [{"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"gsc-token.json","provider":"google"},
-         {"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"youtube_token_restoiq.json","provider":"google"},
-         {"field":"client_id+secret","kind":"provider","path":"paypal-lh.json","provider":"paypal"},
-         {"field":"client_id+secret","kind":"provider","path":"paypal-recetas.json","provider":"paypal"}]
+         {"check":true,"field":"client_id+client_secret+refresh_token","kind":"provider","path":"youtube_token_shop.json","provider":"google"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-acme.json","provider":"paypal"},
+         {"field":"client_id+secret","kind":"provider","path":"paypal-recipes.json","provider":"paypal"}]
         """#
     static let providers = ProviderDirectory([
         ProviderInfo(id: "google", name: "Google account", can_identify: true), ProviderInfo(id: "paypal", name: "PayPal", can_identify: true),
     ])
-    static let paths = ["gsc-token.json", "youtube_token_restoiq.json", "paypal-lh.json", "paypal-recetas.json"]
+    static let paths = ["gsc-token.json", "youtube_token_shop.json", "paypal-acme.json", "paypal-recipes.json"]
 }

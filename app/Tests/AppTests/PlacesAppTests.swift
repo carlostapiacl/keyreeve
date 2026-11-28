@@ -40,9 +40,9 @@ struct PlacesAppTests {
             id: AccessRequests.newID(), at: Date(), event: .asked, agent: "claude", provider: "keyreeve", reason: "found", kind: "places")
         let checked = try AgentBridge.checkPlaces(
             [[
-                "key": "openai-lh", "procedure": "ssh-env", "params": ["host": "vps2", "variable": "OPENAI_API_KEY"],
+                "key": "openai-acme", "procedure": "ssh-env", "params": ["host": "vps2", "variable": "OPENAI_API_KEY"],
                 "label": "VPS2 · OPENAI_API_KEY",
-            ]], offered: ["openai-lh"], by: "claude")
+            ]], offered: ["openai-acme"], by: "claude")
         try AgentSorting.save(checked.data, id: entry.id, home: model.files.directory)
         try AccessRequests.append(entry, to: model.requestsFile)
         return entry
@@ -85,7 +85,7 @@ struct PlacesAppTests {
     @Test func aPlaceWhoseProcedureChangedIsNotUpdatedOrRotated() async throws {
         let sensor = Sensor()
         let model = try model(sensor)
-        let place = PlaceBook.Place(key: "openai-lh", procedure: "ssh-env", params: [:], label: "VPS2", sha256: "aa")
+        let place = PlaceBook.Place(key: "openai-acme", procedure: "ssh-env", params: [:], label: "VPS2", sha256: "aa")
         try PlaceBook.update(at: model.placesFile) { $0.places = [place] }
         model.reloadPlaces()
         #expect(model.status(of: place) == .approved)
@@ -95,9 +95,9 @@ struct PlacesAppTests {
         await settle()
         // Refused before the finger is asked.
         #expect(sensor.waiting.isEmpty)
-        model.keyIndex = KeyIndex(keys: [KeyIndex.Key(id: "openai-lh", source: "lh.env")])
-        #expect(model.plannedProcedures(for: CatalogItem(path: "lh.env")).isEmpty)
+        model.keyIndex = KeyIndex(keys: [KeyIndex.Key(id: "openai-acme", source: "acme.env")])
+        #expect(model.plannedProcedures(for: CatalogItem(path: "acme.env")).isEmpty)
         model.placesState.procedures = try Self.procedures(sha: "aa")
-        #expect(model.plannedProcedures(for: CatalogItem(path: "lh.env")).map(\.sha256) == ["aa"])
+        #expect(model.plannedProcedures(for: CatalogItem(path: "acme.env")).map(\.sha256) == ["aa"])
     }
 }

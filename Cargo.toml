@@ -1,6 +1,6 @@
 [package]
 name = "keyreeve"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2021"
 license = "MIT"
 description = "A key vault for your Mac: keys sealed by the Secure Enclave, used by agents through a proxy without seeing them, with recipes the community writes for each provider."

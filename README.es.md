@@ -10,7 +10,7 @@ propio de cada proveedor vive en una receta chica que escribe la comunidad.
 
 ![Un recorrido corto por la ventana de keyreeve: Inicio, Mis claves, una clave ofrecida a los agentes y Agentes, todo de ejemplo](docs/img/es/tour.gif)
 
-**Estado: alpha** ([0.1.0-alpha.1](CHANGELOG.md)). La bóveda, las herramientas para agentes y las pruebas se usan a diario
+**Estado: alpha** ([0.1.0-alpha.2](CHANGELOG.md)). La bóveda, las herramientas para agentes y las pruebas se usan a diario
 en un Mac. La rotación es experimental: pasa el simulador, pero todavía no ha corrido contra un proveedor real.
 
 ## Qué hace
@@ -25,7 +25,7 @@ en un Mac. La rotación es experimental: pasa el simulador, pero todavía no ha 
 
 ## Instalar
 
-En un Mac con Apple silicon y macOS 14 o más nuevo:
+En un Mac con macOS 14 o más nuevo (Apple silicon o Intel):
 
 ```bash
 brew install --cask carlostapiacl/tap/keyreeve

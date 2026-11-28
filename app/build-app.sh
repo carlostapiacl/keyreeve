@@ -4,11 +4,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-cargo build --release --locked --manifest-path ../Cargo.toml
+# KEYREEVE_UNIVERSAL=1 builds for Apple silicon and Intel in one bundle, as a release does. It needs both Rust
+# targets (rustup target add aarch64-apple-darwin x86_64-apple-darwin) and Xcode for Swift.
+SWIFT_ARCHS=()
+if [ -n "${KEYREEVE_UNIVERSAL:-}" ]; then
+    for target in aarch64-apple-darwin x86_64-apple-darwin; do
+        cargo build --release --locked --manifest-path ../Cargo.toml --target "$target"
+    done
+    mkdir -p ../target/release
+    lipo -create ../target/aarch64-apple-darwin/release/keyreeve ../target/x86_64-apple-darwin/release/keyreeve \
+        -output ../target/release/keyreeve
+    SWIFT_ARCHS=(--arch arm64 --arch x86_64)
+else
+    cargo build --release --locked --manifest-path ../Cargo.toml
+fi
 # The app carries the version of the release it comes from, as Cargo.toml says it.
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' ../Cargo.toml | head -1)
-swift build -c release
-BIN=$(swift build -c release --show-bin-path)
+swift build -c release ${SWIFT_ARCHS[@]+"${SWIFT_ARCHS[@]}"}
+BIN=$(swift build -c release ${SWIFT_ARCHS[@]+"${SWIFT_ARCHS[@]}"} --show-bin-path)
 APP="dist/Keyreeve.app"
 # A Keyreeve left running would go on with the old code over files the new one writes, and one from before a
 # format change can drop what it does not know. It is quit here and opened again at the end.

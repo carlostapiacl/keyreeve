@@ -10,7 +10,7 @@ provider's quirks live in a small recipe file the community writes.
 
 ![A short tour of the keyreeve window: Home, My keys, a key offered to agents and Agents, all made-up examples](docs/img/tour.gif)
 
-**Status: alpha** ([0.1.0-alpha.1](CHANGELOG.md)). The vault, the agent tools and the checks are used every day on one Mac.
+**Status: alpha** ([0.1.0-alpha.2](CHANGELOG.md)). The vault, the agent tools and the checks are used every day on one Mac.
 Rotation is experimental: it passes the simulator but has not run against a real provider yet.
 
 ## What it does
@@ -24,7 +24,7 @@ Rotation is experimental: it passes the simulator but has not run against a real
 
 ## Install
 
-On a Mac with Apple silicon and macOS 14 or later:
+On a Mac with macOS 14 or later (Apple silicon or Intel):
 
 ```bash
 brew install --cask carlostapiacl/tap/keyreeve

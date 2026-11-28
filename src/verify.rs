@@ -96,6 +96,11 @@ pub fn check(recipe: &Recipe, key: &Secret, transport: &mut dyn Transport) -> Ve
         if let Some(why) = crate::transport::missing_parts(recipe, key) {
             return Verdict::NoResult(why);
         }
+        if !recipe.auth.checks_alone() {
+            return Verdict::NoResult(
+                "this server rotates its refresh token, so the key is checked by using it, through the proxy".into(),
+            );
+        }
         match exchange_token(recipe, key, transport) {
             Err(error) => return failed(error),
             Ok(response) if !(200..=299).contains(&response.status) => {

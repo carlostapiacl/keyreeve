@@ -13,6 +13,7 @@ pub mod journal;
 pub mod keybook;
 pub mod keys;
 pub mod migrate;
+pub mod oauth_login;
 pub mod places;
 pub mod procedure;
 pub mod providers;

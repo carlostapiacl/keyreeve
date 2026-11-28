@@ -199,6 +199,15 @@ pub struct Auth {
     pub reply_between: Option<Vec<String>>,
 }
 
+impl Auth {
+    /// Whether a check may trade this credential for a token on its own. Not for a bearer: those servers sign in
+    /// with OAuth 2.1, which rotates the refresh token on each renewal, and a check outside the proxy would spend it
+    /// with nowhere to keep the new one. Such a key is checked by using it, through the proxy.
+    pub fn checks_alone(&self) -> bool {
+        self.gives.as_deref() != Some("bearer")
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Step {

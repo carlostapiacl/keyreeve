@@ -49,10 +49,12 @@ The first time, press **Bring in your keys** ([below](#bring-in)), choose your k
 fingerprint or your Mac's password, or with neither if you turn that off in Settings, since the list holds no value. This
 lock covers the window. Keys are protected by [the vault](#the-vault-mac).
 
-It is laid out by task. **Home** leads with what needs you, each item with its action. **My keys** is the list, with filters
-for archived keys and projects. **To review** holds what needs a look, and **Security and backup** the vault. **Agents**,
-**Providers**, **Rotation** and **Log** sit apart, under Tools. A key's page has four tabs: Summary, Usage, Security and
-History, with the technical parts behind "More details and options".
+It has three places. **Home** holds what waits on you (agents' requests and proposals, new keys, what to review), each with
+its action, and the keys in use in the last 30 days. **My keys** is the list, with **All**, **To review** and **Archive** at
+hand and the other filters under **Show**. **Tools** holds **Agents**, **Security and backup** (the vault), **Rotation**,
+**Log** and **Providers**. A key's page has four tabs: Summary, Usage, Security and History, with the technical parts behind
+"More details and options"; its Summary says which agents may use it, and how they are asked. Under **Agents**, only the keys
+agents can reach are listed.
 
 **Check all**, on Home or in My keys, asks first, then sends each key to its own provider, at most six at a time, with
 progress and a summary. A key with no sealed copy whose file is gone shows as **Not in the vault**, apart from keys whose

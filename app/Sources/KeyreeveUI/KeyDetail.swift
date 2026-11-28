@@ -186,8 +186,14 @@ struct KeyDetail: View {
         let level = ids.compactMap { model.agentPolicy.level(of: $0) }.first
         let offered = ids.contains { model.keyIndex.isOffered($0) }
         box(T("Agents")) {
-            Text(level?.label ?? (offered || ids.isEmpty ? T("No agent can use this key.") : T("Not offered to agents")))
-                .font(Theme.rowTitle).foregroundStyle(Theme.text)
+            // Who may use it, and how they are asked, chosen here: the key's own page is where it is opened to agents.
+            let offeredKeys = model.offeredKeys(forSource: item.path)
+            if isSealed && !offeredKeys.isEmpty {
+                ForEach(offeredKeys) { key in AgentKeyRow(key: key, model: model) }
+            } else {
+                Text(level?.label ?? (offered || ids.isEmpty ? T("No agent can use this key.") : T("Not offered to agents")))
+                    .font(Theme.rowTitle).foregroundStyle(Theme.text)
+            }
             if open > 0 {
                 Text(open == 1 ? T("1 permission open now") : T("%d permissions open now", open))
                     .font(Theme.caption).foregroundStyle(Theme.muted)

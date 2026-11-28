@@ -30,6 +30,8 @@ public struct MainView: View {
     @State private var pressedChip: Sidebar?
     @State private var chosenRows: Set<CatalogItem.ID>
     @State private var confirmCheck = false
+    /// The review of many keys, shown before it is done.
+    @State private var reviewing: AppModel.ReviewPlan?
     @State private var sorting = false
     /// The keys chosen when Sort was pressed, asked about even when sorted already. None means every unsorted key.
     @State private var sortingKeys: [CatalogItem]?
@@ -46,15 +48,25 @@ public struct MainView: View {
     /// A filter of My keys, apart from the sidebar's choice: a list row cannot be selected for a filter
     /// with no row, and the sidebar would drop it and show every key.
     @State private var filterOverride: Sidebar?
+    /// The part of Tools on screen.
+    @State private var toolsPart: Sidebar = .agents
     /// What the list shows: a filter when one is on, else the sidebar's section.
     private var current: Sidebar { filterOverride ?? selection ?? .all }
 
     /// Goes to a section or a filter. Sections are sidebar rows; a filter shows My keys with it on.
     private func go(_ target: Sidebar) {
         switch target {
-        case .home, .all, .attention, .vault, .agents, .providers, .rotation, .log:
+        case .home, .all:
             filterOverride = nil
             selection = target
+        case .tools:
+            filterOverride = nil
+            selection = .tools
+        case .vault, .agents, .providers, .rotation, .log:
+            // Each was a sidebar row; now a part of Tools.
+            filterOverride = nil
+            toolsPart = target
+            selection = .tools
         default:
             selection = .all
             filterOverride = target
@@ -97,34 +109,26 @@ public struct MainView: View {
     public var body: some View {
         NavigationSplitView {
             // By task, not by part of the app: what you have, what needs you, how it is kept. The tools follow.
+            // Three places: what needs you and what is in use, the keys, and the tools behind them.
             List(selection: sidebarSelection) {
-                Label(T("Home"), systemImage: "house").tag(Sidebar.home)
-                sidebarRow(T("My keys"), "key", .all, model.summary.active)
-                sidebarRow(T("To review"), "exclamationmark.circle", .attention, model.summary.toReview)
-                Label(T("Security and backup"), systemImage: "lock.shield").tag(Sidebar.vault)
-                Section(T("Tools")) {
-                    // A request waiting shows here and in the menu bar, and never moves you away from what you were doing.
-                    if model.pendingRequests.isEmpty {
-                        sidebarRow(T("Agents"), "cpu", .agents, model.agentPolicy.keys.count)
-                    } else {
-                        Label {
-                            HStack {
-                                Text(T("Agents")).lineLimit(1)
-                                Spacer()
-                                Text(T("%d waiting", model.pendingRequests.count))
-                                    .font(Theme.caption).foregroundStyle(Theme.onAccent)
-                                    .padding(.horizontal, 6).padding(.vertical, 1)
-                                    .background(Theme.accent, in: Capsule())
-                            }
-                        } icon: {
-                            Image(systemName: "hand.raised.fill")
+                Label {
+                    HStack {
+                        Text(T("Home")).lineLimit(1)
+                        Spacer()
+                        // A request waiting shows here and in the menu bar, and never moves you away from what you were doing.
+                        if !model.pendingRequests.isEmpty {
+                            Text(T("%d waiting", model.pendingRequests.count))
+                                .font(Theme.caption).foregroundStyle(Theme.onAccent)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Theme.accent, in: Capsule())
                         }
-                        .tag(Sidebar.agents)
                     }
-                    Label(T("Rotation"), systemImage: "arrow.triangle.2.circlepath").tag(Sidebar.rotation)
-                    Label(T("Log"), systemImage: "list.bullet.rectangle").tag(Sidebar.log)
-                    Label(T("Providers"), systemImage: "puzzlepiece.extension").tag(Sidebar.providers)
+                } icon: {
+                    Image(systemName: model.pendingRequests.isEmpty ? "house" : "hand.raised.fill")
                 }
+                .tag(Sidebar.home)
+                sidebarRow(T("My keys"), "key", .all, model.summary.active)
+                Label(T("Tools"), systemImage: "wrench.and.screwdriver").tag(Sidebar.tools)
             }
             .tint(Theme.accent)
             .navigationSplitViewColumnWidth(min: 190, ideal: 220)
@@ -142,9 +146,25 @@ public struct MainView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 model.reloadRequests()
             }
-            .onChange(of: model.showRequests) { _, _ in go(.agents) }
+            .onChange(of: model.showRequests) { _, _ in go(.home) }
             .onChange(of: model.showNewKeys) { _, _ in go(.unreviewed) }
             .sheet(isPresented: $sorting) { SortSheet(model: model, keys: sortingKeys) }
+            .confirmationDialog(
+                T("Mark these keys as reviewed?"),
+                isPresented: Binding(get: { reviewing != nil }, set: { if !$0 { reviewing = nil } }), titleVisibility: .visible
+            ) {
+                Button(T("Mark as reviewed")) {
+                    if let plan = reviewing { model.review(plan.new + plan.openFiles + plan.quieted) }
+                    reviewing = nil
+                    chosenRows = []
+                }
+                Button(T("Cancel"), role: .cancel) { reviewing = nil }
+            } message: {
+                if let plan = reviewing {
+                    Text(T("%d new keys are marked reviewed, not offered to agents. %d files others can read are closed to you alone. %d other notices (a refused check, an expiry) are hidden for 30 days.", plan.new.count, plan.openFiles.count, plan.quieted.count)
+                        + (plan.left.isEmpty ? "" : " " + T("%d with a new value waiting are left for you to look at.", plan.left.count)))
+                }
+            }
             .confirmationDialog(
                 T("Check %d keys?", checkable.count), isPresented: $confirmCheck, titleVisibility: .visible
             ) {
@@ -154,7 +174,6 @@ public struct MainView: View {
                 Text(T("Each key goes to its own provider, and only to read. Keys set to Only me stay out."))
             }
             .onAppear {
-                if !model.pendingRequests.isEmpty { go(.agents) }
                 // A start on a filter, such as from a link, goes through the same path.
                 if let start = selection { go(start) }
             }
@@ -174,16 +193,8 @@ public struct MainView: View {
                 search = ""
                 chosenRows = path.map { [$0] } ?? []
             }
-        } else if selection == .vault {
-            VaultView(model: model, part: .security) { go($0) }
-        } else if selection == .rotation {
-            VaultView(model: model, part: .rotation) { go($0) }
-        } else if selection == .log {
-            UsageLogSheet(model: model, inline: true)
-        } else if selection == .agents {
-            AgentsView(model: model)
-        } else if selection == .providers {
-            ProvidersView(model: model)
+        } else if selection == .tools {
+            ToolsView(model: model, part: $toolsPart) { go($0) }
         } else {
             HStack(spacing: 0) {
                 if shown.isEmpty {
@@ -208,36 +219,25 @@ public struct MainView: View {
     /// scroll view at the top of the column reaches under the toolbar, where its clicks are lost.
     private var filterBar: some View {
         FlowRow(spacing: 6) {
+            // Three at hand; the rest are in Show, in the toolbar.
             filterChip(T("All"), .all)
             if model.summary.count(.unreviewed) > 0 { filterChip(T("New, not reviewed"), .unreviewed) }
-            filterChip(T("Can be checked"), .checkable)
-            filterChip(T("Critical keys"), .critical)
-            filterChip(T("Rejected"), .result("rejected"))
-            filterChip(T("Works"), .result("works"))
-            filterChip(T("No answer"), .result("no_answer"))
-            filterChip(T("Never checked"), .result(""))
-            filterChip(T("Older than suggested"), .stale)
-            filterChip(T("Expire soon"), .expiring)
-            noPlaceChip
+            if model.summary.toReview > 0 { filterChip(T("To review"), .attention) }
             filterChip(T("Archive"), .archive)
+            // What to review, cleared in one step: the chosen keys, or all those the filter shows.
+            if current == .attention || current == .unreviewed {
+                let plan = model.reviewPlan(for: scope)
+                if !plan.isEmpty {
+                    Button(T("Mark %d as reviewed", plan.new.count + plan.openFiles.count + plan.quieted.count)) { reviewing = plan }
+                        .buttonStyle(KRButtonStyle(primary: true))
+                }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
-    }
-
-    /// Counted here, since only the app knows where keys live.
-    private var noPlaceChip: some View {
-        FilterChip(
-            title: T("No place known"), count: items.filter { !$0.isArchived && $0.isSecret && model.hasNoPlace($0) }.count,
-            isOn: (pressedChip ?? current) == .noPlace
-        ) {
-            model.reloadPlaces()
-            go(.noPlace)
-            chosenRows = []
-        }
     }
 
     private func filterChip(_ title: String, _ target: Sidebar) -> some View {
@@ -259,6 +259,7 @@ public struct MainView: View {
     private var title: String {
         switch filterOverride ?? selection ?? .home {
         case .home: return T("Home")
+        case .tools: return T("Tools")
         case .attention: return T("To review")
         case .all: return T("My keys")
         case .archive: return T("Archive")
@@ -322,7 +323,7 @@ public struct MainView: View {
     /// Sections that show the list of keys, where filters and checks belong. The tool sections have their own.
     private var showsList: Bool {
         switch selection ?? .all {
-        case .home, .vault, .agents, .providers, .rotation, .log: return false
+        case .home, .tools, .vault, .agents, .providers, .rotation, .log: return false
         default: return true
         }
     }
@@ -340,10 +341,21 @@ public struct MainView: View {
             ToolbarItem(placement: .automatic) {
                 Menu {
                     Button(T("All keys")) { go(.all) }
+                    Button(T("To review")) { go(.attention) }
                     Button(T("Critical keys")) { go(.critical) }
+                    Button(T("Expire soon")) { go(.expiring) }
                     Button(T("Older than suggested")) { go(.stale) }
                     Button(T("Internal secrets")) { go(.internalOnly) }
+                    Button(T("No place known")) {
+                        model.reloadPlaces()
+                        go(.noPlace)
+                    }
+                    Divider()
                     Button(T("Can be checked")) { go(.checkable) }
+                    Button(T("Works")) { go(.result("works")) }
+                    Button(T("Rejected")) { go(.result("rejected")) }
+                    Button(T("No answer")) { go(.result("no_answer")) }
+                    Button(T("Never checked")) { go(.result("")) }
                     Divider()
                     ForEach(["free", "ask", "never", "none"], id: \.self) { level in
                         Button(levelName(level)) { go(.level(level)) }
@@ -360,45 +372,49 @@ public struct MainView: View {
                     Label(T("Show"), systemImage: "line.3.horizontal.decrease.circle")
                 }
             }
-            ToolbarItem(placement: .automatic) {
-                // Several chosen keys: one provider for all, or nothing to check.
-                if chosenRows.count > 1 {
+            if !chosenRows.isEmpty {
+                ToolbarItem(placement: .automatic) {
+                    // The chosen keys opened to agents in one step. "Always" is chosen on each key: it needs its finger.
                     Menu {
-                        ForEach(model.providers.all.filter { $0.problem == nil }.sorted { $0.name < $1.name }) { provider in
-                            Button(provider.name) { model.assign(provider: provider.id, to: scope) }
-                        }
+                        Button(T("Free")) { model.setAgentLevel(.free, forKeysOf: scope) }
+                        Button(T("Ask")) { model.setAgentLevel(.ask, forKeysOf: scope) }
+                        Button(T("Only me")) { model.setAgentLevel(nil, forKeysOf: scope) }
                         Divider()
-                        Button(T("Nothing to check")) { model.markUntestable(scope) }
-                        Button(T("Ask what they are")) {
-                            sortingKeys = scope
-                            sorting = true
+                        Menu(T("Which agents")) {
+                            Button(T("Any agent")) { model.setAgents([], forKeysOf: scope) }
+                            Divider()
+                            ForEach(model.knownAgents, id: \.self) { name in
+                                Button(name) { model.setAgents([name], forKeysOf: scope) }
+                            }
                         }
                     } label: {
-                        Label(T("Provider for %d", chosenRows.count), systemImage: "tag")
+                        Label(T("Agents (%d)", model.agentReachable(scope).count), systemImage: "cpu")
                     }
-                } else {
-                    Button {
-                        sortingKeys = chosenRows.isEmpty ? nil : scope
-                        sorting = true
-                    } label: {
-                        Label(chosenRows.isEmpty ? T("Sort keys") : T("Ask what it is"), systemImage: "wand.and.stars")
-                    }
-                    .help(chosenRows.isEmpty
-                        ? T("Propose a provider for keys keyreeve cannot check yet")
-                        : T("Ask your assistant what this key is, from its name and fields, never its value"))
+                    .help(T("Open the chosen keys to agents. Each goes through the proxy, so agents get a stand-in, never the key."))
                 }
             }
             ToolbarItem(placement: .automatic) {
-                Button {
-                    model.identify(identifiable)
+                // What sorting by hand needs, in one menu: agents do most of it now, from Home.
+                Menu {
+                    if chosenRows.count > 1 {
+                        Menu(T("Provider for %d", chosenRows.count)) {
+                            ForEach(model.providers.all.filter { $0.problem == nil }.sorted { $0.name < $1.name }) { provider in
+                                Button(provider.name) { model.assign(provider: provider.id, to: scope) }
+                            }
+                        }
+                        Button(T("Nothing to check")) { model.markUntestable(scope) }
+                    }
+                    Button(chosenRows.isEmpty ? T("Sort keys") : T("Ask what it is")) {
+                        sortingKeys = chosenRows.isEmpty ? nil : scope
+                        sorting = true
+                    }
+                    Button(identifiable.count == 1 ? T("Identify 1 key") : T("Identify %d keys", identifiable.count)) {
+                        model.identify(identifiable)
+                    }
+                    .disabled(model.busy || identifiable.isEmpty)
                 } label: {
-                    Label(
-                        identifiable.count == 1 ? T("Identify 1 key") : T("Identify %d keys", identifiable.count),
-                        systemImage: "person.text.rectangle"
-                    )
-                    .labelStyle(.titleAndIcon)
+                    Label(T("More"), systemImage: "ellipsis.circle")
                 }
-                .disabled(model.busy || identifiable.isEmpty)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -415,6 +431,7 @@ public struct MainView: View {
                 .help(checkHelp)
             }
         }
+        if model.keysFolder != nil {
         ToolbarItem(placement: .automatic) {
             Button {
                 model.refresh()
@@ -423,6 +440,7 @@ public struct MainView: View {
             }
             .disabled(model.busy)
             .help(T("Scan the folder again"))
+        }
         }
     }
 

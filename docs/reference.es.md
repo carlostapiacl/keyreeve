@@ -49,10 +49,12 @@ La primera vez, aprieta **Trae tus claves** ([más abajo](#traer)), elige tu car
 abre con tu huella o con la contraseña de tu Mac, o sin ninguna de las dos si lo desactivas en Ajustes, ya que la lista no guarda
 ningún valor. Este bloqueo cubre la ventana. Las claves las protege [la bóveda](#la-bóveda-mac).
 
-Está ordenada por tarea. **Inicio** parte por lo que te necesita, cada cosa con su acción. **Mis claves** es la lista, con filtros
-para claves archivadas y proyectos. **Por revisar** reúne lo que hay que mirar, y **Seguridad y respaldo**, la bóveda. **Agentes**,
-**Proveedores**, **Rotación** y **Registro** quedan aparte, bajo Herramientas. La página de una clave tiene cuatro pestañas: Resumen,
-Uso, Seguridad e Historial, con lo técnico detrás de "Más detalles y opciones".
+Tiene tres lugares. **Inicio** reúne lo que te espera (pedidos y propuestas de los agentes, claves nuevas, lo que hay que revisar),
+cada cosa con su acción, y las claves usadas en los últimos 30 días. **Mis claves** es la lista, con **Todas**, **Por revisar** y
+**Archivo** a mano y los demás filtros en **Mostrar**. **Herramientas** reúne **Agentes**, **Seguridad y respaldo** (la bóveda),
+**Rotación**, **Registro** y **Proveedores**. La página de una clave tiene cuatro pestañas: Resumen, Uso, Seguridad e Historial,
+con lo técnico detrás de "Más detalles y opciones"; su Resumen dice qué agentes pueden usarla y cómo se les pregunta. En
+**Agentes** solo aparecen las claves que los agentes pueden alcanzar.
 
 **Probar todas**, en Inicio o en Mis claves, pregunta primero y después manda cada clave a su propio proveedor, seis a la vez como
 máximo, con avance y un resumen. Una clave sin copia sellada cuyo archivo ya no está aparece como **No está en la bóveda**, aparte de

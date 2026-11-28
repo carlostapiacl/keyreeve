@@ -163,6 +163,13 @@ public let spanish: [String: String] = [
     "seal": "sellar",
     "archive": "archivar",
     "%@ proposes sorting your keys": "%@ propone ordenar tus claves",
+    "%@ proposes tidying your keys": "%@ propone ordenar tus claves",
+    "%@ proposes tidying %d keys": "%@ propone ordenar %d claves",
+    "Only names and notes change, never a value. A renamed key keeps working by its old name.":
+        "Solo cambian nombres y notas, nunca un valor. Una clave renombrada sigue funcionando con su nombre anterior.",
+    "new project": "proyecto nuevo",
+    "The changes could not be applied: %@": "No se pudieron aplicar los cambios: %@",
+    "%d keys tidied. A copy of the list from before is beside it.": "%d claves ordenadas. Al lado quedó una copia de la lista anterior.",
     "Takes the key you copied and clears the clipboard. It is not shown.": "Toma la clave que copiaste y vacía el portapapeles. No se muestra.",
     "Page where the old key is revoked (optional)": "Página donde se revoca la clave vieja (opcional)",
     "Opened for you when the old key is left for you to revoke.": "Se abre cuando la clave vieja queda para que tú la revoques.",

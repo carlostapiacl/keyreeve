@@ -126,6 +126,10 @@ public struct AgentBridge {
     let held = Held()
     /// Where keys live, read again for each request. Set by the server; empty elsewhere.
     public var places: () -> PlaceBook = { PlaceBook() }
+    /// What tidying reads: every key, the usage log and the value digests. Nil where tidying is not set up.
+    public var tidyContext: (() -> KeyTidy.Context?)?
+    /// Changes the person approved are applied by the app, not here; this only keeps the proposal.
+    public var saveTidy: ((String, Data) throws -> Void)?
     /// The person's procedures folder, to tell an agent that a procedure it proposes is not there yet.
     public var proceduresFolder: URL?
 
@@ -313,6 +317,7 @@ public struct AgentBridge {
     }
 
     private func call(_ tool: String, _ arguments: [String: Any]) throws -> String {
+        let arguments = currentNames(arguments)
         // Before anything else, so a stopped agent cannot open a window or reach the service.
         if paused() {
             if tool != "list_keys" { log("refused", arguments["key"] as? String ?? "-", "paused", arguments["reason"] as? String) }
@@ -395,6 +400,10 @@ public struct AgentBridge {
             return String(decoding: page ?? list, as: UTF8.self)
         case "propose":
             return try propose(arguments)
+        case "review_keys":
+            return try reviewKeys(arguments)
+        case "propose_tidy":
+            return try proposeTidy(arguments)
         case "list_places":
             return try listPlaces(arguments)
         case "propose_places":
@@ -567,6 +576,13 @@ public struct AgentBridge {
     /// The name of every key not offered to agents, after the person's finger: names, providers, accounts and
     /// descriptions, never a value. One yes covers this session for an hour, and every listing goes in the log.
     func everyName(reason: String?, offered: Set<String>) throws -> [String] {
+        try openEveryName(reason: reason)
+        let rest = everyKey().filter { !offered.contains($0.id) }
+        return lines(forEveryName: rest, reason: reason ?? "")
+    }
+
+    /// Asks the person once an hour, with their finger, before an agent sees the keys not offered to it.
+    func openEveryName(reason: String?) throws {
         guard let reason, !reason.isEmpty else { throw VaultError("all needs a reason, shown to the person") }
         let date = now()
         if (held.everyNameUntil ?? .distantPast) <= date {
@@ -580,7 +596,9 @@ public struct AgentBridge {
             }
             held.everyNameUntil = date.addingTimeInterval(Self.everyNameSeconds)
         }
-        let rest = everyKey().filter { !offered.contains($0.id) }
+    }
+
+    private func lines(forEveryName rest: [KeyIndex.Key], reason: String) -> [String] {
         let kept = rest.filter { !$0.more.archived }.sorted { $0.id < $1.id }
         let archived = rest.filter(\.more.archived).map(\.id).sorted()
         log("listed", "every key", "\(kept.count) not offered, \(archived.count) archived", reason)
@@ -618,6 +636,21 @@ public struct AgentBridge {
     /// What a server older than the Keyreeve in place says instead of changing permissions.
     public static let outdated =
         "Keyreeve was updated after this agent session started, so this session does not change permissions. Ask the person to start the session again"
+
+    /// A key renamed by tidying may still be named by its old identifier, which an agent learned before. It is
+    /// taken as the one it is now, so every permission and log line is that key's.
+    func currentNames(_ arguments: [String: Any]) -> [String: Any] {
+        guard arguments["key"] != nil || arguments["keys"] != nil else { return arguments }
+        let known = describe()
+        func current(_ id: String) -> String {
+            if known[id] != nil { return id }
+            return known.values.first { $0.more.formerly?.contains(id) == true }?.id ?? id
+        }
+        var out = arguments
+        if let key = arguments["key"] as? String { out["key"] = current(key) }
+        if let keys = arguments["keys"] as? [String] { out["keys"] = keys.map(current) }
+        return out
+    }
 
     /// The client's version if this speaks it, or else the newest this does speak, as MCP asks.
     static func version(for requested: String?) -> String {
@@ -692,6 +725,36 @@ public struct AgentBridge {
                     "offset": ["type": "integer"],
                     "limit": ["type": "integer", "description": "At most 200, 60 if left out. next_offset says where the next page starts"],
                 ],
+            ],
+        ],
+        [
+            "name": "review_keys",
+            "description":
+                "Start here to tidy the person's keys: nobody wants to sort their own, so this is your job and the person only approves. Lists each key by id with its provider, project, variable and description, how it was used (how often, last day, by which agents, from which folders, to which hosts), and what it needs (no project, no variable, id that breaks the convention, same value as another key, unused). Never a value. Starts with the naming convention and the known projects: follow them. only: gaps (default) or all. matching: text in the id, provider, project or description. all with a reason: also keys not offered to agents, after the person's fingerprint (one hour). offset and limit page through.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "only": ["type": "string", "enum": ["gaps", "all"]],
+                    "matching": ["type": "string"],
+                    "all": ["type": "boolean"],
+                    "reason": ["type": "string", "description": "Why, shown to the person, needed with all"],
+                    "offset": ["type": "integer"],
+                    "limit": ["type": "integer"],
+                ],
+            ],
+        ],
+        [
+            "name": "propose_tidy",
+            "description":
+                "Propose tidying keys by id, after review_keys. Each change: {\"key\": its id, \"why\": how you know, and any of \"id\" (new id), \"description\", \"project\", \"provider\", \"variable\", \"account\", \"field\", \"tags\" (list to add), \"archive\": true}. At most 60. Changes that break the convention come back refused with the reason; fix and send again. Nothing changes until the person approves in Keyreeve, all or some, with one click. A renamed key keeps its old id working. Never edit keys.toml or agents.toml yourself.\n\n" + KeyTidy.guide,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "reason": ["type": "string", "description": "What these changes do, in a sentence, shown to the person"],
+                    "changes": ["type": "array", "items": ["type": "object"]],
+                    "all": ["type": "boolean", "description": "Also keys not offered to agents, as review_keys with all"],
+                ],
+                "required": ["reason", "changes"],
             ],
         ],
         [

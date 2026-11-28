@@ -434,6 +434,7 @@ Las herramientas que recibe un agente:
 | `request_access` | te pide abrir una clave cerrada, o guardar una para un proveedor |
 | `rotate_key` | te pide rotar una clave sellada |
 | `inventory`, `propose` | leen la carpeta sin valores y proponen cambios para muchos archivos, cuando lo activas |
+| `review_keys`, `propose_tidy` | leen lo que le falta a cada clave y cómo se usa, y proponen ordenarlas por id, para que lo apruebes con un clic ([abajo](#cuando-un-agente-ordena-tus-claves)) |
 | `list_places`, `propose_places` | dónde viven las claves ofrecidas, y lugares nuevos para que los apruebes ([abajo](#dónde-vive-una-clave)) |
 | `find_keys` | busca claves en toda tu carpeta de inicio, en los lugares típicos o en carpetas, sin valores y sin probar nada con el proveedor |
 | `propose_bring` | propone cuáles sellar de las encontradas, para que la revises en Traer y selles con una sola huella |
@@ -490,6 +491,24 @@ probadas y selladas, que tus agentes usan con `use_key`.
 
 Un servidor que sugiere un agente se guarda pero no queda aprobado. La página de la clave lo dice, y **Aprobar … y probar** lo aprueba
 después de que confirmas y prueba la clave ahí.
+
+### Cuando un agente ordena tus claves
+
+Nadie quiere ordenar sus propias claves, así que lo hace un agente y tú apruebas. `review_keys` lista cada clave por id con su
+proveedor, proyecto, variable y descripción, cómo se usó últimamente (cuántas veces, el último día, qué agentes, desde qué carpetas,
+hacia qué hosts) y lo que le falta: sin proyecto o variable, un id que no sigue la convención de nombres, el mismo valor que otra
+clave (comparado por huella) o sin uso. Nunca un valor. Empieza con la convención y los proyectos que ya nombran tus claves, incluidos
+los inicios cortos que usas, como `lh-` para liquidity-hunters.
+
+`propose_tidy` manda cambios por id: un id nuevo, descripción, proyecto, proveedor, variable, cuenta, campo, etiquetas para agregar o
+archivar, cada uno con cómo lo sabe el agente. keyreeve los revisa antes de que te lleguen y devuelve los que no siguen la convención,
+con el motivo, para que el agente los corrija: un id empieza con su proveedor (`resend-lh`) o, si es un secreto de tu propio software,
+con su proyecto (`restoiq-erp-jwt-secret`); una descripción no lleva ningún valor; una clave usada en los últimos 30 días no se
+archiva. El resto espera en **Agentes** como una tarjeta con cada cambio, lo que reemplaza y por qué, todos elegidos de entrada.
+**Aplicar** es un clic sin huella, porque solo cambian nombres y notas. Antes se copian keys.toml y agents.toml al lado.
+
+Una clave renombrada guarda su id anterior en `formerly`, así que un script, un conjunto o un permiso escrito con él sigue
+funcionando: keyreeve toma el id anterior como el nuevo donde sea que se pida una clave, y mueve sus permisos y lugares al id nuevo.
 
 ### Cuando un agente trae tus claves
 

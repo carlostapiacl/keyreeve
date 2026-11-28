@@ -66,6 +66,8 @@ struct AgentsView: View {
                         PlacesProposalRow(request: request, model: model)
                     } else if request.kind == "sort" {
                         SortProposalRow(request: request, model: model)
+                    } else if request.kind == KeyTidy.requestKind {
+                        TidyProposalRow(request: request, model: model)
                     } else if request.kind == AgentBringing.kind {
                         BringProposalRow(request: request, model: model)
                     } else if request.isRotation {

@@ -3,6 +3,11 @@
 Each release lists what changed for the person using keyreeve. Versions follow [semver](https://semver.org); while
 keyreeve is in alpha, a release may change a file format, and says so here.
 
+## 0.1.0-alpha.2 (2026-11-28)
+
+- **Intel Macs too.** Keyreeve.app is one universal bundle, for Apple silicon and Intel, so the Homebrew cask installs on
+  both. 0.1.0-alpha.1 had an app for Apple silicon only.
+
 ## 0.1.0-alpha.1 (2026-11-28)
 
 The first release with downloads: Keyreeve.app for Apple silicon, the `keyreeve` command for Linux, and a Homebrew tap.

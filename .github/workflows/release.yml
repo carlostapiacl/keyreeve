@@ -1,4 +1,4 @@
-# Downloads for a tag v*: Keyreeve.app for Apple silicon, zipped, and the keyreeve command for Linux, in a GitHub
+# Downloads for a tag v*: Keyreeve.app for Apple silicon and Intel (one universal bundle), zipped, and the keyreeve command for Linux, in a GitHub
 # release with their SHA-256. Runs only for a tag. The Homebrew cask and formula in carlostapiacl/homebrew-tap point
 # at these files.
 #
@@ -9,13 +9,18 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A change to how the downloads are built runs the builds as a dry run: nothing is released.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "app/build-app.sh"
 
 permissions:
   contents: read
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version:
@@ -29,7 +34,7 @@ jobs:
         id: v
         run: |
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "$GITHUB_REF_NAME" != "v$v" ]; then echo "::error::tag $GITHUB_REF_NAME is not v$v (Cargo.toml)"; exit 1; fi
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then echo "::error::tag $GITHUB_REF_NAME is not v$v (Cargo.toml)"; exit 1; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   mac:
@@ -39,18 +44,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: swift --version
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Build Keyreeve.app
-        run: KEYREEVE_BUILD_ONLY=1 app/build-app.sh
+        run: KEYREEVE_BUILD_ONLY=1 KEYREEVE_UNIVERSAL=1 app/build-app.sh
       - name: Smoke
         run: |
           app/dist/Keyreeve.app/Contents/MacOS/keyreeve-cli --version
           app/dist/Keyreeve.app/Contents/MacOS/keyreeve-vault help >/dev/null 2>&1 || true
           codesign --verify --deep --strict app/dist/Keyreeve.app
+          for bin in Keyreeve keyreeve-vault keyreeve-cli; do
+            lipo -archs "app/dist/Keyreeve.app/Contents/MacOS/$bin" | tee /dev/stderr | grep -q 'x86_64 arm64'
+          done
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' app/dist/Keyreeve.app/Contents/Info.plist | grep -qx '${{ needs.version.outputs.version }}'
       - name: Zip
         run: |
           mkdir -p out
-          ditto -c -k --keepParent app/dist/Keyreeve.app "out/Keyreeve-${{ needs.version.outputs.version }}-macos-arm64.zip"
+          ditto -c -k --keepParent app/dist/Keyreeve.app "out/Keyreeve-${{ needs.version.outputs.version }}-macos.zip"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mac
@@ -84,6 +93,7 @@ jobs:
           if-no-files-found: error
 
   release:
+    if: github.event_name == 'push'
     needs: [version, mac, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10

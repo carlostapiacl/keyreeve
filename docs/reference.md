@@ -397,6 +397,25 @@ A set is a name for a list of keys, made in the app under **Agents**: by hand, o
 which suggests the keys one folder and program used in the last hour. Sets live in `~/.keyreeve/sets.toml`. A set grants nothing on
 its own, and lists only keys offered to agents. No agent tool makes one.
 
+### A coding agent's own model key
+
+A coding agent such as opencode or Claude Code can run under `use` as a whole, so the program holds only a stand-in for its
+model key:
+
+```bash
+keyreeve-vault use anthropic --as ANTHROPIC_API_KEY --for 8h -- opencode
+keyreeve-vault use anthropic --as ANTHROPIC_API_KEY --for 8h -- claude
+```
+
+Whatever the agent writes down then has the stand-in: its config, its database, its logs and what its own API returns. Both
+were tried on 2026-11-28, opencode 1.18 and Claude Code: their requests reached the provider through the proxy, since Bun
+and Node read the proxy and the certificate that `use` sets. An answer may take minutes to start, and the proxy waits as
+long as the providers' own clients do. The agent also sends the key to other paths on the same host, such as Claude
+Code's settings and usage reports, and those go through too: the proxy decides by host, not by path.
+
+Every command the agent runs inherits the stand-in and the proxy, so the agent's shell can use the model key, without
+reading it. Keeping it from that needs a sandbox, which keyreeve is not.
+
 ### Agents over MCP
 
 An agent can use keys over [MCP](https://modelcontextprotocol.io) with `keyreeve-vault mcp`. The app's **Agents** section shows

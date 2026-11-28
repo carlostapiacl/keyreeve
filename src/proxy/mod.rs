@@ -14,7 +14,7 @@ use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, RootCertStore, ServerConnection, StreamOwned};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -32,12 +32,15 @@ use authority::{crypto, Authority};
 pub use control::{can_stand_in, serve_from_stdin};
 use http::{
     answer, base64_decode, base64_encode, body_framing, copy_body, header, read_head, relay_reply,
-    split_target, status_of, Scrubber,
+    split_target, status_of, timed_out, Scrubber,
 };
 pub use local::LocalService;
 pub use oauth::OAuthGrant;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a provider may go without sending anything while the proxy waits for its answer. The OpenAI and
+/// Anthropic SDKs wait 10 minutes, and a model can think for minutes before its first byte.
+pub const REPLY_TIMEOUT: Duration = Duration::from_secs(600);
 /// A host that does not answer would otherwise hold one of the connections until the system gives up.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const TUNNEL_IDLE: Duration = Duration::from_secs(300);
@@ -178,6 +181,8 @@ pub struct Options {
     pub private_tunnels: bool,
     /// Sends what would go to a key's host to this address instead, keeping the host's name for TLS.
     pub upstream_address: Option<IpAddr>,
+    /// How long to wait for a provider between bytes of its answer. [`REPLY_TIMEOUT`] when unset.
+    pub reply_timeout: Option<Duration>,
 }
 
 /// Whether a tunnel may reach this address: not this machine, a private or link-local network, the
@@ -552,6 +557,27 @@ impl Proxy {
             self.record(grant.as_deref(), host, &method, &target, 0, "sent in part");
             return answer(stream.get_mut(), 502, "the request could not be sent");
         }
+        // Nothing has gone back to the command yet, so a provider that never starts its answer can still be
+        // told apart from one that stopped halfway.
+        let mut upstream = BufReader::new(upstream);
+        if let Err(error) = upstream.fill_buf() {
+            if timed_out(&error) {
+                self.record(
+                    grant.as_deref(),
+                    host,
+                    &method,
+                    &target,
+                    0,
+                    "no reply in time",
+                );
+                let wait = self.reply_timeout().as_secs();
+                return answer(
+                    stream.get_mut(),
+                    504,
+                    &format!("keyreeve: {host} did not answer within {wait} seconds"),
+                );
+            }
+        }
         let mut scrub = grant
             .as_ref()
             .map(|grant| Scrubber::new(grant.real.expose(), grant.stand_in.expose()));
@@ -594,6 +620,11 @@ impl Proxy {
                 Err(error)
             }
         }
+    }
+
+    /// How long to wait for a provider between bytes of its answer.
+    pub(super) fn reply_timeout(&self) -> Duration {
+        self.options.reply_timeout.unwrap_or(REPLY_TIMEOUT)
     }
 
     /// Writes down one request that went out with a key, however far it got. No value, no stand-in and no

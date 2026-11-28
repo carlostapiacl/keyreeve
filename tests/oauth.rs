@@ -197,6 +197,7 @@ fn run_on(up: Upstream) -> Run {
         upstream_port: Some(up.port),
         private_tunnels: true,
         upstream_address: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        ..Default::default()
     })
     .unwrap();
     let folder = std::env::temp_dir().join(format!(

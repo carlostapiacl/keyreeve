@@ -183,6 +183,8 @@ pub(super) fn relay_reply(
                 return Ok(status);
             }
             to.write_all(&scrub.push(&buffer[..count]))?;
+            // A stream of events with no framing, ended by closing, must reach the command as it comes.
+            to.flush()?;
         }
     }
     let mut write_chunk = |data: &[u8]| -> io::Result<()> {
@@ -231,6 +233,14 @@ pub(super) fn status_of(head: &[u8]) -> u16 {
         .and_then(|text| text.split(' ').nth(1))
         .and_then(|code| code.parse().ok())
         .unwrap_or(0)
+}
+
+/// Whether a read gave up because its timeout ran out. The system says so in one of two ways.
+pub(super) fn timed_out(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
 }
 
 pub(super) fn answer(to: &mut impl Write, status: u16, text: &str) -> io::Result<()> {

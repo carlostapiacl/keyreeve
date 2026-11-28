@@ -235,7 +235,7 @@ impl Proxy {
                 );
             }
         };
-        upstream.set_read_timeout(Some(IO_TIMEOUT))?;
+        upstream.set_read_timeout(Some(self.reply_timeout()))?;
         upstream.set_write_timeout(Some(IO_TIMEOUT))?;
         // Connecting takes a moment, and the permission can end during it.
         if self
